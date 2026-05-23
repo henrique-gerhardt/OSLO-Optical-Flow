@@ -1,0 +1,28 @@
+FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        git \
+        libglib2.0-0 \
+        libgl1 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace/oslo
+
+COPY requirements-flow360.txt /tmp/requirements-flow360.txt
+RUN python -m pip install --upgrade pip \
+    && python -m pip install -r /tmp/requirements-flow360.txt
+
+COPY . /workspace/oslo
+
+RUN chmod +x /workspace/oslo/scripts/*.sh
+
+RUN mkdir -p /data/flow360 /data/oslo_data /outputs
+
+CMD ["python", "run_flow360_mvp.py", "--help"]

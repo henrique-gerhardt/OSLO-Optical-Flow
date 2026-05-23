@@ -1,0 +1,7 @@
+numpy
+opencv-python
+pirt
+healpy
+networkx
+compressai
+bjontegaard

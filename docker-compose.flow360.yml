@@ -1,0 +1,41 @@
+services:
+  flow360:
+    build:
+      context: .
+      dockerfile: Dockerfile.flow360
+    image: oslo-flow360:cuda
+    shm_size: "16gb"
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - ${FLOW360_ROOT:-/abs/path/to/FLOW360}:/data/flow360:ro
+      - ${OSLO_DATA_ROOT:-../oslo_data}:/data/oslo_data:ro
+      - ${OUTPUT_DIR:-./outputs}:/outputs
+    command:
+      - python
+      - run_flow360_mvp.py
+      - --data-root
+      - /data/flow360
+      - --grid-dir
+      - /data/oslo_data/neighbor_grids
+      - --output-dir
+      - /outputs
+      - --device
+      - cuda
+      - --amp
+      - --resolution
+      - "5"
+      - --batch-size
+      - "1"
+      - --steps
+      - "2000"
+      - --num-workers
+      - "4"

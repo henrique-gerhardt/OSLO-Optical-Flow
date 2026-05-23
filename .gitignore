@@ -1,0 +1,8 @@
+# comment: * doesn’t include /
+# comment: ** includes /
+*__pycache__*
+*.idea*
+sandbox.*
+vis_healpix.*
+tmp_flow360_smoke_data/
+outputs/

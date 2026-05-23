@@ -1,0 +1,16 @@
+.git
+.understand-anything
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.ipynb
+outputs
+checkpoints
+tmp_flow360_smoke_data
+*.pt
+*.pth
+*.pth.tar
+*.zip
+*.tar
+*.tar.gz
