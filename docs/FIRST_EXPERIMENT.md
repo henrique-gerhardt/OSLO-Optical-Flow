@@ -195,3 +195,52 @@ seam_geo_deg vs seam_zero_geo_deg
 ```
 
 The first run is useful if the model beats zero-flow, especially at poles and seam.
+
+## First Run Result
+
+The first completed run did not beat zero-flow:
+
+```text
+global:  model 0.4666 deg vs zero-flow 0.4309 deg
+poles:   model 0.5251 deg vs zero-flow 0.4684 deg
+equator: model 0.4286 deg vs zero-flow 0.4053 deg
+seam:    model 0.8864 deg vs zero-flow 0.8337 deg
+```
+
+This means the direct MVP is not yet useful on FLOW360 as a global model. The likely reason is that the average target motion is small, so zero-flow is already a strong baseline.
+
+The runner now reports active-motion subsets and initializes the final flow head to zero by default. Rebuild the image before the next run.
+
+## Active-Motion Training Run
+
+```bash
+docker build -f Dockerfile.flow360 -t oslo-flow360:cuda .
+
+docker run --rm --gpus all --shm-size 16g \
+  -v "$FLOW360_ROOT:/data/flow360:ro" \
+  -v "$OSLO_DATA_ROOT:/data/oslo_data:ro" \
+  -v "$OUTPUT_DIR:/outputs" \
+  oslo-flow360:cuda \
+  bash scripts/flow360_train_active_r5.sh
+```
+
+This run uses:
+
+```text
+steps:                3,000
+loss-motion-weight:   4.0
+loss-motion-ref-deg:  1.0
+active thresholds:    0.25, 0.5, 1.0 deg
+```
+
+Primary metrics for the next decision:
+
+```text
+target_geo_deg_p50 / p90 / p95
+active_0_5_geo_deg vs active_0_5_zero_geo_deg
+active_1_0_geo_deg vs active_1_0_zero_geo_deg
+seam_geo_deg vs seam_zero_geo_deg
+poles_geo_deg vs poles_zero_geo_deg
+```
+
+If the active-motion metrics still lose to zero-flow, do not extend training blindly. Move to a multi-hop or coarse-to-fine cost volume before attempting a spherical RAFT update block.

@@ -76,6 +76,29 @@ max flow radius:   1.2 rad
 AMP:               enabled
 ```
 
+## Motion-weighted training run
+
+The first FLOW360 run showed that zero flow is a very strong baseline because the average target displacement is small. Use this run to give more weight to samples/nodes with measurable motion:
+
+```bash
+docker run --rm --gpus all --shm-size 16g \
+  -v /absolute/path/to/FLOW360:/data/flow360:ro \
+  -v /absolute/path/to/oslo_data:/data/oslo_data:ro \
+  -v "$PWD/outputs:/outputs" \
+  oslo-flow360:cuda \
+  bash scripts/flow360_train_active_r5.sh
+```
+
+This run keeps the same model but sets:
+
+```text
+loss-motion-weight:   4.0
+loss-motion-ref-deg:  1.0
+steps:                3,000
+```
+
+The model now zero-initializes its final flow head by default, so step 1 starts at the zero-flow baseline instead of emitting a large random flow field.
+
 For the RTX 3090, start with `r=5`. If memory is comfortable, try `r=6` with `BATCH_SIZE=1`; if it OOMs, keep `r=5` and improve the model with multi-hop/coarse-to-fine before scaling resolution.
 
 Example override:
@@ -110,6 +133,7 @@ The runner writes:
 ```
 
 Metrics include global, poles, equator, and seam geodesic error, each compared against the zero-flow baseline.
+The runner also reports active-motion subsets for target displacements above 0.25, 0.5, and 1.0 degrees. These are important because a model can lose to zero flow globally while still improving where actual motion exists.
 
 ## Notes
 

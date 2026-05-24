@@ -124,6 +124,7 @@ class SphericalFlowMVP(torch.nn.Module):
         feature_channels: int = 48,
         max_flow_rad: float = 0.25,
         include_points: bool = True,
+        zero_init_flow_head: bool = True,
     ) -> None:
         super().__init__()
         self.include_points = include_points
@@ -143,6 +144,14 @@ class SphericalFlowMVP(torch.nn.Module):
                 SphereConvBlock(hidden_channels // 2, 2, activation=False),
             ]
         )
+        if zero_init_flow_head:
+            self._zero_init_flow_head()
+
+    def _zero_init_flow_head(self) -> None:
+        final_conv = self.predictor[-1].conv
+        torch.nn.init.zeros_(final_conv.weight)
+        if final_conv.bias is not None:
+            torch.nn.init.zeros_(final_conv.bias)
 
     def forward(
         self,

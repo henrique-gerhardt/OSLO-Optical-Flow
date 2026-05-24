@@ -20,7 +20,7 @@ Implemented:
   - spherical decoder that predicts tangent flow `[east, north]`;
   - geodesic endpoint loss.
 - Docker CUDA runtime for Linux/NVIDIA hosts.
-- Metrics for global, poles, equator, and ERP seam regions.
+- Metrics for global, poles, equator, ERP seam, target-motion percentiles, and active-motion subsets.
 
 Not implemented yet:
 
@@ -41,6 +41,7 @@ Dockerfile.flow360             CUDA Docker image for FLOW360 experiments
 docker-compose.flow360.yml     Compose entrypoint for the first experiment
 scripts/flow360_smoke.sh       Minimal CUDA smoke test
 scripts/flow360_train_r5.sh    First training run for RTX 3090
+scripts/flow360_train_active_r5.sh Motion-weighted follow-up run
 docs/                          Project context, status, and run commands
 README_OSLO_ORIGINAL.md        Original OSLO README kept for reference
 ```
@@ -81,11 +82,11 @@ docker run --rm --gpus all --shm-size 16g \
   -v /absolute/path/to/oslo_data:/data/oslo_data:ro \
   -v "$PWD/outputs:/outputs" \
   oslo-flow360:cuda \
-  bash scripts/flow360_train_r5.sh
+  bash scripts/flow360_train_active_r5.sh
 ```
 
 ## Status
 
-The project is ready for the first GPU experiment on a Linux Docker host with NVIDIA runtime. The known target hardware is an RTX 3090 with 24 GB VRAM, which is appropriate for the initial HEALPix `r=5` experiment.
+The first GPU experiment ran on FLOW360 and did not beat zero-flow globally, so the project now focuses on active-motion diagnostics before any larger RAFT-style port. The next recommended run is `scripts/flow360_train_active_r5.sh`, which uses zero flow-head initialization and motion-weighted loss.
 
 See [docs/CONTEXT_AND_STATUS.md](docs/CONTEXT_AND_STATUS.md) for the plan, decisions already made, prior synthetic results, and next engineering steps.

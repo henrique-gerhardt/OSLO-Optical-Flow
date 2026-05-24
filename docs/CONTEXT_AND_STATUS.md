@@ -49,6 +49,7 @@ run_flow360_mvp.py             FLOW360 supervised experiment runner
 Dockerfile.flow360             CUDA Docker image
 scripts/flow360_smoke.sh       Smoke test
 scripts/flow360_train_r5.sh    First training command
+scripts/flow360_train_active_r5.sh Motion-weighted training command
 ```
 
 ## Current Validation
@@ -115,7 +116,7 @@ Current loader behavior:
 
 ## First Experiment
 
-Start with HEALPix `r=5`:
+The first completed GPU run used HEALPix `r=5`:
 
 ```text
 nodes:            12,288
@@ -124,13 +125,47 @@ AMP:              enabled
 steps:            2,000
 hidden channels:  48
 feature channels: 32
+elapsed:          119.9 s
 ```
 
-This is conservative for a 24 GB RTX 3090. If memory is comfortable, try `r=6` next.
+Validation result:
+
+```text
+global:  model 0.4666 deg vs zero-flow 0.4309 deg
+poles:   model 0.5251 deg vs zero-flow 0.4684 deg
+equator: model 0.4286 deg vs zero-flow 0.4053 deg
+seam:    model 0.8864 deg vs zero-flow 0.8337 deg
+```
+
+Interpretation:
+
+- The current direct MVP did not beat zero-flow on FLOW360.
+- Zero-flow is a strong baseline because average target motion is small.
+- This is not enough evidence to port full RAFT yet.
+- The next run must inspect active-motion subsets, not only global mean error.
+
+Implemented after this run:
+
+- zero initialization for the final flow head, so the model starts exactly at zero-flow;
+- target motion percentiles: `target_geo_deg_p50`, `target_geo_deg_p90`, `target_geo_deg_p95`;
+- active-motion metrics above `0.25`, `0.5`, and `1.0` degrees;
+- motion-weighted loss options: `--loss-motion-weight`, `--loss-motion-ref-deg`, `--loss-min-target-deg`;
+- `scripts/flow360_train_active_r5.sh`.
+
+Recommended next run:
+
+```bash
+docker run --rm --gpus all --shm-size 16g \
+  -v "$FLOW360_ROOT:/data/flow360:ro" \
+  -v "$OSLO_DATA_ROOT:/data/oslo_data:ro" \
+  -v "$OUTPUT_DIR:/outputs" \
+  oslo-flow360:cuda \
+  bash scripts/flow360_train_active_r5.sh
+```
 
 Success criteria for continuing:
 
-- Model beats zero-flow globally.
+- Model beats zero-flow on `active_0_5_*` and `active_1_0_*`.
 - Model beats zero-flow more clearly at poles and seam than at equator.
 - Training loss decreases without numerical instability.
 - Validation does not collapse after a few hundred steps.
@@ -144,13 +179,13 @@ If this fails:
 
 ## Next Engineering Steps
 
-1. Run Docker smoke test on the RTX 3090 host.
-2. Run `r=5` training for 2,000 steps.
-3. Inspect `outputs/flow360_metrics.json`.
-4. If metrics beat zero-flow, run:
+1. Rebuild the Docker image after the code changes.
+2. Run active-motion `r=5` training.
+3. Inspect `outputs/flow360_metrics.json`, especially active-motion metrics.
+4. If active metrics beat zero-flow, run:
    - `direction=both`;
    - `resolution=6`;
    - longer training.
-5. Add an ERP RAFT/PWCNet baseline and evaluate with the same spherical metrics.
-6. Implement multi-hop or coarse-to-fine local cost volume.
+5. If active metrics still lose to zero-flow, implement multi-hop or coarse-to-fine local cost volume.
+6. Add an ERP RAFT/PWCNet baseline and evaluate with the same spherical metrics.
 7. Only then consider a spherical RAFT update block.

@@ -38,7 +38,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hidden-channels", type=int, default=48)
     parser.add_argument("--feature-channels", type=int, default=32)
     parser.add_argument("--max-flow-rad", type=float, default=1.2)
+    parser.add_argument("--no-zero-init-flow-head", dest="zero_init_flow_head", action="store_false")
+    parser.set_defaults(zero_init_flow_head=True)
     parser.add_argument("--flow-scale", type=float, default=1.0, help="Multiplier for FLOW360 pixel flow values.")
+    parser.add_argument("--loss-min-target-deg", type=float, default=0.0)
+    parser.add_argument("--loss-motion-weight", type=float, default=0.0)
+    parser.add_argument("--loss-motion-ref-deg", type=float, default=1.0)
+    parser.add_argument("--active-thresholds-deg", default="0.25,0.5,1.0")
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
@@ -78,6 +84,24 @@ def masked_mean(values: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     mask_f = mask.to(dtype=values.dtype)
     denom = mask_f.sum().clamp_min(1.0)
     return (values * mask_f).sum() / denom
+
+
+def weighted_masked_mean(
+    values: torch.Tensor,
+    mask: torch.Tensor,
+    weights: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    mask_f = mask.to(dtype=values.dtype)
+    if weights is None:
+        weights = torch.ones_like(values)
+    weights = weights.to(dtype=values.dtype) * mask_f
+    return (values * weights).sum() / weights.sum().clamp_min(1.0)
+
+
+def parse_thresholds(text: str) -> list[float]:
+    if not text.strip():
+        return []
+    return [float(value.strip()) for value in text.split(",") if value.strip()]
 
 
 def build_healpix(args: argparse.Namespace, device: torch.device) -> tuple:
@@ -142,13 +166,35 @@ def compute_loss(
     points: torch.Tensor,
     basis_east: torch.Tensor,
     basis_north: torch.Tensor,
+    loss_min_target_deg: float = 0.0,
+    loss_motion_weight: float = 0.0,
+    loss_motion_ref_deg: float = 1.0,
 ) -> tuple[torch.Tensor, Dict[str, torch.Tensor]]:
     maps = compute_maps(pred_flow, batch, points, basis_east, basis_north)
-    loss = masked_mean(maps["geo_rad"], maps["valid"])
+    valid = maps["valid"]
+    if loss_min_target_deg > 0.0:
+        active = maps["zero_geo_deg"] >= loss_min_target_deg
+        valid = valid & active
+        if int(valid.sum().detach().cpu()) == 0:
+            valid = maps["valid"]
+
+    weights = None
+    if loss_motion_weight > 0.0:
+        ref = max(loss_motion_ref_deg, 1e-6)
+        weights = 1.0 + loss_motion_weight * (maps["zero_geo_deg"] / ref).clamp(max=1.0)
+    loss = weighted_masked_mean(maps["geo_rad"], valid, weights)
     return loss, maps
 
 
-def summarize_maps(maps: Dict[str, torch.Tensor], region_masks: Dict[str, torch.Tensor]) -> Dict[str, float]:
+def active_key(threshold: float) -> str:
+    return f"active_{str(threshold).replace('.', '_')}"
+
+
+def summarize_maps(
+    maps: Dict[str, torch.Tensor],
+    region_masks: Dict[str, torch.Tensor],
+    active_thresholds: list[float],
+) -> Dict[str, float]:
     out: Dict[str, float] = {}
     valid = maps["valid"]
     for region_name, region_mask in region_masks.items():
@@ -161,6 +207,15 @@ def summarize_maps(maps: Dict[str, torch.Tensor], region_masks: Dict[str, torch.
         out[prefix + "geo_deg"] = float(masked_mean(maps["geo_deg"], mask).detach().cpu())
         out[prefix + "zero_geo_deg"] = float(masked_mean(maps["zero_geo_deg"], mask).detach().cpu())
         out[prefix + "tangent_epe_rad"] = float(masked_mean(maps["tangent_epe_rad"], mask).detach().cpu())
+    for threshold in active_thresholds:
+        mask = valid & (maps["zero_geo_deg"] >= threshold)
+        count = int(mask.sum().item())
+        prefix = active_key(threshold) + "_"
+        out[prefix + "count"] = float(count)
+        out[prefix + "frac"] = float(count) / max(float(valid.sum().item()), 1.0)
+        if count > 0:
+            out[prefix + "geo_deg"] = float(masked_mean(maps["geo_deg"], mask).detach().cpu())
+            out[prefix + "zero_geo_deg"] = float(masked_mean(maps["zero_geo_deg"], mask).detach().cpu())
     return out
 
 
@@ -175,39 +230,76 @@ def evaluate(
     basis_east: torch.Tensor,
     basis_north: torch.Tensor,
     region_masks: Dict[str, torch.Tensor],
+    active_thresholds: list[float],
     device: torch.device,
 ) -> Dict[str, float]:
     model.eval()
     totals: Dict[str, float] = {}
     counts: Dict[str, float] = {}
+    active_counts: Dict[str, float] = {}
+    target_chunks: list[torch.Tensor] = []
     for batch in loader:
         batch = move_batch(batch, device)
         pred = model(batch["frame1"], batch["frame2"], index, weight, valid_index, points)
         maps = compute_maps(pred, batch, points, basis_east, basis_north)
-        summary = summarize_maps(maps, region_masks)
-        for key, value in summary.items():
-            if key.endswith("_count"):
-                continue
-            region = next((name for name in region_masks if key.startswith(f"{name}_")), "")
-            if not region:
-                continue
-            count = summary.get(f"{region}_count", 0.0)
-            totals[key] = totals.get(key, 0.0) + value * count
-            counts[key] = counts.get(key, 0.0) + count
+        valid = maps["valid"]
+        target_chunks.append(maps["zero_geo_deg"][valid].detach().float().cpu())
 
-    return {key: totals[key] / max(counts[key], 1.0) for key in sorted(totals)}
+        for region_name, region_mask in region_masks.items():
+            mask = valid & region_mask.unsqueeze(0)
+            count = float(mask.sum().item())
+            if count == 0.0:
+                continue
+            for metric_name in ("geo_deg", "zero_geo_deg", "tangent_epe_rad"):
+                key = f"{region_name}_{metric_name}"
+                totals[key] = totals.get(key, 0.0) + float((maps[metric_name] * mask).sum().detach().cpu())
+                counts[key] = counts.get(key, 0.0) + count
+
+        for threshold in active_thresholds:
+            prefix = active_key(threshold)
+            mask = valid & (maps["zero_geo_deg"] >= threshold)
+            count = float(mask.sum().item())
+            active_counts[prefix] = active_counts.get(prefix, 0.0) + count
+            if count == 0.0:
+                continue
+            for metric_name in ("geo_deg", "zero_geo_deg", "tangent_epe_rad"):
+                key = f"{prefix}_{metric_name}"
+                totals[key] = totals.get(key, 0.0) + float((maps[metric_name] * mask).sum().detach().cpu())
+                counts[key] = counts.get(key, 0.0) + count
+
+    metrics = {key: totals[key] / max(counts[key], 1.0) for key in sorted(totals)}
+    global_count = max(counts.get("global_geo_deg", 0.0), 1.0)
+    for prefix, count in active_counts.items():
+        metrics[f"{prefix}_frac"] = count / global_count
+    if target_chunks:
+        target = torch.cat(target_chunks)
+        metrics["target_geo_deg_p50"] = float(torch.quantile(target, 0.50))
+        metrics["target_geo_deg_p90"] = float(torch.quantile(target, 0.90))
+        metrics["target_geo_deg_p95"] = float(torch.quantile(target, 0.95))
+    return metrics
 
 
 def print_metrics(prefix: str, metrics: Dict[str, float]) -> None:
     keys = [
         "global_geo_deg",
         "global_zero_geo_deg",
+        "target_geo_deg_p50",
+        "target_geo_deg_p90",
         "poles_geo_deg",
         "poles_zero_geo_deg",
         "equator_geo_deg",
         "equator_zero_geo_deg",
         "seam_geo_deg",
         "seam_zero_geo_deg",
+        "active_0_25_frac",
+        "active_0_25_geo_deg",
+        "active_0_25_zero_geo_deg",
+        "active_0_5_frac",
+        "active_0_5_geo_deg",
+        "active_0_5_zero_geo_deg",
+        "active_1_0_frac",
+        "active_1_0_geo_deg",
+        "active_1_0_zero_geo_deg",
     ]
     items = [f"{key}={metrics[key]:.4f}" for key in keys if key in metrics]
     print(f"{prefix} " + " ".join(items), flush=True)
@@ -218,6 +310,7 @@ def main() -> None:
     set_seed(args.seed)
     device = get_device(args.device)
     os.makedirs(args.output_dir, exist_ok=True)
+    active_thresholds = parse_thresholds(args.active_thresholds_deg)
 
     index, weight, valid_index, points, basis_east, basis_north = build_healpix(args, device)
     region_masks = build_region_masks(points)
@@ -265,6 +358,7 @@ def main() -> None:
         hidden_channels=args.hidden_channels,
         feature_channels=args.feature_channels,
         max_flow_rad=args.max_flow_rad,
+        zero_init_flow_head=args.zero_init_flow_head,
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     amp_enabled = args.amp and device.type == "cuda"
@@ -273,8 +367,17 @@ def main() -> None:
     batch = move_batch(next(iter(train_loader)), device)
     with torch.amp.autocast(device_type="cuda", enabled=amp_enabled):
         pred, debug = model(batch["frame1"], batch["frame2"], index, weight, valid_index, points, return_debug=True)
-        loss, maps = compute_loss(pred, batch, points, basis_east, basis_north)
-    smoke_metrics = summarize_maps(maps, region_masks)
+        loss, maps = compute_loss(
+            pred,
+            batch,
+            points,
+            basis_east,
+            basis_north,
+            args.loss_min_target_deg,
+            args.loss_motion_weight,
+            args.loss_motion_ref_deg,
+        )
+    smoke_metrics = summarize_maps(maps, region_masks, active_thresholds)
     print(
         "smoke "
         f"device={device} "
@@ -303,17 +406,38 @@ def main() -> None:
         optimizer.zero_grad(set_to_none=True)
         with torch.amp.autocast(device_type="cuda", enabled=amp_enabled):
             pred = model(batch["frame1"], batch["frame2"], index, weight, valid_index, points)
-            loss, maps = compute_loss(pred, batch, points, basis_east, basis_north)
+            loss, maps = compute_loss(
+                pred,
+                batch,
+                points,
+                basis_east,
+                basis_north,
+                args.loss_min_target_deg,
+                args.loss_motion_weight,
+                args.loss_motion_ref_deg,
+            )
         scaler.scale(loss).backward()
         scaler.step(optimizer)
         scaler.update()
 
         if step == 1 or step == args.steps or step % args.log_every == 0:
-            metrics = summarize_maps(maps, region_masks)
+            metrics = summarize_maps(maps, region_masks, active_thresholds)
             print(f"step={step:06d} loss_rad={float(loss.detach().cpu()):.6f}", flush=True)
             print_metrics("train", metrics)
 
-    metrics = evaluate(model, val_loader, index, weight, valid_index, points, basis_east, basis_north, region_masks, device)
+    metrics = evaluate(
+        model,
+        val_loader,
+        index,
+        weight,
+        valid_index,
+        points,
+        basis_east,
+        basis_north,
+        region_masks,
+        active_thresholds,
+        device,
+    )
     metrics["elapsed_s"] = time.time() - start
     print_metrics("validation", metrics)
     print(f"elapsed_s={metrics['elapsed_s']:.1f}", flush=True)
