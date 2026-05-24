@@ -190,6 +190,21 @@ def active_key(threshold: float) -> str:
     return f"active_{str(threshold).replace('.', '_')}"
 
 
+def add_improvement_metrics(metrics: Dict[str, float]) -> Dict[str, float]:
+    for key, value in list(metrics.items()):
+        if not key.endswith("_geo_deg") or key.endswith("_zero_geo_deg") or key.startswith("target_"):
+            continue
+        prefix = key[: -len("_geo_deg")]
+        zero_key = f"{prefix}_zero_geo_deg"
+        if zero_key not in metrics:
+            continue
+        zero = metrics[zero_key]
+        improvement = zero - value
+        metrics[f"{prefix}_improvement_deg"] = improvement
+        metrics[f"{prefix}_improvement_pct"] = 100.0 * improvement / zero if abs(zero) > 1e-12 else 0.0
+    return metrics
+
+
 def summarize_maps(
     maps: Dict[str, torch.Tensor],
     region_masks: Dict[str, torch.Tensor],
@@ -216,7 +231,7 @@ def summarize_maps(
         if count > 0:
             out[prefix + "geo_deg"] = float(masked_mean(maps["geo_deg"], mask).detach().cpu())
             out[prefix + "zero_geo_deg"] = float(masked_mean(maps["zero_geo_deg"], mask).detach().cpu())
-    return out
+    return add_improvement_metrics(out)
 
 
 @torch.no_grad()
@@ -276,30 +291,37 @@ def evaluate(
         metrics["target_geo_deg_p50"] = float(torch.quantile(target, 0.50))
         metrics["target_geo_deg_p90"] = float(torch.quantile(target, 0.90))
         metrics["target_geo_deg_p95"] = float(torch.quantile(target, 0.95))
-    return metrics
+    return add_improvement_metrics(metrics)
 
 
 def print_metrics(prefix: str, metrics: Dict[str, float]) -> None:
     keys = [
         "global_geo_deg",
         "global_zero_geo_deg",
+        "global_improvement_pct",
         "target_geo_deg_p50",
         "target_geo_deg_p90",
         "poles_geo_deg",
         "poles_zero_geo_deg",
+        "poles_improvement_pct",
         "equator_geo_deg",
         "equator_zero_geo_deg",
+        "equator_improvement_pct",
         "seam_geo_deg",
         "seam_zero_geo_deg",
+        "seam_improvement_pct",
         "active_0_25_frac",
         "active_0_25_geo_deg",
         "active_0_25_zero_geo_deg",
+        "active_0_25_improvement_pct",
         "active_0_5_frac",
         "active_0_5_geo_deg",
         "active_0_5_zero_geo_deg",
+        "active_0_5_improvement_pct",
         "active_1_0_frac",
         "active_1_0_geo_deg",
         "active_1_0_zero_geo_deg",
+        "active_1_0_improvement_pct",
     ]
     items = [f"{key}={metrics[key]:.4f}" for key in keys if key in metrics]
     print(f"{prefix} " + " ".join(items), flush=True)

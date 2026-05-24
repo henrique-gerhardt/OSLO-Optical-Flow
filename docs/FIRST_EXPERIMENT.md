@@ -244,3 +244,42 @@ poles_geo_deg vs poles_zero_geo_deg
 ```
 
 If the active-motion metrics still lose to zero-flow, do not extend training blindly. Move to a multi-hop or coarse-to-fine cost volume before attempting a spherical RAFT update block.
+
+## Zero-Init Result
+
+The zero-initialized run with the same unweighted loss produced a weak but real improvement:
+
+```text
+global:        model 0.4215 deg vs zero-flow 0.4309 deg (+2.17%)
+poles:         model 0.4419 deg vs zero-flow 0.4684 deg (+5.65%)
+equator:       model 0.4045 deg vs zero-flow 0.4053 deg (+0.21%)
+seam:          model 0.8419 deg vs zero-flow 0.8337 deg (-0.99%)
+active >=0.25: model 0.9926 deg vs zero-flow 1.0840 deg (+8.43%)
+active >=0.5:  model 1.6506 deg vs zero-flow 1.7596 deg (+6.19%)
+active >=1.0:  model 3.8770 deg vs zero-flow 3.9832 deg (+2.67%)
+```
+
+The target motion distribution confirms why zero-flow is hard to beat:
+
+```text
+p50: 0.1312 deg
+p90: 0.7554 deg
+p95: 1.0690 deg
+active >=0.25 deg: 34.62%
+active >=0.5 deg:  17.95%
+active >=1.0 deg:   5.78%
+```
+
+Decision:
+
+- The MVP has enough signal to justify one more architectural step.
+- The seam regression must be fixed before claiming spherical advantage.
+- The next run should use `scripts/flow360_train_active_r5.sh`; if it improves active metrics but worsens seam, move to multi-hop/coarse-to-fine instead of just increasing training time.
+
+The runner now writes improvement metrics such as:
+
+```text
+global_improvement_deg / global_improvement_pct
+active_0_5_improvement_deg / active_0_5_improvement_pct
+seam_improvement_deg / seam_improvement_pct
+```

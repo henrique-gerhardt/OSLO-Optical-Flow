@@ -114,7 +114,7 @@ Current loader behavior:
 - Horizontal ERP motion wraps around the seam.
 - Vertical endpoints outside image bounds are masked invalid.
 
-## First Experiment
+## FLOW360 Experiments
 
 The first completed GPU run used HEALPix `r=5`:
 
@@ -152,7 +152,46 @@ Implemented after this run:
 - motion-weighted loss options: `--loss-motion-weight`, `--loss-motion-ref-deg`, `--loss-min-target-deg`;
 - `scripts/flow360_train_active_r5.sh`.
 
-Recommended next run:
+Second completed run with zero-initialized flow head and unweighted loss:
+
+```text
+steps:              2,000
+loss-motion-weight: 0.0
+elapsed:            125.1 s
+```
+
+Validation result:
+
+```text
+global:        model 0.4215 deg vs zero-flow 0.4309 deg (+2.17%)
+poles:         model 0.4419 deg vs zero-flow 0.4684 deg (+5.65%)
+equator:       model 0.4045 deg vs zero-flow 0.4053 deg (+0.21%)
+seam:          model 0.8419 deg vs zero-flow 0.8337 deg (-0.99%)
+active >=0.25: model 0.9926 deg vs zero-flow 1.0840 deg (+8.43%)
+active >=0.5:  model 1.6506 deg vs zero-flow 1.7596 deg (+6.19%)
+active >=1.0:  model 3.8770 deg vs zero-flow 3.9832 deg (+2.67%)
+```
+
+Target motion distribution:
+
+```text
+p50: 0.1312 deg
+p90: 0.7554 deg
+p95: 1.0690 deg
+active >=0.25 deg: 34.62%
+active >=0.5 deg:  17.95%
+active >=1.0 deg:   5.78%
+```
+
+Updated interpretation:
+
+- The MVP now shows real positive signal on FLOW360.
+- The global gain is small because most nodes have little motion.
+- The gain is stronger on active-motion subsets and at poles.
+- The ERP seam is still worse than zero-flow, so seam handling/cost-volume support is the clearest weakness.
+- This is enough evidence to invest in one architectural step beyond the direct MVP, but not yet enough to port full RAFT.
+
+Recommended next run, still before architecture changes:
 
 ```bash
 docker run --rm --gpus all --shm-size 16g \
@@ -166,7 +205,7 @@ docker run --rm --gpus all --shm-size 16g \
 Success criteria for continuing:
 
 - Model beats zero-flow on `active_0_5_*` and `active_1_0_*`.
-- Model beats zero-flow more clearly at poles and seam than at equator.
+- Model does not regress at the seam.
 - Training loss decreases without numerical instability.
 - Validation does not collapse after a few hundred steps.
 
@@ -179,13 +218,13 @@ If this fails:
 
 ## Next Engineering Steps
 
-1. Rebuild the Docker image after the code changes.
-2. Run active-motion `r=5` training.
-3. Inspect `outputs/flow360_metrics.json`, especially active-motion metrics.
-4. If active metrics beat zero-flow, run:
+1. Rebuild the Docker image after the metric updates.
+2. Run motion-weighted `r=5` training.
+3. Inspect `outputs/flow360_metrics.json`, especially active-motion and seam metrics.
+4. If active metrics improve further and seam does not regress, run:
    - `direction=both`;
    - `resolution=6`;
    - longer training.
-5. If active metrics still lose to zero-flow, implement multi-hop or coarse-to-fine local cost volume.
+5. If seam still loses, implement multi-hop or coarse-to-fine local cost volume before increasing model size.
 6. Add an ERP RAFT/PWCNet baseline and evaluate with the same spherical metrics.
 7. Only then consider a spherical RAFT update block.

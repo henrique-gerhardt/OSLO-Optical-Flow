@@ -87,6 +87,6 @@ docker run --rm --gpus all --shm-size 16g \
 
 ## Status
 
-The first GPU experiment ran on FLOW360 and did not beat zero-flow globally, so the project now focuses on active-motion diagnostics before any larger RAFT-style port. The next recommended run is `scripts/flow360_train_active_r5.sh`, which uses zero flow-head initialization and motion-weighted loss.
+The zero-initialized FLOW360 run now beats zero-flow globally and on active-motion subsets, but still regresses at the ERP seam. The project has enough signal for one architectural step beyond the direct MVP, with seam handling and multi-hop/coarse-to-fine cost volume as the next priority before any full RAFT-style port.
 
 See [docs/CONTEXT_AND_STATUS.md](docs/CONTEXT_AND_STATUS.md) for the plan, decisions already made, prior synthetic results, and next engineering steps.
