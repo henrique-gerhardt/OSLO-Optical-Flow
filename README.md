@@ -16,7 +16,7 @@ Implemented:
 - HEALPix sampling using OSLO neighbor-grid `.npz` files.
 - OSLO-style model with:
   - Siamese `SDPAConv` feature encoder;
-  - local center + 8-neighbor cost volume;
+  - configurable local cost volume over 1-hop or multi-hop HEALPix neighborhoods;
   - spherical decoder that predicts tangent flow `[east, north]`;
   - geodesic endpoint loss.
 - Docker CUDA runtime for Linux/NVIDIA hosts.
@@ -25,7 +25,7 @@ Implemented:
 Not implemented yet:
 
 - Full RAFT recurrent update block on the sphere.
-- Multi-hop or coarse-to-fine cost volume.
+- Coarse-to-fine cost volume.
 - ERP RAFT/PWCNet baseline runner.
 - Flow visualization/export utilities.
 - Final benchmark table.
@@ -42,6 +42,7 @@ docker-compose.flow360.yml     Compose entrypoint for the first experiment
 scripts/flow360_smoke.sh       Minimal CUDA smoke test
 scripts/flow360_train_r5.sh    First training run for RTX 3090
 scripts/flow360_train_active_r5.sh Motion-weighted follow-up run
+scripts/flow360_train_multihop_r5.sh Multi-hop cost-volume run
 docs/                          Project context, status, and run commands
 README_OSLO_ORIGINAL.md        Original OSLO README kept for reference
 ```
@@ -87,6 +88,8 @@ docker run --rm --gpus all --shm-size 16g \
 
 ## Status
 
-The zero-initialized FLOW360 run now beats zero-flow globally and on active-motion subsets, but still regresses at the ERP seam. The project has enough signal for one architectural step beyond the direct MVP, with seam handling and multi-hop/coarse-to-fine cost volume as the next priority before any full RAFT-style port.
+The zero-initialized FLOW360 run beats zero-flow globally and on active-motion subsets, while the motion-weighted run improves active-motion nodes further but worsens global and seam metrics. The project has enough signal for one architectural step beyond the direct MVP; multi-hop/coarse-to-fine cost volume is now the next priority before any full RAFT-style port.
+
+The first architectural step is now implemented as `--cost-num-hops`. It expands only the local matching/correlation support; the OSLO `SDPAConv` encoder still uses the original 1-hop neighborhood. Start with `COST_NUM_HOPS=2` using `scripts/flow360_train_multihop_r5.sh`.
 
 See [docs/CONTEXT_AND_STATUS.md](docs/CONTEXT_AND_STATUS.md) for the plan, decisions already made, prior synthetic results, and next engineering steps.

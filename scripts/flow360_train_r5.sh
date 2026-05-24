@@ -8,6 +8,7 @@ python run_flow360_mvp.py \
   --device cuda \
   --amp \
   --resolution "${RESOLUTION:-5}" \
+  --cost-num-hops "${COST_NUM_HOPS:-1}" \
   --batch-size "${BATCH_SIZE:-1}" \
   --steps "${STEPS:-2000}" \
   --lr "${LR:-1e-4}" \

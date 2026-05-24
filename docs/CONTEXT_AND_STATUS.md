@@ -157,19 +157,19 @@ Second completed run with zero-initialized flow head and unweighted loss:
 ```text
 steps:              2,000
 loss-motion-weight: 0.0
-elapsed:            125.1 s
+elapsed:            126.1 s
 ```
 
 Validation result:
 
 ```text
-global:        model 0.4215 deg vs zero-flow 0.4309 deg (+2.17%)
-poles:         model 0.4419 deg vs zero-flow 0.4684 deg (+5.65%)
-equator:       model 0.4045 deg vs zero-flow 0.4053 deg (+0.21%)
-seam:          model 0.8419 deg vs zero-flow 0.8337 deg (-0.99%)
-active >=0.25: model 0.9926 deg vs zero-flow 1.0840 deg (+8.43%)
-active >=0.5:  model 1.6506 deg vs zero-flow 1.7596 deg (+6.19%)
-active >=1.0:  model 3.8770 deg vs zero-flow 3.9832 deg (+2.67%)
+global:        model 0.4209 deg vs zero-flow 0.4309 deg (+2.32%)
+poles:         model 0.4408 deg vs zero-flow 0.4684 deg (+5.89%)
+equator:       model 0.4039 deg vs zero-flow 0.4053 deg (+0.35%)
+seam:          model 0.8408 deg vs zero-flow 0.8337 deg (-0.85%)
+active >=0.25: model 0.9943 deg vs zero-flow 1.0840 deg (+8.27%)
+active >=0.5:  model 1.6533 deg vs zero-flow 1.7596 deg (+6.04%)
+active >=1.0:  model 3.8801 deg vs zero-flow 3.9832 deg (+2.59%)
 ```
 
 Target motion distribution:
@@ -186,12 +186,13 @@ active >=1.0 deg:   5.78%
 Updated interpretation:
 
 - The MVP now shows real positive signal on FLOW360.
+- The repeated zero-init run is stable: results are within noise of the previous run.
 - The global gain is small because most nodes have little motion.
 - The gain is stronger on active-motion subsets and at poles.
 - The ERP seam is still worse than zero-flow, so seam handling/cost-volume support is the clearest weakness.
 - This is enough evidence to invest in one architectural step beyond the direct MVP, but not yet enough to port full RAFT.
 
-Recommended next run, still before architecture changes:
+This second run was not motion-weighted yet (`loss-motion-weight=0.0`). Recommended next run, still before architecture changes:
 
 ```bash
 docker run --rm --gpus all --shm-size 16g \
@@ -201,6 +202,43 @@ docker run --rm --gpus all --shm-size 16g \
   oslo-flow360:cuda \
   bash scripts/flow360_train_active_r5.sh
 ```
+
+Third completed run with motion-weighted loss:
+
+```text
+steps:              3,000
+loss-motion-weight: 4.0
+loss-motion-ref:    1.0 deg
+elapsed:            174.0 s
+```
+
+Validation result:
+
+```text
+global:        model 0.4353 deg vs zero-flow 0.4309 deg (-1.02%)
+poles:         model 0.4599 deg vs zero-flow 0.4684 deg (+1.82%)
+equator:       model 0.4140 deg vs zero-flow 0.4053 deg (-2.13%)
+seam:          model 0.8604 deg vs zero-flow 0.8337 deg (-3.21%)
+active >=0.25: model 0.9679 deg vs zero-flow 1.0840 deg (+10.71%)
+active >=0.5:  model 1.5992 deg vs zero-flow 1.7596 deg (+9.11%)
+active >=1.0:  model 3.8099 deg vs zero-flow 3.9832 deg (+4.35%)
+```
+
+Motion-weighted interpretation:
+
+- Weighting by motion does what it is supposed to do: active-motion improvements become stronger.
+- The tradeoff is clear: global, equator, and seam regress.
+- The seam regression grows from about `-0.85%` to `-3.21%`.
+- More loss weighting is unlikely to solve the core issue because it does not expand the model's correspondence search support.
+- The next useful implementation should be architectural: multi-hop first, then coarse-to-fine if multi-hop is not enough.
+
+Multi-hop cost volume implementation:
+
+- `run_flow360_mvp.py` now exposes `--cost-num-hops`.
+- `spherical_flow/models.py` accepts a larger cost graph separately from the 1-hop encoder graph.
+- `cost-num-hops=1` keeps the original center + 8-neighbor cost volume.
+- `cost-num-hops=2` uses center + 24 neighbors, so the smoke log should show `cost_shape=(1, 12288, 25)` at `r=5`.
+- `scripts/flow360_train_multihop_r5.sh` runs the `r=5`, `cost-num-hops=2` experiment.
 
 Success criteria for continuing:
 
@@ -218,13 +256,14 @@ If this fails:
 
 ## Next Engineering Steps
 
-1. Rebuild the Docker image after the metric updates.
-2. Run motion-weighted `r=5` training.
-3. Inspect `outputs/flow360_metrics.json`, especially active-motion and seam metrics.
-4. If active metrics improve further and seam does not regress, run:
+1. Rebuild the Docker image so `--cost-num-hops` and `scripts/flow360_train_multihop_r5.sh` are available.
+2. Re-run `r=5` multi-hop with unweighted loss.
+3. Re-run `r=5` multi-hop with `LOSS_MOTION_WEIGHT=4.0`.
+4. Compare global, seam, and active-motion metrics against the current 1-hop baselines.
+5. If seam no longer regresses, run:
    - `direction=both`;
    - `resolution=6`;
    - longer training.
-5. If seam still loses, implement multi-hop or coarse-to-fine local cost volume before increasing model size.
-6. Add an ERP RAFT/PWCNet baseline and evaluate with the same spherical metrics.
-7. Only then consider a spherical RAFT update block.
+6. If seam still regresses, implement coarse-to-fine matching before any RAFT recurrence.
+7. Add an ERP RAFT/PWCNet baseline and evaluate with the same spherical metrics.
+8. Only then consider a spherical RAFT update block.

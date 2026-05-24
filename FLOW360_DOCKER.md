@@ -99,6 +99,32 @@ steps:                3,000
 
 The model now zero-initializes its final flow head by default, so step 1 starts at the zero-flow baseline instead of emitting a large random flow field.
 
+## Multi-hop cost-volume run
+
+Use this run after the 1-hop baselines. It keeps the OSLO `SDPAConv` encoder on the original 1-hop graph and expands only the local matching/correlation support:
+
+```bash
+docker run --rm --gpus all --shm-size 16g \
+  -v /absolute/path/to/FLOW360:/data/flow360:ro \
+  -v /absolute/path/to/oslo_data:/data/oslo_data:ro \
+  -v "$PWD/outputs:/outputs" \
+  oslo-flow360:cuda \
+  bash scripts/flow360_train_multihop_r5.sh
+```
+
+Default setting:
+
+```text
+cost-num-hops: 2
+cost shape:    [B, 12288, 25] at r=5
+```
+
+To repeat the motion-weighted variant with the same expanded cost volume:
+
+```bash
+LOSS_MOTION_WEIGHT=4.0 OUTPUT_DIR=/outputs/r5_costh2_active bash scripts/flow360_train_multihop_r5.sh
+```
+
 For the RTX 3090, start with `r=5`. If memory is comfortable, try `r=6` with `BATCH_SIZE=1`; if it OOMs, keep `r=5` and improve the model with multi-hop/coarse-to-fine before scaling resolution.
 
 Example override:
@@ -137,6 +163,6 @@ The runner also reports active-motion subsets for target displacements above 0.2
 
 ## Notes
 
-- The current model is still the MVP: Siamese `SDPAConv` encoder, local center+8-neighbor cost volume, and direct tangent-flow regression.
+- The current model is still the MVP: Siamese `SDPAConv` encoder, configurable local cost volume, and direct tangent-flow regression.
 - FLOW360 flow is assumed to be ERP pixel displacement in `.npy` files. Use `--flow-scale` if the dataset copy stores normalized flow instead of pixels.
 - Forward flow uses `fflows/<frame>.npy` for `frame_t -> frame_t+1`; backward flow uses `bflows/<frame>.npy` for `frame_t -> frame_t-1`.

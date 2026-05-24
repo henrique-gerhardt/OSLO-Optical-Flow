@@ -247,16 +247,16 @@ If the active-motion metrics still lose to zero-flow, do not extend training bli
 
 ## Zero-Init Result
 
-The zero-initialized run with the same unweighted loss produced a weak but real improvement:
+The zero-initialized run with the same unweighted loss produced a weak but real improvement. A repeat run with explicit improvement metrics produced:
 
 ```text
-global:        model 0.4215 deg vs zero-flow 0.4309 deg (+2.17%)
-poles:         model 0.4419 deg vs zero-flow 0.4684 deg (+5.65%)
-equator:       model 0.4045 deg vs zero-flow 0.4053 deg (+0.21%)
-seam:          model 0.8419 deg vs zero-flow 0.8337 deg (-0.99%)
-active >=0.25: model 0.9926 deg vs zero-flow 1.0840 deg (+8.43%)
-active >=0.5:  model 1.6506 deg vs zero-flow 1.7596 deg (+6.19%)
-active >=1.0:  model 3.8770 deg vs zero-flow 3.9832 deg (+2.67%)
+global:        model 0.4209 deg vs zero-flow 0.4309 deg (+2.32%)
+poles:         model 0.4408 deg vs zero-flow 0.4684 deg (+5.89%)
+equator:       model 0.4039 deg vs zero-flow 0.4053 deg (+0.35%)
+seam:          model 0.8408 deg vs zero-flow 0.8337 deg (-0.85%)
+active >=0.25: model 0.9943 deg vs zero-flow 1.0840 deg (+8.27%)
+active >=0.5:  model 1.6533 deg vs zero-flow 1.7596 deg (+6.04%)
+active >=1.0:  model 3.8801 deg vs zero-flow 3.9832 deg (+2.59%)
 ```
 
 The target motion distribution confirms why zero-flow is hard to beat:
@@ -273,8 +273,9 @@ active >=1.0 deg:   5.78%
 Decision:
 
 - The MVP has enough signal to justify one more architectural step.
+- The zero-init result is repeatable; the small differences between runs are not changing the conclusion.
 - The seam regression must be fixed before claiming spherical advantage.
-- The next run should use `scripts/flow360_train_active_r5.sh`; if it improves active metrics but worsens seam, move to multi-hop/coarse-to-fine instead of just increasing training time.
+- This repeat was still unweighted (`loss-motion-weight=0.0`), so the next run should use `scripts/flow360_train_active_r5.sh`; if it improves active metrics but worsens seam, move to multi-hop/coarse-to-fine instead of just increasing training time.
 
 The runner now writes improvement metrics such as:
 
@@ -283,3 +284,84 @@ global_improvement_deg / global_improvement_pct
 active_0_5_improvement_deg / active_0_5_improvement_pct
 seam_improvement_deg / seam_improvement_pct
 ```
+
+## Motion-Weighted Result
+
+The `scripts/flow360_train_active_r5.sh` run used:
+
+```text
+steps:                3,000
+loss-motion-weight:   4.0
+loss-motion-ref-deg:  1.0
+```
+
+It improved active-motion nodes more strongly:
+
+```text
+active >=0.25: model 0.9679 deg vs zero-flow 1.0840 deg (+10.71%)
+active >=0.5:  model 1.5992 deg vs zero-flow 1.7596 deg (+9.11%)
+active >=1.0:  model 3.8099 deg vs zero-flow 3.9832 deg (+4.35%)
+```
+
+But it regressed global/equator/seam:
+
+```text
+global:  model 0.4353 deg vs zero-flow 0.4309 deg (-1.02%)
+equator: model 0.4140 deg vs zero-flow 0.4053 deg (-2.13%)
+seam:    model 0.8604 deg vs zero-flow 0.8337 deg (-3.21%)
+poles:   model 0.4599 deg vs zero-flow 0.4684 deg (+1.82%)
+```
+
+Decision:
+
+- Motion weighting confirms that the model can learn non-zero motion where motion exists.
+- The stronger seam regression means loss weighting alone is not the right next lever.
+- Do not spend the next iteration on longer weighted training.
+- Implement multi-hop or coarse-to-fine local cost volume next, then compare against both current baselines:
+  - zero-init unweighted: best global/seam tradeoff so far;
+  - motion-weighted: best active-motion performance so far.
+
+## Multi-Hop Cost Volume Run
+
+The first architectural step is implemented as `--cost-num-hops`. It expands the matching support used by the local cost volume while keeping the OSLO `SDPAConv` feature encoder on the original 1-hop graph.
+
+For `r=5`:
+
+```text
+cost-num-hops=1 -> center + 8 neighbors  -> cost_shape [B, 12288, 9]
+cost-num-hops=2 -> center + 24 neighbors -> cost_shape [B, 12288, 25]
+```
+
+Run the unweighted multi-hop test first:
+
+```bash
+docker run --rm --gpus all --shm-size 16g \
+  -v "$FLOW360_ROOT:/data/flow360:ro" \
+  -v "$OSLO_DATA_ROOT:/data/oslo_data:ro" \
+  -v "$OUTPUT_DIR:/outputs" \
+  oslo-flow360:cuda \
+  bash scripts/flow360_train_multihop_r5.sh
+```
+
+Then run the motion-weighted variant:
+
+```bash
+docker run --rm --gpus all --shm-size 16g \
+  -v "$FLOW360_ROOT:/data/flow360:ro" \
+  -v "$OSLO_DATA_ROOT:/data/oslo_data:ro" \
+  -v "$OUTPUT_DIR:/outputs" \
+  oslo-flow360:cuda \
+  bash -lc 'LOSS_MOTION_WEIGHT=4.0 OUTPUT_DIR=/outputs/r5_costh2_active bash scripts/flow360_train_multihop_r5.sh'
+```
+
+Compare against the previous bests:
+
+```text
+Unweighted 1-hop:
+global +2.32%, seam -0.85%, active>=0.5 +6.04%
+
+Motion-weighted 1-hop:
+global -1.02%, seam -3.21%, active>=0.5 +9.11%
+```
+
+The multi-hop run is interesting only if it preserves or improves the active metrics without making the seam worse. If seam remains negative, the next step should be coarse-to-fine matching rather than more loss weighting.

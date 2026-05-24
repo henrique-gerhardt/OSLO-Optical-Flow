@@ -32,6 +32,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--val-split", default="test")
     parser.add_argument("--direction", default="forward", choices=["forward", "backward", "both"])
     parser.add_argument("--resolution", type=int, default=5, help="HEALPix order; r=5 has 12,288 nodes.")
+    parser.add_argument(
+        "--cost-num-hops",
+        type=int,
+        default=1,
+        help="HEALPix neighborhood radius used only by the local cost volume; encoder convolutions stay 1-hop.",
+    )
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--steps", type=int, default=2000)
     parser.add_argument("--lr", type=float, default=1e-4)
@@ -104,18 +110,35 @@ def parse_thresholds(text: str) -> list[float]:
     return [float(value.strip()) for value in text.split(",") if value.strip()]
 
 
+def num_neighbors_for_hops(num_hops: int) -> int:
+    if num_hops <= 0:
+        raise ValueError("num_hops must be positive")
+    return 8 * num_hops * (num_hops + 1) // 2
+
+
 def build_healpix(args: argparse.Namespace, device: torch.device) -> tuple:
     grid_file = Path(args.grid_dir) / f"healpix_grid_resolution_{args.resolution}.npz"
     if not grid_file.is_file():
         raise FileNotFoundError(f"Missing HEALPix grid file: {grid_file}")
 
     index, weight, valid_index = healpix_grid_struct(str(grid_file), args.resolution, num_hops=1)
+    if args.cost_num_hops == 1:
+        cost_index = index
+        cost_valid_index = valid_index
+    else:
+        cost_index, _, cost_valid_index = healpix_grid_struct(
+            str(grid_file),
+            args.resolution,
+            num_hops=args.cost_num_hops,
+        )
     points = healpix_unit_vectors(args.resolution)
     basis_east, basis_north = tangent_basis(points)
     return (
         index.to(device),
         weight.to(device),
         valid_index.to(device),
+        cost_index.to(device),
+        cost_valid_index.to(device),
         points.to(device),
         basis_east.to(device),
         basis_north.to(device),
@@ -241,6 +264,8 @@ def evaluate(
     index: torch.Tensor,
     weight: torch.Tensor,
     valid_index: torch.Tensor,
+    cost_index: torch.Tensor,
+    cost_valid_index: torch.Tensor,
     points: torch.Tensor,
     basis_east: torch.Tensor,
     basis_north: torch.Tensor,
@@ -255,7 +280,16 @@ def evaluate(
     target_chunks: list[torch.Tensor] = []
     for batch in loader:
         batch = move_batch(batch, device)
-        pred = model(batch["frame1"], batch["frame2"], index, weight, valid_index, points)
+        pred = model(
+            batch["frame1"],
+            batch["frame2"],
+            index,
+            weight,
+            valid_index,
+            points,
+            cost_index,
+            cost_valid_index,
+        )
         maps = compute_maps(pred, batch, points, basis_east, basis_north)
         valid = maps["valid"]
         target_chunks.append(maps["zero_geo_deg"][valid].detach().float().cpu())
@@ -334,7 +368,10 @@ def main() -> None:
     os.makedirs(args.output_dir, exist_ok=True)
     active_thresholds = parse_thresholds(args.active_thresholds_deg)
 
-    index, weight, valid_index, points, basis_east, basis_north = build_healpix(args, device)
+    index, weight, valid_index, cost_index, cost_valid_index, points, basis_east, basis_north = build_healpix(
+        args,
+        device,
+    )
     region_masks = build_region_masks(points)
 
     train_dataset = Flow360Dataset(
@@ -381,6 +418,7 @@ def main() -> None:
         feature_channels=args.feature_channels,
         max_flow_rad=args.max_flow_rad,
         zero_init_flow_head=args.zero_init_flow_head,
+        cost_num_neighbors=num_neighbors_for_hops(args.cost_num_hops),
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     amp_enabled = args.amp and device.type == "cuda"
@@ -388,7 +426,17 @@ def main() -> None:
 
     batch = move_batch(next(iter(train_loader)), device)
     with torch.amp.autocast(device_type="cuda", enabled=amp_enabled):
-        pred, debug = model(batch["frame1"], batch["frame2"], index, weight, valid_index, points, return_debug=True)
+        pred, debug = model(
+            batch["frame1"],
+            batch["frame2"],
+            index,
+            weight,
+            valid_index,
+            points,
+            cost_index,
+            cost_valid_index,
+            return_debug=True,
+        )
         loss, maps = compute_loss(
             pred,
             batch,
@@ -405,6 +453,7 @@ def main() -> None:
         f"device={device} "
         f"amp={amp_enabled} "
         f"nodes={points.size(0)} "
+        f"cost_num_hops={args.cost_num_hops} "
         f"pred_shape={tuple(pred.shape)} "
         f"cost_shape={tuple(debug['cost'].shape)} "
         f"loss_rad={float(loss.detach().cpu()):.6f}",
@@ -427,7 +476,16 @@ def main() -> None:
         batch = move_batch(batch, device)
         optimizer.zero_grad(set_to_none=True)
         with torch.amp.autocast(device_type="cuda", enabled=amp_enabled):
-            pred = model(batch["frame1"], batch["frame2"], index, weight, valid_index, points)
+            pred = model(
+                batch["frame1"],
+                batch["frame2"],
+                index,
+                weight,
+                valid_index,
+                points,
+                cost_index,
+                cost_valid_index,
+            )
             loss, maps = compute_loss(
                 pred,
                 batch,
@@ -453,6 +511,8 @@ def main() -> None:
         index,
         weight,
         valid_index,
+        cost_index,
+        cost_valid_index,
         points,
         basis_east,
         basis_north,
