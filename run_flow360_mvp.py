@@ -16,6 +16,7 @@ from spherical_flow import (
     geodesic_distance,
     healpix_grid_struct,
     healpix_unit_vectors,
+    logmap,
     tangent_basis,
 )
 from spherical_flow.flow360 import Flow360Dataset
@@ -46,6 +47,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-flow-rad", type=float, default=1.2)
     parser.add_argument("--no-zero-init-flow-head", dest="zero_init_flow_head", action="store_false")
     parser.set_defaults(zero_init_flow_head=True)
+    parser.add_argument(
+        "--use-displacement-prior",
+        action="store_true",
+        help="Use candidate tangent offsets to build a soft flow prior, then predict residual + gate.",
+    )
+    parser.add_argument(
+        "--cost-prior-temperature",
+        type=float,
+        default=0.05,
+        help="Softmax temperature for converting local cost-volume scores into the displacement prior.",
+    )
     parser.add_argument("--flow-scale", type=float, default=1.0, help="Multiplier for FLOW360 pixel flow values.")
     parser.add_argument("--loss-min-target-deg", type=float, default=0.0)
     parser.add_argument("--loss-motion-weight", type=float, default=0.0)
@@ -116,6 +128,29 @@ def num_neighbors_for_hops(num_hops: int) -> int:
     return 8 * num_hops * (num_hops + 1) // 2
 
 
+def build_cost_candidates(
+    points: torch.Tensor,
+    basis_east: torch.Tensor,
+    basis_north: torch.Tensor,
+    cost_index: torch.Tensor,
+    cost_valid_index: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    n_nodes, num_neighbors = cost_index.shape
+    neighbor_points = points.index_select(0, cost_index.reshape(-1)).reshape(n_nodes, num_neighbors, 3)
+    base = points.unsqueeze(1).expand(-1, num_neighbors, -1).reshape(-1, 3)
+    endpoints = neighbor_points.reshape(-1, 3).unsqueeze(0)
+    east = basis_east.unsqueeze(1).expand(-1, num_neighbors, -1).reshape(-1, 3)
+    north = basis_north.unsqueeze(1).expand(-1, num_neighbors, -1).reshape(-1, 3)
+    neighbor_offsets = logmap(base, endpoints, east, north).squeeze(0).reshape(n_nodes, num_neighbors, 2)
+    neighbor_offsets = torch.where(cost_valid_index.unsqueeze(-1), neighbor_offsets, torch.zeros_like(neighbor_offsets))
+
+    center_offsets = torch.zeros(n_nodes, 1, 2, dtype=points.dtype)
+    center_valid = torch.ones(n_nodes, 1, dtype=torch.bool)
+    offsets = torch.cat([center_offsets, neighbor_offsets], dim=1)
+    valid = torch.cat([center_valid, cost_valid_index], dim=1)
+    return offsets, valid
+
+
 def build_healpix(args: argparse.Namespace, device: torch.device) -> tuple:
     grid_file = Path(args.grid_dir) / f"healpix_grid_resolution_{args.resolution}.npz"
     if not grid_file.is_file():
@@ -133,12 +168,21 @@ def build_healpix(args: argparse.Namespace, device: torch.device) -> tuple:
         )
     points = healpix_unit_vectors(args.resolution)
     basis_east, basis_north = tangent_basis(points)
+    cost_offsets, cost_candidate_valid = build_cost_candidates(
+        points,
+        basis_east,
+        basis_north,
+        cost_index,
+        cost_valid_index,
+    )
     return (
         index.to(device),
         weight.to(device),
         valid_index.to(device),
         cost_index.to(device),
         cost_valid_index.to(device),
+        cost_offsets.to(device),
+        cost_candidate_valid.to(device),
         points.to(device),
         basis_east.to(device),
         basis_north.to(device),
@@ -266,6 +310,8 @@ def evaluate(
     valid_index: torch.Tensor,
     cost_index: torch.Tensor,
     cost_valid_index: torch.Tensor,
+    cost_offsets: torch.Tensor,
+    cost_candidate_valid: torch.Tensor,
     points: torch.Tensor,
     basis_east: torch.Tensor,
     basis_north: torch.Tensor,
@@ -289,6 +335,8 @@ def evaluate(
             points,
             cost_index,
             cost_valid_index,
+            cost_offsets,
+            cost_candidate_valid,
         )
         maps = compute_maps(pred, batch, points, basis_east, basis_north)
         valid = maps["valid"]
@@ -368,10 +416,18 @@ def main() -> None:
     os.makedirs(args.output_dir, exist_ok=True)
     active_thresholds = parse_thresholds(args.active_thresholds_deg)
 
-    index, weight, valid_index, cost_index, cost_valid_index, points, basis_east, basis_north = build_healpix(
-        args,
-        device,
-    )
+    (
+        index,
+        weight,
+        valid_index,
+        cost_index,
+        cost_valid_index,
+        cost_offsets,
+        cost_candidate_valid,
+        points,
+        basis_east,
+        basis_north,
+    ) = build_healpix(args, device)
     region_masks = build_region_masks(points)
 
     train_dataset = Flow360Dataset(
@@ -419,6 +475,8 @@ def main() -> None:
         max_flow_rad=args.max_flow_rad,
         zero_init_flow_head=args.zero_init_flow_head,
         cost_num_neighbors=num_neighbors_for_hops(args.cost_num_hops),
+        use_displacement_prior=args.use_displacement_prior,
+        cost_prior_temperature=args.cost_prior_temperature,
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     amp_enabled = args.amp and device.type == "cuda"
@@ -435,6 +493,8 @@ def main() -> None:
             points,
             cost_index,
             cost_valid_index,
+            cost_offsets,
+            cost_candidate_valid,
             return_debug=True,
         )
         loss, maps = compute_loss(
@@ -454,6 +514,7 @@ def main() -> None:
         f"amp={amp_enabled} "
         f"nodes={points.size(0)} "
         f"cost_num_hops={args.cost_num_hops} "
+        f"displacement_prior={args.use_displacement_prior} "
         f"pred_shape={tuple(pred.shape)} "
         f"cost_shape={tuple(debug['cost'].shape)} "
         f"loss_rad={float(loss.detach().cpu()):.6f}",
@@ -485,6 +546,8 @@ def main() -> None:
                 points,
                 cost_index,
                 cost_valid_index,
+                cost_offsets,
+                cost_candidate_valid,
             )
             loss, maps = compute_loss(
                 pred,
@@ -513,6 +576,8 @@ def main() -> None:
         valid_index,
         cost_index,
         cost_valid_index,
+        cost_offsets,
+        cost_candidate_valid,
         points,
         basis_east,
         basis_north,

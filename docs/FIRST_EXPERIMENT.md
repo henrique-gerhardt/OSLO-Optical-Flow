@@ -365,3 +365,96 @@ global -1.02%, seam -3.21%, active>=0.5 +9.11%
 ```
 
 The multi-hop run is interesting only if it preserves or improves the active metrics without making the seam worse. If seam remains negative, the next step should be coarse-to-fine matching rather than more loss weighting.
+
+## Multi-Hop Result
+
+Two `cost-num-hops=2` runs were completed at `r=5`.
+
+Unweighted 2-hop:
+
+```text
+global:        model 0.4234 deg vs zero-flow 0.4309 deg (+1.75%)
+poles:         model 0.4410 deg vs zero-flow 0.4684 deg (+5.84%)
+equator:       model 0.4101 deg vs zero-flow 0.4053 deg (-1.17%)
+seam:          model 0.8536 deg vs zero-flow 0.8337 deg (-2.40%)
+active >=0.25: model 0.9998 deg vs zero-flow 1.0840 deg (+7.77%)
+active >=0.5:  model 1.6643 deg vs zero-flow 1.7596 deg (+5.41%)
+active >=1.0:  model 3.9102 deg vs zero-flow 3.9832 deg (+1.83%)
+```
+
+Motion-weighted 2-hop:
+
+```text
+global:        model 0.4358 deg vs zero-flow 0.4309 deg (-1.15%)
+poles:         model 0.4440 deg vs zero-flow 0.4684 deg (+5.21%)
+equator:       model 0.4261 deg vs zero-flow 0.4053 deg (-5.13%)
+seam:          model 0.8696 deg vs zero-flow 0.8337 deg (-4.31%)
+active >=0.25: model 0.9937 deg vs zero-flow 1.0840 deg (+8.32%)
+active >=0.5:  model 1.6394 deg vs zero-flow 1.7596 deg (+6.83%)
+active >=1.0:  model 3.8557 deg vs zero-flow 3.9832 deg (+3.20%)
+```
+
+Comparison against the strongest 1-hop runs:
+
+```text
+1-hop unweighted: global +2.32%, seam -0.85%, active>=0.5 +6.04%
+2-hop unweighted: global +1.75%, seam -2.40%, active>=0.5 +5.41%
+
+1-hop weighted: global -1.02%, seam -3.21%, active>=0.5 +9.11%
+2-hop weighted: global -1.15%, seam -4.31%, active>=0.5 +6.83%
+```
+
+Decision:
+
+- 2-hop local search does not justify continuing to `cost-num-hops=3`.
+- Wider raw correlation support adds noise without giving the decoder enough structure to choose a reliable displacement.
+- The seam problem is worse, not better.
+- Keep the best 1-hop unweighted run as the current global/seam baseline.
+- Keep the 1-hop motion-weighted run as the current active-motion baseline.
+- The next implementation should be coarse-to-fine or displacement-aware residual matching, not more loss weighting or a wider flat cost volume.
+
+## Displacement-Aware Residual Matching
+
+The next implemented variant keeps the 2-hop candidate set but makes the candidate geometry explicit.
+
+For every node and every cost-volume candidate, the runner now computes the tangent offset from the source node to the candidate node. The model converts cost scores into a softmax probability distribution, builds a soft flow prior, then predicts:
+
+```text
+final_flow = residual + gate * flow_prior
+```
+
+The final head is still zero-initialized. In displacement-aware mode, the gate bias starts near zero contribution, so step 1 remains effectively close to zero-flow instead of immediately trusting the untrained cost prior.
+
+Run the unweighted displacement-aware test:
+
+```bash
+docker run --rm --gpus all --shm-size 16g \
+  -v "$FLOW360_ROOT:/data/flow360:ro" \
+  -v "$OSLO_DATA_ROOT:/data/oslo_data:ro" \
+  -v "$OUTPUT_DIR:/outputs" \
+  oslo-flow360:cuda \
+  bash scripts/flow360_train_displacement_r5.sh
+```
+
+Expected smoke shape at `r=5`:
+
+```text
+cost_num_hops=2 displacement_prior=True cost_shape=(1, 12288, 25)
+```
+
+If the unweighted run improves seam or active-motion performance, run the weighted version:
+
+```bash
+docker run --rm --gpus all --shm-size 16g \
+  -v "$FLOW360_ROOT:/data/flow360:ro" \
+  -v "$OSLO_DATA_ROOT:/data/oslo_data:ro" \
+  -v "$OUTPUT_DIR:/outputs" \
+  oslo-flow360:cuda \
+  bash -lc 'LOSS_MOTION_WEIGHT=4.0 OUTPUT_DIR=/outputs/r5_disp_costh2_active bash scripts/flow360_train_displacement_r5.sh'
+```
+
+Decision rule:
+
+- Continue if it beats the 1-hop unweighted seam result, `seam -0.85%`, while preserving positive active metrics.
+- Prefer it over the 1-hop weighted run only if `active>=0.5` approaches or exceeds `+9.11%` without worsening seam.
+- If it fails both criteria, move to coarse-to-fine matching.

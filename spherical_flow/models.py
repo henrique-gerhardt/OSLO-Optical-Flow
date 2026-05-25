@@ -138,23 +138,30 @@ class SphericalFlowMVP(torch.nn.Module):
         include_points: bool = True,
         zero_init_flow_head: bool = True,
         cost_num_neighbors: int = 8,
+        use_displacement_prior: bool = False,
+        cost_prior_temperature: float = 0.05,
     ) -> None:
         super().__init__()
         self.include_points = include_points
         self.max_flow_rad = max_flow_rad
+        self.use_displacement_prior = use_displacement_prior
+        self.cost_prior_temperature = cost_prior_temperature
         self.encoder = SphereFeatureEncoder(in_channels, hidden_channels, feature_channels)
         self.cost_volume = LocalCostVolume(num_neighbors=cost_num_neighbors)
 
         motion_channels = feature_channels * 2 + self.cost_volume.out_channels + in_channels
+        if use_displacement_prior:
+            motion_channels += 2 + self.cost_volume.out_channels * 2
         if include_points:
             motion_channels += 3
 
+        out_channels = 3 if use_displacement_prior else 2
         self.predictor = torch.nn.ModuleList(
             [
                 SphereConvBlock(motion_channels, hidden_channels),
                 SphereConvBlock(hidden_channels, hidden_channels),
                 SphereConvBlock(hidden_channels, hidden_channels // 2),
-                SphereConvBlock(hidden_channels // 2, 2, activation=False),
+                SphereConvBlock(hidden_channels // 2, out_channels, activation=False),
             ]
         )
         if zero_init_flow_head:
@@ -165,6 +172,38 @@ class SphericalFlowMVP(torch.nn.Module):
         torch.nn.init.zeros_(final_conv.weight)
         if final_conv.bias is not None:
             torch.nn.init.zeros_(final_conv.bias)
+            if self.use_displacement_prior:
+                final_conv.bias.data[2].fill_(-8.0)
+
+    def _build_displacement_prior(
+        self,
+        cost: torch.Tensor,
+        cost_offsets: torch.Tensor,
+        cost_candidate_valid: Optional[torch.Tensor],
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if cost_offsets.size(1) != cost.size(-1):
+            raise ValueError(
+                f"cost_offsets has {cost_offsets.size(1)} candidates, "
+                f"but cost volume has {cost.size(-1)}"
+            )
+        cost_offsets = cost_offsets.to(device=cost.device, dtype=cost.dtype)
+        logits = cost / max(float(self.cost_prior_temperature), 1e-6)
+        if cost_candidate_valid is not None:
+            valid = cost_candidate_valid.to(cost.device)
+            if valid.size(1) != cost.size(-1):
+                raise ValueError(
+                    f"cost_candidate_valid has {valid.size(1)} candidates, "
+                    f"but cost volume has {cost.size(-1)}"
+                )
+            logits = logits.masked_fill(~valid.unsqueeze(0), -1e4)
+        probs = torch.softmax(logits.float(), dim=-1).to(dtype=cost.dtype)
+        flow_prior = (probs.unsqueeze(-1) * cost_offsets.unsqueeze(0)).sum(dim=2)
+        weighted_offsets = (probs.unsqueeze(-1) * cost_offsets.unsqueeze(0)).reshape(
+            cost.size(0),
+            cost.size(1),
+            -1,
+        )
+        return flow_prior, weighted_offsets, probs
 
     def forward(
         self,
@@ -176,6 +215,8 @@ class SphericalFlowMVP(torch.nn.Module):
         points: Optional[torch.Tensor] = None,
         cost_index: Optional[torch.Tensor] = None,
         cost_valid_index: Optional[torch.Tensor] = None,
+        cost_offsets: Optional[torch.Tensor] = None,
+        cost_candidate_valid: Optional[torch.Tensor] = None,
         return_debug: bool = False,
     ) -> torch.Tensor | Tuple[torch.Tensor, dict]:
         f1 = self.encoder(frame1, index, weight, valid_index)
@@ -187,6 +228,23 @@ class SphericalFlowMVP(torch.nn.Module):
         cost = self.cost_volume(f1, f2, cost_index, cost_valid_index)
 
         inputs = [f1, f2, cost, frame2 - frame1]
+        debug = {"features1": f1, "features2": f2, "cost": cost}
+        flow_prior = None
+        if self.use_displacement_prior:
+            if cost_offsets is None:
+                raise ValueError("cost_offsets must be provided when use_displacement_prior=True")
+            flow_prior, weighted_offsets, cost_prob = self._build_displacement_prior(
+                cost,
+                cost_offsets,
+                cost_candidate_valid,
+            )
+            inputs.extend([flow_prior, weighted_offsets])
+            debug.update(
+                {
+                    "flow_prior": flow_prior,
+                    "cost_prob": cost_prob,
+                }
+            )
         if self.include_points:
             if points is None:
                 raise ValueError("points must be provided when include_points=True")
@@ -195,8 +253,16 @@ class SphericalFlowMVP(torch.nn.Module):
         x = torch.cat(inputs, dim=-1)
         for block in self.predictor:
             x = block(x, index, weight, valid_index)
-        flow = self.max_flow_rad * torch.tanh(x)
+        if self.use_displacement_prior:
+            if flow_prior is None:
+                raise RuntimeError("flow_prior was not built")
+            residual = self.max_flow_rad * torch.tanh(x[..., :2])
+            gate = torch.sigmoid(x[..., 2:3])
+            flow = residual + gate * flow_prior
+            debug.update({"residual": residual, "gate": gate})
+        else:
+            flow = self.max_flow_rad * torch.tanh(x)
 
         if return_debug:
-            return flow, {"features1": f1, "features2": f2, "cost": cost}
+            return flow, debug
         return flow

@@ -43,6 +43,7 @@ scripts/flow360_smoke.sh       Minimal CUDA smoke test
 scripts/flow360_train_r5.sh    First training run for RTX 3090
 scripts/flow360_train_active_r5.sh Motion-weighted follow-up run
 scripts/flow360_train_multihop_r5.sh Multi-hop cost-volume run
+scripts/flow360_train_displacement_r5.sh Displacement-aware residual-matching run
 docs/                          Project context, status, and run commands
 README_OSLO_ORIGINAL.md        Original OSLO README kept for reference
 ```
@@ -88,8 +89,8 @@ docker run --rm --gpus all --shm-size 16g \
 
 ## Status
 
-The zero-initialized FLOW360 run beats zero-flow globally and on active-motion subsets, while the motion-weighted run improves active-motion nodes further but worsens global and seam metrics. The project has enough signal for one architectural step beyond the direct MVP; multi-hop/coarse-to-fine cost volume is now the next priority before any full RAFT-style port.
+The zero-initialized FLOW360 run beats zero-flow globally and on active-motion subsets, while the motion-weighted run improves active-motion nodes further but worsens global and seam metrics. A 2-hop cost-volume run was tested next, but it did not improve over the 1-hop baselines and made the ERP seam worse.
 
-The first architectural step is now implemented as `--cost-num-hops`. It expands only the local matching/correlation support; the OSLO `SDPAConv` encoder still uses the original 1-hop neighborhood. Start with `COST_NUM_HOPS=2` using `scripts/flow360_train_multihop_r5.sh`.
+The next useful step is no longer wider local search by itself. The code now includes a displacement-aware residual-matching mode: it converts each local candidate into an explicit tangent offset, builds a soft flow prior from cost-volume probabilities, and lets the OSLO decoder predict residual flow plus a confidence gate.
 
 See [docs/CONTEXT_AND_STATUS.md](docs/CONTEXT_AND_STATUS.md) for the plan, decisions already made, prior synthetic results, and next engineering steps.

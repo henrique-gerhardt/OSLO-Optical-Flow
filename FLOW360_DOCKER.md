@@ -125,6 +125,31 @@ To repeat the motion-weighted variant with the same expanded cost volume:
 LOSS_MOTION_WEIGHT=4.0 OUTPUT_DIR=/outputs/r5_costh2_active bash scripts/flow360_train_multihop_r5.sh
 ```
 
+## Displacement-aware residual matching
+
+This is the next test after the flat 2-hop cost volume. It keeps the same 2-hop candidate set but exposes each candidate's tangent displacement to the decoder. The model builds a soft flow prior from the local cost probabilities, then predicts a residual and a confidence gate.
+
+```bash
+docker run --rm --gpus all --shm-size 16g \
+  -v /absolute/path/to/FLOW360:/data/flow360:ro \
+  -v /absolute/path/to/oslo_data:/data/oslo_data:ro \
+  -v "$PWD/outputs:/outputs" \
+  oslo-flow360:cuda \
+  bash scripts/flow360_train_displacement_r5.sh
+```
+
+The first smoke line should include:
+
+```text
+cost_num_hops=2 displacement_prior=True cost_shape=(1, 12288, 25)
+```
+
+Run the weighted version only after the unweighted result is available:
+
+```bash
+LOSS_MOTION_WEIGHT=4.0 OUTPUT_DIR=/outputs/r5_disp_costh2_active bash scripts/flow360_train_displacement_r5.sh
+```
+
 For the RTX 3090, start with `r=5`. If memory is comfortable, try `r=6` with `BATCH_SIZE=1`; if it OOMs, keep `r=5` and improve the model with multi-hop/coarse-to-fine before scaling resolution.
 
 Example override:

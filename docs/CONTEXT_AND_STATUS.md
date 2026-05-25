@@ -240,6 +240,45 @@ Multi-hop cost volume implementation:
 - `cost-num-hops=2` uses center + 24 neighbors, so the smoke log should show `cost_shape=(1, 12288, 25)` at `r=5`.
 - `scripts/flow360_train_multihop_r5.sh` runs the `r=5`, `cost-num-hops=2` experiment.
 
+Fourth and fifth completed runs with 2-hop cost volume:
+
+```text
+Unweighted 2-hop:
+global:        model 0.4234 deg vs zero-flow 0.4309 deg (+1.75%)
+poles:         model 0.4410 deg vs zero-flow 0.4684 deg (+5.84%)
+equator:       model 0.4101 deg vs zero-flow 0.4053 deg (-1.17%)
+seam:          model 0.8536 deg vs zero-flow 0.8337 deg (-2.40%)
+active >=0.25: model 0.9998 deg vs zero-flow 1.0840 deg (+7.77%)
+active >=0.5:  model 1.6643 deg vs zero-flow 1.7596 deg (+5.41%)
+active >=1.0:  model 3.9102 deg vs zero-flow 3.9832 deg (+1.83%)
+
+Motion-weighted 2-hop:
+global:        model 0.4358 deg vs zero-flow 0.4309 deg (-1.15%)
+poles:         model 0.4440 deg vs zero-flow 0.4684 deg (+5.21%)
+equator:       model 0.4261 deg vs zero-flow 0.4053 deg (-5.13%)
+seam:          model 0.8696 deg vs zero-flow 0.8337 deg (-4.31%)
+active >=0.25: model 0.9937 deg vs zero-flow 1.0840 deg (+8.32%)
+active >=0.5:  model 1.6394 deg vs zero-flow 1.7596 deg (+6.83%)
+active >=1.0:  model 3.8557 deg vs zero-flow 3.9832 deg (+3.20%)
+```
+
+2-hop interpretation:
+
+- 2-hop still beats zero-flow in some regions, but it is worse than the best 1-hop runs.
+- Unweighted 2-hop loses global, seam, and active-motion performance relative to unweighted 1-hop.
+- Motion-weighted 2-hop loses active-motion and seam performance relative to motion-weighted 1-hop.
+- The wider flat cost volume is adding noise; it is not enough for reliable correspondence selection.
+- Do not continue to `cost-num-hops=3` before adding displacement-aware or coarse-to-fine structure.
+
+Displacement-aware residual matching implementation:
+
+- `run_flow360_mvp.py` now exposes `--use-displacement-prior` and `--cost-prior-temperature`.
+- The runner builds tangent offsets for center + each local cost-volume candidate.
+- `spherical_flow/models.py` builds a soft flow prior from cost probabilities and candidate offsets.
+- The decoder predicts `residual + gate * flow_prior`.
+- In this mode, the final head is initialized with residual zero and gate bias near closed, preserving the useful zero-flow starting point.
+- `scripts/flow360_train_displacement_r5.sh` runs `r=5`, `cost-num-hops=2`, and `--use-displacement-prior`.
+
 Success criteria for continuing:
 
 - Model beats zero-flow on `active_0_5_*` and `active_1_0_*`.
@@ -256,14 +295,14 @@ If this fails:
 
 ## Next Engineering Steps
 
-1. Rebuild the Docker image so `--cost-num-hops` and `scripts/flow360_train_multihop_r5.sh` are available.
-2. Re-run `r=5` multi-hop with unweighted loss.
-3. Re-run `r=5` multi-hop with `LOSS_MOTION_WEIGHT=4.0`.
-4. Compare global, seam, and active-motion metrics against the current 1-hop baselines.
-5. If seam no longer regresses, run:
+1. Keep the 1-hop unweighted run as the current global/seam baseline.
+2. Keep the 1-hop motion-weighted run as the current active-motion baseline.
+3. Rebuild Docker and run `scripts/flow360_train_displacement_r5.sh`.
+4. If the unweighted displacement-aware run improves seam or active metrics, run the weighted variant with `LOSS_MOTION_WEIGHT=4.0`.
+5. If seam no longer regresses and active metrics remain positive, run:
    - `direction=both`;
    - `resolution=6`;
    - longer training.
-6. If seam still regresses, implement coarse-to-fine matching before any RAFT recurrence.
+6. If displacement-aware matching fails, implement coarse-to-fine matching.
 7. Add an ERP RAFT/PWCNet baseline and evaluate with the same spherical metrics.
 8. Only then consider a spherical RAFT update block.
