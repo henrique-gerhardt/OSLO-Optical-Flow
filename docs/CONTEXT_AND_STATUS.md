@@ -279,6 +279,77 @@ Displacement-aware residual matching implementation:
 - In this mode, the final head is initialized with residual zero and gate bias near closed, preserving the useful zero-flow starting point.
 - `scripts/flow360_train_displacement_r5.sh` runs `r=5`, `cost-num-hops=2`, and `--use-displacement-prior`.
 
+Sixth and seventh completed runs with displacement-aware 2-hop prior:
+
+```text
+Unweighted displacement-aware 2-hop:
+global:        model 0.4310 deg vs zero-flow 0.4309 deg (-0.02%)
+poles:         model 0.4413 deg vs zero-flow 0.4684 deg (+5.78%)
+equator:       model 0.4198 deg vs zero-flow 0.4053 deg (-3.57%)
+seam:          model 0.8663 deg vs zero-flow 0.8337 deg (-3.91%)
+active >=0.25: model 1.0031 deg vs zero-flow 1.0840 deg (+7.46%)
+active >=0.5:  model 1.6612 deg vs zero-flow 1.7596 deg (+5.59%)
+active >=1.0:  model 3.8903 deg vs zero-flow 3.9832 deg (+2.33%)
+
+Motion-weighted displacement-aware 2-hop:
+global:        model 0.4328 deg vs zero-flow 0.4309 deg (-0.45%)
+poles:         model 0.4483 deg vs zero-flow 0.4684 deg (+4.28%)
+equator:       model 0.4163 deg vs zero-flow 0.4053 deg (-2.71%)
+seam:          model 0.8755 deg vs zero-flow 0.8337 deg (-5.02%)
+active >=0.25: model 0.9521 deg vs zero-flow 1.0840 deg (+12.16%)
+active >=0.5:  model 1.5640 deg vs zero-flow 1.7596 deg (+11.11%)
+active >=1.0:  model 3.7398 deg vs zero-flow 3.9832 deg (+6.11%)
+```
+
+Displacement-aware interpretation:
+
+- The geometric prior helps active-motion nodes; the weighted displacement-aware run is the strongest active-motion result so far.
+- It still fails the seam criterion. Seam regression reaches `-5.02%` in the weighted run.
+- Because unweighted displacement-aware also regresses global and seam, the issue is not only motion weighting.
+- The likely problem is over-trusting ambiguous wider candidates, especially around ERP seam regions and low-motion areas.
+- Next diagnostic: run displacement-aware matching with `cost-num-hops=1`; if that does not recover seam behavior, run a softer prior-temperature sweep.
+
+Eighth through eleventh diagnostic runs:
+
+```text
+Unweighted displacement-aware 1-hop:
+global:        model 0.4165 deg vs zero-flow 0.4309 deg (+3.34%)
+poles:         model 0.4397 deg vs zero-flow 0.4684 deg (+6.11%)
+equator:       model 0.3992 deg vs zero-flow 0.4053 deg (+1.51%)
+seam:          model 0.8353 deg vs zero-flow 0.8337 deg (-0.20%)
+active >=0.25: model 1.0330 deg vs zero-flow 1.0840 deg (+4.71%)
+active >=0.5:  model 1.7002 deg vs zero-flow 1.7596 deg (+3.37%)
+active >=1.0:  model 3.9146 deg vs zero-flow 3.9832 deg (+1.72%)
+
+Motion-weighted displacement-aware 1-hop:
+global:        model 0.4208 deg vs zero-flow 0.4309 deg (+2.35%)
+poles:         model 0.4424 deg vs zero-flow 0.4684 deg (+5.55%)
+equator:       model 0.4044 deg vs zero-flow 0.4053 deg (+0.22%)
+seam:          model 0.8554 deg vs zero-flow 0.8337 deg (-2.61%)
+active >=0.25: model 1.0049 deg vs zero-flow 1.0840 deg (+7.29%)
+active >=0.5:  model 1.6608 deg vs zero-flow 1.7596 deg (+5.61%)
+active >=1.0:  model 3.8729 deg vs zero-flow 3.9832 deg (+2.77%)
+
+2-hop displacement prior, temp=0.10:
+global +0.71%, seam -3.30%, active>=0.5 +5.85%
+
+2-hop displacement prior, temp=0.20:
+global -0.11%, seam -4.65%, active>=0.5 +5.31%
+```
+
+Isolation interpretation:
+
+- The 1-hop displacement-aware unweighted run is the new best balanced model.
+- It beats the previous global result, improves equator and poles, and reduces seam regression from `-0.85%` to `-0.20%`.
+- The active-motion metrics are lower than the weighted models, so there is still a tradeoff.
+- The 2-hop temperature sweep confirms that softer probabilities do not fix the seam issue; the candidate radius is the primary source of noise.
+- Mainline should move forward with `cost-num-hops=1`, `--use-displacement-prior`, and unweighted loss.
+
+Operational note:
+
+- A run stored under `/outputs/r5_disp_costh1_both` still reported `"direction": "forward"`, so it was not actually a bidirectional dataset run. It was nevertheless consistent with the current balanced model: global `+3.35%`, poles `+6.12%`, equator `+1.32%`, seam `-0.67%`, active>=0.5 `+3.51%`. Rebuild the Docker image after script changes and verify the JSON says `"direction": "both"`.
+- `r=6` validation can exceed `torch.quantile`'s practical input size when collecting target-motion percentiles. The runner now limits percentile samples with `--target-quantile-max-samples` while keeping all primary model metrics exact over all valid nodes.
+
 Success criteria for continuing:
 
 - Model beats zero-flow on `active_0_5_*` and `active_1_0_*`.
@@ -296,13 +367,10 @@ If this fails:
 ## Next Engineering Steps
 
 1. Keep the 1-hop unweighted run as the current global/seam baseline.
-2. Keep the 1-hop motion-weighted run as the current active-motion baseline.
-3. Rebuild Docker and run `scripts/flow360_train_displacement_r5.sh`.
-4. If the unweighted displacement-aware run improves seam or active metrics, run the weighted variant with `LOSS_MOTION_WEIGHT=4.0`.
-5. If seam no longer regresses and active metrics remain positive, run:
-   - `direction=both`;
-   - `resolution=6`;
-   - longer training.
-6. If displacement-aware matching fails, implement coarse-to-fine matching.
+2. Keep the 2-hop displacement-aware weighted run as the active-motion upper bound, but not as the main model.
+3. Run the new balanced model with `direction=both`, `COST_NUM_HOPS=1`, and unweighted loss.
+4. Rebuild Docker before the next run and verify saved args contain `"direction": "both"`.
+5. If seam remains near neutral, run `resolution=6` with the same settings.
+6. If active-motion performance remains too weak, investigate a gated motion loss or region-aware loss that does not penalize seam stability.
 7. Add an ERP RAFT/PWCNet baseline and evaluate with the same spherical metrics.
 8. Only then consider a spherical RAFT update block.

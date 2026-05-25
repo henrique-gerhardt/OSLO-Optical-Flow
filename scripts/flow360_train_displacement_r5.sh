@@ -9,6 +9,7 @@ python run_flow360_mvp.py \
   --data-root "${FLOW360_ROOT:-/data/flow360}" \
   --grid-dir "${OSLO_GRID_DIR:-/data/oslo_data/neighbor_grids}" \
   --output-dir "${OUTPUT_DIR}" \
+  --direction "${DIRECTION:-forward}" \
   --device cuda \
   --amp \
   --resolution "${RESOLUTION}" \
@@ -24,5 +25,6 @@ python run_flow360_mvp.py \
   --loss-motion-weight "${LOSS_MOTION_WEIGHT:-0.0}" \
   --loss-motion-ref-deg "${LOSS_MOTION_REF_DEG:-1.0}" \
   --active-thresholds-deg "${ACTIVE_THRESHOLDS_DEG:-0.25,0.5,1.0}" \
+  --target-quantile-max-samples "${TARGET_QUANTILE_MAX_SAMPLES:-2000000}" \
   --num-workers "${NUM_WORKERS:-4}" \
   --log-every "${LOG_EVERY:-50}"

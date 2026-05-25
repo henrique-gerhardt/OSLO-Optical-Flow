@@ -71,6 +71,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-val-sequences", type=int, default=None)
     parser.add_argument("--max-train-pairs", type=int, default=None)
     parser.add_argument("--max-val-pairs", type=int, default=None)
+    parser.add_argument(
+        "--target-quantile-max-samples",
+        type=int,
+        default=2_000_000,
+        help="Maximum validation samples used for target motion percentiles; keeps r=6+ quantiles bounded.",
+    )
     parser.add_argument("--log-every", type=int, default=50)
     parser.add_argument("--smoke-test", action="store_true", help="Run one batch forward/loss pass and exit.")
     parser.add_argument("--checkpoint-out", default="", help="Optional checkpoint path.")
@@ -318,12 +324,17 @@ def evaluate(
     region_masks: Dict[str, torch.Tensor],
     active_thresholds: list[float],
     device: torch.device,
+    target_quantile_max_samples: int,
 ) -> Dict[str, float]:
     model.eval()
     totals: Dict[str, float] = {}
     counts: Dict[str, float] = {}
     active_counts: Dict[str, float] = {}
     target_chunks: list[torch.Tensor] = []
+    sample_per_batch = None
+    if target_quantile_max_samples > 0:
+        sample_per_batch = max(1, target_quantile_max_samples // max(len(loader), 1))
+
     for batch in loader:
         batch = move_batch(batch, device)
         pred = model(
@@ -340,7 +351,11 @@ def evaluate(
         )
         maps = compute_maps(pred, batch, points, basis_east, basis_north)
         valid = maps["valid"]
-        target_chunks.append(maps["zero_geo_deg"][valid].detach().float().cpu())
+        target = maps["zero_geo_deg"][valid].detach().float().flatten().cpu()
+        if sample_per_batch is not None and target.numel() > sample_per_batch:
+            sample_idx = torch.linspace(0, target.numel() - 1, steps=sample_per_batch, dtype=torch.long)
+            target = target.index_select(0, sample_idx)
+        target_chunks.append(target)
 
         for region_name, region_mask in region_masks.items():
             mask = valid & region_mask.unsqueeze(0)
@@ -373,6 +388,7 @@ def evaluate(
         metrics["target_geo_deg_p50"] = float(torch.quantile(target, 0.50))
         metrics["target_geo_deg_p90"] = float(torch.quantile(target, 0.90))
         metrics["target_geo_deg_p95"] = float(torch.quantile(target, 0.95))
+        metrics["target_geo_deg_quantile_samples"] = float(target.numel())
     return add_improvement_metrics(metrics)
 
 
@@ -584,6 +600,7 @@ def main() -> None:
         region_masks,
         active_thresholds,
         device,
+        args.target_quantile_max_samples,
     )
     metrics["elapsed_s"] = time.time() - start
     print_metrics("validation", metrics)

@@ -458,3 +458,139 @@ Decision rule:
 - Continue if it beats the 1-hop unweighted seam result, `seam -0.85%`, while preserving positive active metrics.
 - Prefer it over the 1-hop weighted run only if `active>=0.5` approaches or exceeds `+9.11%` without worsening seam.
 - If it fails both criteria, move to coarse-to-fine matching.
+
+## Displacement-Aware Result
+
+Two `cost-num-hops=2`, displacement-aware runs were completed.
+
+Unweighted displacement-aware 2-hop:
+
+```text
+global:        model 0.4310 deg vs zero-flow 0.4309 deg (-0.02%)
+poles:         model 0.4413 deg vs zero-flow 0.4684 deg (+5.78%)
+equator:       model 0.4198 deg vs zero-flow 0.4053 deg (-3.57%)
+seam:          model 0.8663 deg vs zero-flow 0.8337 deg (-3.91%)
+active >=0.25: model 1.0031 deg vs zero-flow 1.0840 deg (+7.46%)
+active >=0.5:  model 1.6612 deg vs zero-flow 1.7596 deg (+5.59%)
+active >=1.0:  model 3.8903 deg vs zero-flow 3.9832 deg (+2.33%)
+```
+
+Motion-weighted displacement-aware 2-hop:
+
+```text
+global:        model 0.4328 deg vs zero-flow 0.4309 deg (-0.45%)
+poles:         model 0.4483 deg vs zero-flow 0.4684 deg (+4.28%)
+equator:       model 0.4163 deg vs zero-flow 0.4053 deg (-2.71%)
+seam:          model 0.8755 deg vs zero-flow 0.8337 deg (-5.02%)
+active >=0.25: model 0.9521 deg vs zero-flow 1.0840 deg (+12.16%)
+active >=0.5:  model 1.5640 deg vs zero-flow 1.7596 deg (+11.11%)
+active >=1.0:  model 3.7398 deg vs zero-flow 3.9832 deg (+6.11%)
+```
+
+Comparison against the strongest prior runs:
+
+```text
+1-hop unweighted:        global +2.32%, seam -0.85%, active>=0.5 +6.04%
+2-hop displacement:      global -0.02%, seam -3.91%, active>=0.5 +5.59%
+
+1-hop weighted:          global -1.02%, seam -3.21%, active>=0.5 +9.11%
+2-hop displacement + wt: global -0.45%, seam -5.02%, active>=0.5 +11.11%
+```
+
+Decision:
+
+- The displacement prior is useful for active-motion nodes. The weighted run is the best active-motion result so far.
+- The same mechanism worsens seam behavior more than the flat 2-hop run.
+- The current 2-hop displacement-aware model is not a replacement for the 1-hop baseline because seam regression is too large.
+- The next diagnostic is not a larger model yet. Run the displacement-aware prior with `cost-num-hops=1` to isolate whether the 2-hop candidate radius is the source of seam noise.
+
+Recommended next runs:
+
+```bash
+COST_NUM_HOPS=1 OUTPUT_DIR=/outputs/r5_disp_costh1 bash scripts/flow360_train_displacement_r5.sh
+LOSS_MOTION_WEIGHT=4.0 COST_NUM_HOPS=1 OUTPUT_DIR=/outputs/r5_disp_costh1_active bash scripts/flow360_train_displacement_r5.sh
+```
+
+If 1-hop displacement-aware still regresses seam, run a small temperature sweep before moving to coarse-to-fine:
+
+```bash
+COST_PRIOR_TEMPERATURE=0.10 OUTPUT_DIR=/outputs/r5_disp_costh2_temp010 bash scripts/flow360_train_displacement_r5.sh
+COST_PRIOR_TEMPERATURE=0.20 OUTPUT_DIR=/outputs/r5_disp_costh2_temp020 bash scripts/flow360_train_displacement_r5.sh
+```
+
+Continue only if seam moves back toward the 1-hop unweighted baseline while active metrics remain above the plain 1-hop result.
+
+## Displacement-Aware Isolation Result
+
+The `cost-num-hops=1` displacement-aware diagnostic isolated the seam issue.
+
+Unweighted displacement-aware 1-hop:
+
+```text
+global:        model 0.4165 deg vs zero-flow 0.4309 deg (+3.34%)
+poles:         model 0.4397 deg vs zero-flow 0.4684 deg (+6.11%)
+equator:       model 0.3992 deg vs zero-flow 0.4053 deg (+1.51%)
+seam:          model 0.8353 deg vs zero-flow 0.8337 deg (-0.20%)
+active >=0.25: model 1.0330 deg vs zero-flow 1.0840 deg (+4.71%)
+active >=0.5:  model 1.7002 deg vs zero-flow 1.7596 deg (+3.37%)
+active >=1.0:  model 3.9146 deg vs zero-flow 3.9832 deg (+1.72%)
+```
+
+Motion-weighted displacement-aware 1-hop:
+
+```text
+global:        model 0.4208 deg vs zero-flow 0.4309 deg (+2.35%)
+poles:         model 0.4424 deg vs zero-flow 0.4684 deg (+5.55%)
+equator:       model 0.4044 deg vs zero-flow 0.4053 deg (+0.22%)
+seam:          model 0.8554 deg vs zero-flow 0.8337 deg (-2.61%)
+active >=0.25: model 1.0049 deg vs zero-flow 1.0840 deg (+7.29%)
+active >=0.5:  model 1.6608 deg vs zero-flow 1.7596 deg (+5.61%)
+active >=1.0:  model 3.8729 deg vs zero-flow 3.9832 deg (+2.77%)
+```
+
+The 2-hop temperature sweep did not recover seam behavior:
+
+```text
+2-hop temp=0.10: global +0.71%, seam -3.30%, active>=0.5 +5.85%
+2-hop temp=0.20: global -0.11%, seam -4.65%, active>=0.5 +5.31%
+```
+
+Updated comparison:
+
+```text
+1-hop unweighted baseline:        global +2.32%, seam -0.85%, active>=0.5 +6.04%
+1-hop displacement unweighted:    global +3.34%, seam -0.20%, active>=0.5 +3.37%
+
+1-hop weighted baseline:          global -1.02%, seam -3.21%, active>=0.5 +9.11%
+2-hop displacement weighted:      global -0.45%, seam -5.02%, active>=0.5 +11.11%
+```
+
+Decision:
+
+- The seam problem is primarily caused by the 2-hop candidate radius.
+- The displacement-aware mechanism is useful, but only the 1-hop unweighted variant is currently balanced.
+- `COST_NUM_HOPS=1`, `--use-displacement-prior`, and unweighted loss is the new best global/seam baseline.
+- The weighted variants remain useful as active-motion diagnostics, but they are not acceptable as the main model while seam is negative.
+- Do not continue the 2-hop temperature sweep.
+
+Next experiment:
+
+```bash
+DIRECTION=both COST_NUM_HOPS=1 OUTPUT_DIR=/outputs/r5_disp_costh1_both bash scripts/flow360_train_displacement_r5.sh
+```
+
+Important: verify the saved JSON says `"direction": "both"`. If it still says `"direction": "forward"`, rebuild the Docker image or run the Python command directly with `--direction both`; the output directory name alone does not change the dataset direction.
+
+The first run saved under `/outputs/r5_disp_costh1_both` still had `"direction": "forward"`. Its result was consistent with the balanced forward model, but it is not a valid bidirectional test:
+
+```text
+global +3.35%, poles +6.12%, equator +1.32%, seam -0.67%, active>=0.5 +3.51%
+```
+
+If that preserves seam behavior, run:
+
+```bash
+RESOLUTION=6 COST_NUM_HOPS=1 OUTPUT_DIR=/outputs/r6_disp_costh1 bash scripts/flow360_train_displacement_r5.sh
+```
+
+For `r=6`, the validation set has enough nodes that exact `torch.quantile` can fail with `RuntimeError: quantile() input tensor is too large`. The runner now uses `--target-quantile-max-samples` with a default of `2,000,000` samples for target-motion percentiles. This affects only `target_geo_deg_p50/p90/p95`; model metrics such as global, seam, poles, equator, and active-motion means still use all valid nodes.
