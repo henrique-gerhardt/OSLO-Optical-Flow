@@ -3,7 +3,8 @@ FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    TORCH_HOME=/models/torch
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -23,6 +24,6 @@ COPY . /workspace/oslo
 
 RUN chmod +x /workspace/oslo/scripts/*.sh
 
-RUN mkdir -p /data/flow360 /data/oslo_data /outputs
+RUN mkdir -p /data/flow360 /data/oslo_data /outputs /models
 
 CMD ["python", "run_flow360_mvp.py", "--help"]

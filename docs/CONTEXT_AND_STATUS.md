@@ -379,6 +379,41 @@ Validation interpretation:
 - Scaling resolution did not break the method; the quantile sampling fix worked and reported about 2M percentile samples.
 - The main open weakness is the tradeoff between active-motion strength and seam stability. The best balanced model is not the best active-motion model.
 
+R6 seed stability:
+
+```text
+seed 7:
+global +3.99%, poles +6.56%, equator +2.26%, seam -0.14%,
+active>=0.25 +5.79%, active>=0.5 +4.13%, active>=1.0 +1.94%
+
+seed 11:
+global +1.90%, poles +5.98%, equator -0.73%, seam -1.60%,
+active>=0.25 +7.28%, active>=0.5 +5.38%, active>=1.0 +2.46%
+
+seed 19:
+global +0.10%, poles +3.76%, equator -0.81%, seam -1.72%,
+active>=0.25 +8.84%, active>=0.5 +6.67%, active>=1.0 +2.85%
+```
+
+Three-seed summary:
+
+```text
+global improvement:       mean +2.00%, range +0.10% to +3.99%
+poles improvement:        mean +5.43%, range +3.76% to +6.56%
+equator improvement:      mean +0.24%, range -0.81% to +2.26%
+seam improvement:         mean -1.15%, range -1.72% to -0.14%
+active>=0.5 improvement:  mean +5.39%, range +4.13% to +6.67%
+active>=1.0 improvement:  mean +2.42%, range +1.94% to +2.85%
+```
+
+Seed-stability interpretation:
+
+- Active-motion gains are stable and positive across seeds.
+- Pole gains are stable and positive across seeds.
+- Global improvement is positive on average but high variance.
+- Seam is consistently slightly worse than zero-flow at `r=6`; seed 7 is nearly neutral, but seeds 11 and 19 regress around `-1.6%` to `-1.7%`.
+- The method is promising enough to compare against ERP RAFT/PWCNet, but not stable enough to justify a large spherical RAFT port before that comparison.
+
 Success criteria for continuing:
 
 - Model beats zero-flow on `active_0_5_*` and `active_1_0_*`.
@@ -396,8 +431,15 @@ If this fails:
 ## Next Engineering Steps
 
 1. Treat `r=6`, displacement-aware 1-hop, unweighted as the current main OSLO-style configuration.
-2. Repeat the main configuration with at least two additional seeds to measure variance.
-3. Add an ERP RAFT/PWCNet baseline and evaluate it with the same spherical metrics.
-4. Compare against zero-flow and the OSLO-style model on global, seam, poles, equator, and active-motion subsets.
-5. If OSLO remains competitive at seam/poles but weak on active motion, investigate a gated motion loss or region-aware loss that preserves seam stability.
-6. Only then consider a spherical RAFT update block.
+2. Run the implemented TorchVision ERP RAFT baseline and evaluate it with the same spherical metrics.
+3. Compare RAFT against zero-flow and the OSLO-style model on global, seam, poles, equator, and active-motion subsets.
+4. If OSLO remains competitive at seam/poles but weak on active motion, investigate a gated motion loss or region-aware loss that preserves seam stability.
+5. Only then consider a spherical RAFT update block.
+
+The RAFT runner is `run_erp_raft_baseline.py`; the Docker entrypoint is:
+
+```bash
+RESOLUTION=6 DIRECTION=forward OUTPUT_DIR=/outputs/raft_r6_forward bash scripts/flow360_raft_baseline.sh
+```
+
+See `docs/RAFT_BASELINE.md` for cache mounts, smoke-test command, and the comparison table template.

@@ -139,6 +139,10 @@ def _bilinear_sample_erp(image: torch.Tensor, u: torch.Tensor, v: torch.Tensor) 
     return top * (1.0 - dv) + bottom * dv
 
 
+def bilinear_sample_erp(image: torch.Tensor, u: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+    return _bilinear_sample_erp(image, u, v)
+
+
 class Flow360Dataset(Dataset):
     """FLOW360 pairs sampled onto HEALPix nodes for spherical optical flow."""
 

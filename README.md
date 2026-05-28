@@ -21,12 +21,13 @@ Implemented:
   - geodesic endpoint loss.
 - Docker CUDA runtime for Linux/NVIDIA hosts.
 - Metrics for global, poles, equator, ERP seam, target-motion percentiles, and active-motion subsets.
+- TorchVision RAFT ERP baseline runner evaluated through the same spherical metrics.
 
 Not implemented yet:
 
 - Full RAFT recurrent update block on the sphere.
 - Coarse-to-fine cost volume.
-- ERP RAFT/PWCNet baseline runner.
+- PWCNet baseline runner.
 - Flow visualization/export utilities.
 - Final benchmark table.
 
@@ -34,6 +35,7 @@ Not implemented yet:
 
 ```text
 run_flow360_mvp.py             FLOW360 supervised train/eval runner
+run_erp_raft_baseline.py       TorchVision RAFT ERP baseline with spherical metrics
 run_spherical_flow_mvp.py      Synthetic spherical-flow runner
 spherical_flow/                Geometry, datasets, and MVP model modules
 spherical_models/sdpa_conv.py  OSLO SDPAConv reused by the MVP
@@ -44,6 +46,7 @@ scripts/flow360_train_r5.sh    First training run for RTX 3090
 scripts/flow360_train_active_r5.sh Motion-weighted follow-up run
 scripts/flow360_train_multihop_r5.sh Multi-hop cost-volume run
 scripts/flow360_train_displacement_r5.sh Displacement-aware residual-matching run
+scripts/flow360_raft_baseline.sh TorchVision RAFT ERP baseline run
 docs/                          Project context, status, and run commands
 README_OSLO_ORIGINAL.md        Original OSLO README kept for reference
 ```
@@ -91,6 +94,6 @@ docker run --rm --gpus all --shm-size 16g \
 
 The zero-initialized FLOW360 run beats zero-flow globally and on active-motion subsets, while the motion-weighted run improves active-motion nodes further but worsens global and seam metrics. A 2-hop cost-volume run was tested next, but it did not improve over the 1-hop baselines and made the ERP seam worse.
 
-The next useful step is no longer wider local search by itself. The best balanced result so far is displacement-aware residual matching with `COST_NUM_HOPS=1` and unweighted loss. It stayed positive on a true bidirectional run and scaled to `r=6` with stronger global/pole/equator gains and a nearly neutral seam. The next priority is an ERP RAFT/PWCNet baseline and seed stability, not a larger OSLO architecture yet.
+The next useful step is no longer wider local search by itself. The best balanced result so far is displacement-aware residual matching with `COST_NUM_HOPS=1` and unweighted loss. It stayed positive on a true bidirectional run and scaled to `r=6`. Across three `r=6` seeds, poles and active-motion gains are consistent, while global and seam gains vary. The ERP RAFT baseline runner is now available; run it before deciding whether a larger spherical RAFT architecture is justified.
 
-See [docs/CONTEXT_AND_STATUS.md](docs/CONTEXT_AND_STATUS.md) for the plan, decisions already made, prior synthetic results, and next engineering steps.
+See [docs/RAFT_BASELINE.md](docs/RAFT_BASELINE.md) for the RAFT command and comparison table, and [docs/CONTEXT_AND_STATUS.md](docs/CONTEXT_AND_STATUS.md) for the plan, decisions already made, prior synthetic results, and next engineering steps.

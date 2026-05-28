@@ -158,6 +158,51 @@ Example override:
 RESOLUTION=6 BATCH_SIZE=1 STEPS=1000 bash scripts/flow360_train_r5.sh
 ```
 
+## ERP RAFT baseline
+
+Run TorchVision RAFT directly on the native FLOW360 ERP frames and evaluate the result with the same spherical metrics:
+
+```bash
+docker run --rm --gpus all --shm-size 16g \
+  -v "$FLOW360_ROOT:/data/flow360:ro" \
+  -v "$OSLO_DATA_ROOT:/data/oslo_data:ro" \
+  -v "$OUTPUT_DIR:/outputs" \
+  -v "$MODEL_CACHE:/models" \
+  oslo-flow360:cuda \
+  bash scripts/flow360_raft_baseline.sh
+```
+
+Default settings:
+
+```text
+model:       raft_large
+weights:     default
+resolution:  6
+direction:   forward
+batch size:  1
+TORCH_HOME:  /models/torch
+```
+
+The first pretrained run downloads TorchVision weights into the mounted model cache. The runner writes:
+
+```text
+/outputs/raft_r6_forward/raft_metrics.json
+```
+
+Use a no-download smoke test when validating the container wiring:
+
+```bash
+RAFT_MODEL=raft_small RAFT_WEIGHTS=none RESOLUTION=4 MAX_PAIRS=1 bash scripts/flow360_raft_baseline.sh
+```
+
+Prediction export is off by default because full FLOW360 ERP flow arrays are large. Enable it only when needed:
+
+```bash
+SAVE_PREDICTIONS=1 bash scripts/flow360_raft_baseline.sh
+```
+
+More details and the comparison table are in [docs/RAFT_BASELINE.md](docs/RAFT_BASELINE.md).
+
 ## Docker Compose
 
 Create environment variables:

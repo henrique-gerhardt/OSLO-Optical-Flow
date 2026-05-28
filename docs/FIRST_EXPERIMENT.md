@@ -635,4 +635,36 @@ SEED=11 RESOLUTION=6 COST_NUM_HOPS=1 OUTPUT_DIR=/outputs/r6_disp_costh1_seed11 b
 SEED=19 RESOLUTION=6 COST_NUM_HOPS=1 OUTPUT_DIR=/outputs/r6_disp_costh1_seed19 bash scripts/flow360_train_displacement_r5.sh
 ```
 
-Then implement or run an ERP RAFT/PWCNet baseline and evaluate it through the same spherical metrics.
+The additional seeds produced:
+
+```text
+seed 7:
+global +3.99%, poles +6.56%, equator +2.26%, seam -0.14%,
+active>=0.5 +4.13%, active>=1.0 +1.94%
+
+seed 11:
+global +1.90%, poles +5.98%, equator -0.73%, seam -1.60%,
+active>=0.5 +5.38%, active>=1.0 +2.46%
+
+seed 19:
+global +0.10%, poles +3.76%, equator -0.81%, seam -1.72%,
+active>=0.5 +6.67%, active>=1.0 +2.85%
+```
+
+Summary:
+
+```text
+global:       mean +2.00%, range +0.10% to +3.99%
+poles:        mean +5.43%, range +3.76% to +6.56%
+equator:      mean +0.24%, range -0.81% to +2.26%
+seam:         mean -1.15%, range -1.72% to -0.14%
+active>=0.5: mean +5.39%, range +4.13% to +6.67%
+active>=1.0: mean +2.42%, range +1.94% to +2.85%
+```
+
+Decision:
+
+- Active-motion and pole improvements are stable enough to justify external comparison.
+- Seam is not stable enough to claim a spherical advantage yet.
+- Do not continue with a larger OSLO-only architecture before adding a strong ERP baseline.
+- Implement or run an ERP RAFT/PWCNet baseline and evaluate it through the same spherical metrics.
