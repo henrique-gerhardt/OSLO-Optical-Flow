@@ -442,4 +442,28 @@ The RAFT runner is `run_erp_raft_baseline.py`; the Docker entrypoint is:
 RESOLUTION=6 DIRECTION=forward OUTPUT_DIR=/outputs/raft_r6_forward bash scripts/flow360_raft_baseline.sh
 ```
 
-See `docs/RAFT_BASELINE.md` for cache mounts, smoke-test command, and the comparison table template.
+The first pretrained RAFT Large ERP run completed and was worse than zero-flow across all metrics:
+
+```text
+global:        RAFT 0.7361 deg vs zero-flow 0.4513 deg (-63.12%)
+poles:         RAFT 0.7901 deg vs zero-flow 0.4831 deg (-63.54%)
+equator:       RAFT 0.6892 deg vs zero-flow 0.4263 deg (-61.65%)
+seam:          RAFT 1.4348 deg vs zero-flow 1.0793 deg (-32.94%)
+active >=0.5:  RAFT 2.8470 deg vs zero-flow 1.8704 deg (-52.21%)
+active >=1.0:  RAFT 6.2544 deg vs zero-flow 4.3036 deg (-45.33%)
+```
+
+Updated decision:
+
+- Direct pretrained ERP RAFT is not competitive on FLOW360.
+- The OSLO-style `r=6`, displacement-aware 1-hop model is much stronger than direct ERP RAFT on this spherical evaluation.
+- Before investing in a spherical RAFT port, run a small RAFT prediction diagnostic to verify flow sign, scale, and coordinate convention:
+
+```bash
+MAX_PAIRS=8 SAVE_PREDICTIONS=1 OUTPUT_DIR=/outputs/raft_r6_forward_debug bash scripts/flow360_raft_baseline.sh
+MAX_PAIRS=8 OUTPUT_DIR=/outputs/raft_r6_forward_debug bash scripts/flow360_raft_prediction_diagnostic.sh
+```
+
+The diagnostic compares saved RAFT `.npy` predictions against FLOW360 pixel-flow targets, including sign-flipped, axis-swapped, and scalar-fitted variants. If that diagnostic confirms the runner is directionally correct, the next useful path is not more direct ERP RAFT. It is either 360-aware RAFT preprocessing/fine-tuning or a modest OSLO-side improvement focused on seam stability.
+
+See `docs/RAFT_BASELINE.md` for cache mounts, smoke-test command, and the comparison table.
