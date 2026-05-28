@@ -91,6 +91,6 @@ docker run --rm --gpus all --shm-size 16g \
 
 The zero-initialized FLOW360 run beats zero-flow globally and on active-motion subsets, while the motion-weighted run improves active-motion nodes further but worsens global and seam metrics. A 2-hop cost-volume run was tested next, but it did not improve over the 1-hop baselines and made the ERP seam worse.
 
-The next useful step is no longer wider local search by itself. The best balanced result so far is displacement-aware residual matching with `COST_NUM_HOPS=1` and unweighted loss: it improves global, equator, and poles while making the ERP seam nearly neutral. The weighted variants still improve active-motion metrics more, but they regress the seam. For `r=6`, validation target-motion percentiles are now computed from a bounded sample to avoid `torch.quantile` limits on very large tensors.
+The next useful step is no longer wider local search by itself. The best balanced result so far is displacement-aware residual matching with `COST_NUM_HOPS=1` and unweighted loss. It stayed positive on a true bidirectional run and scaled to `r=6` with stronger global/pole/equator gains and a nearly neutral seam. The next priority is an ERP RAFT/PWCNet baseline and seed stability, not a larger OSLO architecture yet.
 
 See [docs/CONTEXT_AND_STATUS.md](docs/CONTEXT_AND_STATUS.md) for the plan, decisions already made, prior synthetic results, and next engineering steps.

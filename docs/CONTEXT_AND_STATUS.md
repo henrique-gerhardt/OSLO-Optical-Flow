@@ -350,6 +350,35 @@ Operational note:
 - A run stored under `/outputs/r5_disp_costh1_both` still reported `"direction": "forward"`, so it was not actually a bidirectional dataset run. It was nevertheless consistent with the current balanced model: global `+3.35%`, poles `+6.12%`, equator `+1.32%`, seam `-0.67%`, active>=0.5 `+3.51%`. Rebuild the Docker image after script changes and verify the JSON says `"direction": "both"`.
 - `r=6` validation can exceed `torch.quantile`'s practical input size when collecting target-motion percentiles. The runner now limits percentile samples with `--target-quantile-max-samples` while keeping all primary model metrics exact over all valid nodes.
 
+Twelfth and thirteenth validation runs:
+
+```text
+True bidirectional r=5, displacement-aware 1-hop, unweighted:
+global:        model 0.4204 deg vs zero-flow 0.4239 deg (+0.83%)
+poles:         model 0.4345 deg vs zero-flow 0.4551 deg (+4.52%)
+equator:       model 0.4052 deg vs zero-flow 0.4024 deg (-0.68%)
+seam:          model 0.7772 deg vs zero-flow 0.7718 deg (-0.71%)
+active >=0.25: model 0.9611 deg vs zero-flow 1.0637 deg (+9.65%)
+active >=0.5:  model 1.5874 deg vs zero-flow 1.7204 deg (+7.73%)
+active >=1.0:  model 3.7473 deg vs zero-flow 3.8754 deg (+3.31%)
+
+r=6 forward, displacement-aware 1-hop, unweighted:
+global:        model 0.4333 deg vs zero-flow 0.4513 deg (+3.99%)
+poles:         model 0.4514 deg vs zero-flow 0.4831 deg (+6.56%)
+equator:       model 0.4167 deg vs zero-flow 0.4263 deg (+2.26%)
+seam:          model 1.0750 deg vs zero-flow 1.0735 deg (-0.14%)
+active >=0.25: model 1.0763 deg vs zero-flow 1.1425 deg (+5.79%)
+active >=0.5:  model 1.7932 deg vs zero-flow 1.8704 deg (+4.13%)
+active >=1.0:  model 4.2200 deg vs zero-flow 4.3036 deg (+1.94%)
+```
+
+Validation interpretation:
+
+- The true `direction=both` run is positive on global, poles, and active-motion subsets, with seam still near neutral. This confirms the result is not only a forward-flow artifact.
+- The `r=6` forward run strengthens the balanced model: global, poles, equator, and active-motion metrics improve over zero-flow, while seam is almost neutral.
+- Scaling resolution did not break the method; the quantile sampling fix worked and reported about 2M percentile samples.
+- The main open weakness is the tradeoff between active-motion strength and seam stability. The best balanced model is not the best active-motion model.
+
 Success criteria for continuing:
 
 - Model beats zero-flow on `active_0_5_*` and `active_1_0_*`.
@@ -366,11 +395,9 @@ If this fails:
 
 ## Next Engineering Steps
 
-1. Keep the 1-hop unweighted run as the current global/seam baseline.
-2. Keep the 2-hop displacement-aware weighted run as the active-motion upper bound, but not as the main model.
-3. Run the new balanced model with `direction=both`, `COST_NUM_HOPS=1`, and unweighted loss.
-4. Rebuild Docker before the next run and verify saved args contain `"direction": "both"`.
-5. If seam remains near neutral, run `resolution=6` with the same settings.
-6. If active-motion performance remains too weak, investigate a gated motion loss or region-aware loss that does not penalize seam stability.
-7. Add an ERP RAFT/PWCNet baseline and evaluate with the same spherical metrics.
-8. Only then consider a spherical RAFT update block.
+1. Treat `r=6`, displacement-aware 1-hop, unweighted as the current main OSLO-style configuration.
+2. Repeat the main configuration with at least two additional seeds to measure variance.
+3. Add an ERP RAFT/PWCNet baseline and evaluate it with the same spherical metrics.
+4. Compare against zero-flow and the OSLO-style model on global, seam, poles, equator, and active-motion subsets.
+5. If OSLO remains competitive at seam/poles but weak on active motion, investigate a gated motion loss or region-aware loss that preserves seam stability.
+6. Only then consider a spherical RAFT update block.

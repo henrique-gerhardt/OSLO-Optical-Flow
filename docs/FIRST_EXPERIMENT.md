@@ -594,3 +594,45 @@ RESOLUTION=6 COST_NUM_HOPS=1 OUTPUT_DIR=/outputs/r6_disp_costh1 bash scripts/flo
 ```
 
 For `r=6`, the validation set has enough nodes that exact `torch.quantile` can fail with `RuntimeError: quantile() input tensor is too large`. The runner now uses `--target-quantile-max-samples` with a default of `2,000,000` samples for target-motion percentiles. This affects only `target_geo_deg_p50/p90/p95`; model metrics such as global, seam, poles, equator, and active-motion means still use all valid nodes.
+
+## Bidirectional And R6 Results
+
+The true bidirectional run used `"direction": "both"` and stayed positive:
+
+```text
+global:        model 0.4204 deg vs zero-flow 0.4239 deg (+0.83%)
+poles:         model 0.4345 deg vs zero-flow 0.4551 deg (+4.52%)
+equator:       model 0.4052 deg vs zero-flow 0.4024 deg (-0.68%)
+seam:          model 0.7772 deg vs zero-flow 0.7718 deg (-0.71%)
+active >=0.25: model 0.9611 deg vs zero-flow 1.0637 deg (+9.65%)
+active >=0.5:  model 1.5874 deg vs zero-flow 1.7204 deg (+7.73%)
+active >=1.0:  model 3.7473 deg vs zero-flow 3.8754 deg (+3.31%)
+```
+
+The `r=6` forward run also succeeded after bounded percentile sampling:
+
+```text
+global:        model 0.4333 deg vs zero-flow 0.4513 deg (+3.99%)
+poles:         model 0.4514 deg vs zero-flow 0.4831 deg (+6.56%)
+equator:       model 0.4167 deg vs zero-flow 0.4263 deg (+2.26%)
+seam:          model 1.0750 deg vs zero-flow 1.0735 deg (-0.14%)
+active >=0.25: model 1.0763 deg vs zero-flow 1.1425 deg (+5.79%)
+active >=0.5:  model 1.7932 deg vs zero-flow 1.8704 deg (+4.13%)
+active >=1.0:  model 4.2200 deg vs zero-flow 4.3036 deg (+1.94%)
+```
+
+Decision:
+
+- The balanced displacement-aware 1-hop model is robust enough to continue.
+- `r=6` is the best current main configuration because it improves global, poles, equator, and active-motion subsets while keeping seam almost neutral.
+- The next blocker is no longer whether OSLO-style features can beat zero-flow. They can.
+- The next blocker is whether this approach is competitive with a strong ERP RAFT/PWCNet baseline and stable across seeds.
+
+Recommended next work:
+
+```bash
+SEED=11 RESOLUTION=6 COST_NUM_HOPS=1 OUTPUT_DIR=/outputs/r6_disp_costh1_seed11 bash scripts/flow360_train_displacement_r5.sh
+SEED=19 RESOLUTION=6 COST_NUM_HOPS=1 OUTPUT_DIR=/outputs/r6_disp_costh1_seed19 bash scripts/flow360_train_displacement_r5.sh
+```
+
+Then implement or run an ERP RAFT/PWCNet baseline and evaluate it through the same spherical metrics.

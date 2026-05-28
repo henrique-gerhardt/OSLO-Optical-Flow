@@ -26,5 +26,6 @@ python run_flow360_mvp.py \
   --loss-motion-ref-deg "${LOSS_MOTION_REF_DEG:-1.0}" \
   --active-thresholds-deg "${ACTIVE_THRESHOLDS_DEG:-0.25,0.5,1.0}" \
   --target-quantile-max-samples "${TARGET_QUANTILE_MAX_SAMPLES:-2000000}" \
+  --seed "${SEED:-7}" \
   --num-workers "${NUM_WORKERS:-4}" \
   --log-every "${LOG_EVERY:-50}"
