@@ -29,6 +29,7 @@ The script defaults to:
 ```text
 model:       raft_large
 weights:     default
+transform:   identity
 split:       test
 direction:   forward
 resolution:  6
@@ -141,4 +142,22 @@ It compares the saved RAFT `.npy` files against the matching `fflows`/`bflows`, 
 - best scalar fit for each variant;
 - zero-flow pixel EPE for the same pairs.
 
-If identity is the best raw variant and the best fitted scale is positive, the runner's sign and axis convention are likely correct. If a negated or swapped variant wins clearly, fix the runner before interpreting the RAFT baseline. If the best scaled variant improves dramatically, the issue is mostly magnitude calibration. If no variant beats zero-flow, the direct ERP RAFT baseline itself is the problem.
+If identity is the best raw variant and the best fitted scale is positive, the runner's sign and axis convention are likely correct. If a negated or swapped variant wins clearly, rerun the baseline with `RAFT_FLOW_TRANSFORM=<variant>` before interpreting the RAFT baseline. If the best scaled variant improves dramatically, the issue is mostly magnitude calibration. If no variant beats zero-flow, the direct ERP RAFT baseline itself is the problem.
+
+The first 8-pair diagnostic found:
+
+```text
+zero-flow pixel EPE: 8.5314 px
+identity:            9.3347 px (-9.42%)
+negated:             7.9665 px (+6.62%)
+identity scaled:     8.4738 px (+0.67%), scale=-2.9225
+```
+
+This means the first full RAFT run used the wrong sign relative to the FLOW360 targets. The next required run is the full spherical evaluation with negated RAFT flow:
+
+```bash
+RAFT_FLOW_TRANSFORM=negated OUTPUT_DIR=/outputs/raft_r6_forward_negated \
+  bash scripts/flow360_raft_baseline.sh
+```
+
+Interpret that run, not the original identity run, as the direct ERP RAFT baseline. Still, the diagnostic also shows RAFT magnitude is very small on these pairs (`0.94 px` predicted mean magnitude vs `8.53 px` GT mean magnitude), so sign correction alone may not make it competitive.

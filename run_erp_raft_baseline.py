@@ -40,6 +40,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resolution", type=int, default=6, help="HEALPix order used for spherical evaluation.")
     parser.add_argument("--model", default="raft_large", choices=["raft_large", "raft_small"])
     parser.add_argument("--weights", default="default", choices=["default", "none"])
+    parser.add_argument(
+        "--flow-transform",
+        default="identity",
+        choices=[
+            "identity",
+            "negated",
+            "negate_x",
+            "negate_y",
+            "swap_xy",
+            "swap_xy_negated",
+            "swap_xy_negate_x",
+            "swap_xy_negate_y",
+        ],
+        help="Transform RAFT ERP pixel-flow predictions before spherical evaluation.",
+    )
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--max-pairs", type=int, default=None)
@@ -128,6 +143,28 @@ def normalize_untrained_inputs(frame1: torch.Tensor, frame2: torch.Tensor) -> tu
     return frame1.float().div(127.5).sub(1.0), frame2.float().div(127.5).sub(1.0)
 
 
+def transform_flow(flow: torch.Tensor, name: str) -> torch.Tensor:
+    x = flow[:, 0:1]
+    y = flow[:, 1:2]
+    if name == "identity":
+        return torch.cat([x, y], dim=1)
+    if name == "negated":
+        return torch.cat([-x, -y], dim=1)
+    if name == "negate_x":
+        return torch.cat([-x, y], dim=1)
+    if name == "negate_y":
+        return torch.cat([x, -y], dim=1)
+    if name == "swap_xy":
+        return torch.cat([y, x], dim=1)
+    if name == "swap_xy_negated":
+        return torch.cat([-y, -x], dim=1)
+    if name == "swap_xy_negate_x":
+        return torch.cat([-y, x], dim=1)
+    if name == "swap_xy_negate_y":
+        return torch.cat([y, -x], dim=1)
+    raise ValueError(f"Unsupported flow transform: {name}")
+
+
 @torch.no_grad()
 def predict_raft_flow(
     model: torch.nn.Module,
@@ -209,7 +246,7 @@ def main() -> None:
     model, transforms, weights_enum, torchvision_version = load_raft(args, device)
     weights_name = weights_enum.name if weights_enum is not None else "none"
     print(
-        f"raft model={args.model} weights={weights_name} device={device} "
+        f"raft model={args.model} weights={weights_name} flow_transform={args.flow_transform} device={device} "
         f"batch_size={args.batch_size} torchvision={torchvision_version}",
         flush=True,
     )
@@ -233,7 +270,7 @@ def main() -> None:
         target_batch = build_target_batch(target_items)
 
         frame1, frame2, height, width = load_frame_batch(pair_batch)
-        raft_flow = predict_raft_flow(model, transforms, frame1, frame2, device)
+        raft_flow = transform_flow(predict_raft_flow(model, transforms, frame1, frame2, device), args.flow_transform)
 
         cache_key = (height, width)
         if cache_key not in pixel_cache:
@@ -266,6 +303,7 @@ def main() -> None:
             "name": args.model,
             "requested_weights": args.weights,
             "weights_enum": weights_name,
+            "flow_transform": args.flow_transform,
             "torchvision": torchvision_version,
         },
         "metrics": metrics,

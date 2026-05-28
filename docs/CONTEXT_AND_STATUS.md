@@ -464,6 +464,21 @@ MAX_PAIRS=8 SAVE_PREDICTIONS=1 OUTPUT_DIR=/outputs/raft_r6_forward_debug bash sc
 MAX_PAIRS=8 OUTPUT_DIR=/outputs/raft_r6_forward_debug bash scripts/flow360_raft_prediction_diagnostic.sh
 ```
 
-The diagnostic compares saved RAFT `.npy` predictions against FLOW360 pixel-flow targets, including sign-flipped, axis-swapped, and scalar-fitted variants. If that diagnostic confirms the runner is directionally correct, the next useful path is not more direct ERP RAFT. It is either 360-aware RAFT preprocessing/fine-tuning or a modest OSLO-side improvement focused on seam stability.
+The diagnostic compares saved RAFT `.npy` predictions against FLOW360 pixel-flow targets, including sign-flipped, axis-swapped, and scalar-fitted variants. The first 8-pair diagnostic found:
+
+```text
+zero-flow pixel EPE: 8.5314 px
+identity:            9.3347 px (-9.42%)
+negated:             7.9665 px (+6.62%)
+identity scaled:     8.4738 px (+0.67%), scale=-2.9225
+```
+
+This means the original RAFT spherical run used the wrong sign relative to the FLOW360 targets. The runner now supports `--flow-transform`; the next required full baseline is:
+
+```bash
+RAFT_FLOW_TRANSFORM=negated OUTPUT_DIR=/outputs/raft_r6_forward_negated bash scripts/flow360_raft_baseline.sh
+```
+
+Interpret the negated run, not the original identity run, as the direct ERP RAFT baseline. The diagnostic also shows RAFT magnitude is very small on these pairs (`0.94 px` predicted mean magnitude vs `8.53 px` GT mean magnitude), so sign correction may improve the result without making it competitive.
 
 See `docs/RAFT_BASELINE.md` for cache mounts, smoke-test command, and the comparison table.
