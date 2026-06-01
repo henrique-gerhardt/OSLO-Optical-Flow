@@ -473,12 +473,30 @@ negated:             7.9665 px (+6.62%)
 identity scaled:     8.4738 px (+0.67%), scale=-2.9225
 ```
 
-This means the original RAFT spherical run used the wrong sign relative to the FLOW360 targets. The runner now supports `--flow-transform`; the next required full baseline is:
+This means the original RAFT spherical run used the wrong sign relative to the FLOW360 targets. The runner now supports `--flow-transform`. The full corrected baseline is:
 
 ```bash
-RAFT_FLOW_TRANSFORM=negated OUTPUT_DIR=/outputs/raft_r6_forward_negated bash scripts/flow360_raft_baseline.sh
+OUTPUT_DIR=/outputs/raft_r6_forward_negated bash scripts/flow360_raft_baseline.sh
 ```
 
-Interpret the negated run, not the original identity run, as the direct ERP RAFT baseline. The diagnostic also shows RAFT magnitude is very small on these pairs (`0.94 px` predicted mean magnitude vs `8.53 px` GT mean magnitude), so sign correction may improve the result without making it competitive.
+The negated full run produced:
+
+```text
+global:        RAFT 0.2698 deg vs zero-flow 0.4513 deg (+40.21%)
+poles:         RAFT 0.3420 deg vs zero-flow 0.4831 deg (+29.22%)
+equator:       RAFT 0.2379 deg vs zero-flow 0.4263 deg (+44.19%)
+seam:          RAFT 0.8537 deg vs zero-flow 1.0793 deg (+20.90%)
+active >=0.25: RAFT 0.6124 deg vs zero-flow 1.1425 deg (+46.40%)
+active >=0.5:  RAFT 1.0404 deg vs zero-flow 1.8704 deg (+44.38%)
+active >=1.0:  RAFT 2.6364 deg vs zero-flow 4.3036 deg (+38.74%)
+```
+
+Updated decision:
+
+- Interpret the negated run, not the original identity run, as the direct ERP RAFT baseline.
+- Corrected direct ERP RAFT is much stronger than the current OSLO-style MVP across every reported subset.
+- The OSLO MVP remains useful as a proof that spherical HEALPix features can learn motion, but it is not competitive with pretrained RAFT.
+- Future OSLO work must target the RAFT gap directly, not just beat zero-flow. The most defensible next OSLO step is to use RAFT as a teacher or feature/cost-volume reference, or to add a stronger RAFT-like update mechanism while preserving spherical sampling.
+- The FLOW360 RAFT script now defaults to `RAFT_FLOW_TRANSFORM=negated`; override it only for diagnostics or for datasets with a different convention.
 
 See `docs/RAFT_BASELINE.md` for cache mounts, smoke-test command, and the comparison table.

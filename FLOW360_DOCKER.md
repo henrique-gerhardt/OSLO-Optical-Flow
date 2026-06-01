@@ -177,11 +177,14 @@ Default settings:
 ```text
 model:       raft_large
 weights:     default
+transform:   negated
 resolution:  6
 direction:   forward
 batch size:  1
 TORCH_HOME:  /models/torch
 ```
+
+The `negated` transform matches TorchVision RAFT output to the FLOW360 forward-flow convention found by the prediction diagnostic. Override `RAFT_FLOW_TRANSFORM` only when running sign/axis diagnostics or evaluating a dataset with a different convention.
 
 The first pretrained run downloads TorchVision weights into the mounted model cache. The runner writes:
 

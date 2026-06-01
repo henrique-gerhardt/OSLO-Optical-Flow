@@ -16,7 +16,7 @@ args=(
   --resolution "${RESOLUTION}"
   --model "${RAFT_MODEL:-raft_large}"
   --weights "${RAFT_WEIGHTS:-default}"
-  --flow-transform "${RAFT_FLOW_TRANSFORM:-identity}"
+  --flow-transform "${RAFT_FLOW_TRANSFORM:-negated}"
   --device "${DEVICE:-cuda}"
   --batch-size "${BATCH_SIZE:-1}"
   --flow-scale "${FLOW_SCALE:-1.0}"

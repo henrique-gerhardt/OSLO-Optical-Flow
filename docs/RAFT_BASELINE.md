@@ -29,7 +29,7 @@ The script defaults to:
 ```text
 model:       raft_large
 weights:     default
-transform:   identity
+transform:   negated
 split:       test
 direction:   forward
 resolution:  6
@@ -74,20 +74,20 @@ Expected outcome:
 
 ## Comparison Table
 
-| Metric | Zero-Flow R6 Forward | OSLO R6 Disp 1-Hop, 3 Seeds | RAFT ERP R6 Forward |
+| Metric | Zero-Flow R6 Forward | OSLO R6 Disp 1-Hop, 3 Seeds | RAFT ERP R6 Forward, Negated |
 | --- | ---: | ---: | ---: |
-| `global_geo_deg` | 0.4513 | mean 0.4423, range 0.4333-0.4508 | 0.7361 |
-| `poles_geo_deg` | 0.4831 | mean 0.4569, range 0.4514-0.4650 | 0.7901 |
-| `equator_geo_deg` | 0.4263 | mean 0.4253, range 0.4167-0.4298 | 0.6892 |
-| `seam_geo_deg` | 1.0735 | mean 1.0859, range 1.0750-1.0919 | 1.4348 |
-| `active_0_5_geo_deg` | 1.8704 | mean 1.7696, range 1.7457-1.7932 | 2.8470 |
-| `active_1_0_geo_deg` | 4.3036 | mean 4.1997, range 4.1811-4.2200 | 6.2544 |
+| `global_geo_deg` | 0.4513 | mean 0.4423, range 0.4333-0.4508 | 0.2698 |
+| `poles_geo_deg` | 0.4831 | mean 0.4569, range 0.4514-0.4650 | 0.3420 |
+| `equator_geo_deg` | 0.4263 | mean 0.4253, range 0.4167-0.4298 | 0.2379 |
+| `seam_geo_deg` | 1.0793 | mean 1.0859, range 1.0750-1.0919 | 0.8537 |
+| `active_0_5_geo_deg` | 1.8704 | mean 1.7696, range 1.7457-1.7932 | 1.0404 |
+| `active_1_0_geo_deg` | 4.3036 | mean 4.1997, range 4.1811-4.2200 | 2.6364 |
 
 The decision point is not only global error. RAFT should be compared against OSLO on seam and pole behavior as well as active-motion subsets.
 
-## First RAFT Result
+## First RAFT Result, Identity Sign
 
-The first pretrained run used:
+The first pretrained run used the raw TorchVision sign:
 
 ```text
 model:       raft_large
@@ -97,6 +97,7 @@ split:       test
 direction:   forward
 resolution:  6
 pairs:       1289
+transform:   identity
 elapsed:     186.0 s
 ```
 
@@ -112,12 +113,7 @@ active >=0.5:  RAFT 2.8470 deg vs zero-flow 1.8704 deg (-52.21%)
 active >=1.0:  RAFT 6.2544 deg vs zero-flow 4.3036 deg (-45.33%)
 ```
 
-Interpretation:
-
-- Direct ERP RAFT is not a competitive baseline on this FLOW360 setup.
-- The failure is broad, not only a seam artifact.
-- The pretrained RAFT output likely carries image-plane priors that do not match small-motion 360 ERP flow well enough without adaptation.
-- Before concluding that RAFT is unusable for this dataset, run a small prediction diagnostic to verify flow direction, scale, and coordinate convention.
+Interpretation: this was not a valid baseline because the prediction sign was opposite to the FLOW360 target convention.
 
 Recommended diagnostic:
 
@@ -156,8 +152,43 @@ identity scaled:     8.4738 px (+0.67%), scale=-2.9225
 This means the first full RAFT run used the wrong sign relative to the FLOW360 targets. The next required run is the full spherical evaluation with negated RAFT flow:
 
 ```bash
-RAFT_FLOW_TRANSFORM=negated OUTPUT_DIR=/outputs/raft_r6_forward_negated \
+OUTPUT_DIR=/outputs/raft_r6_forward_negated \
   bash scripts/flow360_raft_baseline.sh
 ```
 
-Interpret that run, not the original identity run, as the direct ERP RAFT baseline. Still, the diagnostic also shows RAFT magnitude is very small on these pairs (`0.94 px` predicted mean magnitude vs `8.53 px` GT mean magnitude), so sign correction alone may not make it competitive.
+Interpret that run, not the original identity run, as the direct ERP RAFT baseline.
+
+## Corrected RAFT Result
+
+The corrected full run used:
+
+```text
+model:       raft_large
+weights:     C_T_SKHT_V2
+torchvision: 0.20.1+cu124
+split:       test
+direction:   forward
+resolution:  6
+pairs:       1289
+transform:   negated
+elapsed:     184.6 s
+```
+
+Result:
+
+```text
+global:        RAFT 0.2698 deg vs zero-flow 0.4513 deg (+40.21%)
+poles:         RAFT 0.3420 deg vs zero-flow 0.4831 deg (+29.22%)
+equator:       RAFT 0.2379 deg vs zero-flow 0.4263 deg (+44.19%)
+seam:          RAFT 0.8537 deg vs zero-flow 1.0793 deg (+20.90%)
+active >=0.25: RAFT 0.6124 deg vs zero-flow 1.1425 deg (+46.40%)
+active >=0.5:  RAFT 1.0404 deg vs zero-flow 1.8704 deg (+44.38%)
+active >=1.0:  RAFT 2.6364 deg vs zero-flow 4.3036 deg (+38.74%)
+```
+
+Decision:
+
+- Direct pretrained ERP RAFT is a strong baseline once its sign is matched to FLOW360.
+- The current OSLO-style MVP is not competitive with RAFT on global, poles, equator, seam, or active-motion subsets.
+- The next OSLO experiment should not be justified by beating zero-flow; it must close the gap against this corrected RAFT baseline.
+- The FLOW360 script now defaults to `RAFT_FLOW_TRANSFORM=negated`. Override it only for diagnostics or for datasets with a different convention.

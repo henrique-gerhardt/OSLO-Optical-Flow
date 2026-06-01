@@ -94,6 +94,8 @@ docker run --rm --gpus all --shm-size 16g \
 
 The zero-initialized FLOW360 run beats zero-flow globally and on active-motion subsets, while the motion-weighted run improves active-motion nodes further but worsens global and seam metrics. A 2-hop cost-volume run was tested next, but it did not improve over the 1-hop baselines and made the ERP seam worse.
 
-The next useful step is no longer wider local search by itself. The best balanced result so far is displacement-aware residual matching with `COST_NUM_HOPS=1` and unweighted loss. It stayed positive on a true bidirectional run and scaled to `r=6`. Across three `r=6` seeds, poles and active-motion gains are consistent, while global and seam gains vary. The ERP RAFT baseline runner is now available; run it before deciding whether a larger spherical RAFT architecture is justified.
+The next useful step is no longer wider local search by itself. The best balanced OSLO-style result so far is displacement-aware residual matching with `COST_NUM_HOPS=1` and unweighted loss. It stayed positive on a true bidirectional run and scaled to `r=6`. Across three `r=6` seeds, poles and active-motion gains are consistent, while global and seam gains vary.
+
+The corrected ERP RAFT baseline uses `RAFT_FLOW_TRANSFORM=negated` for FLOW360 forward flow and is much stronger than the current OSLO-style MVP across global, poles, equator, seam, and active-motion subsets. Future OSLO work should target that RAFT gap directly rather than only beating zero-flow.
 
 See [docs/RAFT_BASELINE.md](docs/RAFT_BASELINE.md) for the RAFT command and comparison table, and [docs/CONTEXT_AND_STATUS.md](docs/CONTEXT_AND_STATUS.md) for the plan, decisions already made, prior synthetic results, and next engineering steps.
