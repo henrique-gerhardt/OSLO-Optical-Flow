@@ -584,18 +584,124 @@ global +0.51%, seam +0.24%, poles -1.49%, active>=0.25 +1.09%, active>=0.5 +0.40
 global +0.30%, seam +0.22%, poles -2.53%, active>=0.25 +1.09%, active>=0.5 +0.38%, active>=1.0 +0.02%
 ```
 
-Current decision:
+Current decision after the constrained sweep:
 
 - The best setting is `RESIDUAL_MAX_RAD=0.01` and `RESIDUAL_REG_WEIGHT=0.05`.
 - This setting improves global, seam, equator, and active-motion metrics against corrected RAFT.
 - The remaining blocker is pole regression: `poles_geo_deg` rises from `0.3420` to `0.3471`, about `-1.49%` vs RAFT.
 - The next code path is implemented as `POLE_RESIDUAL_REG_WEIGHT`, an extra residual penalty applied only on the polar region.
 
-Next run:
+Pole-protected result:
 
-```bash
-RESIDUAL_MAX_RAD=0.01 RESIDUAL_REG_WEIGHT=0.05 POLE_RESIDUAL_REG_WEIGHT=0.05 OUTPUT_DIR=/outputs/raft_residual_r6_pole_001_005_005 bash scripts/flow360_raft_residual_r6.sh
-RESIDUAL_MAX_RAD=0.01 RESIDUAL_REG_WEIGHT=0.05 POLE_RESIDUAL_REG_WEIGHT=0.10 OUTPUT_DIR=/outputs/raft_residual_r6_pole_001_005_010 bash scripts/flow360_raft_residual_r6.sh
+```text
+0.01 / 0.05 / pole 0.05:
+global +1.10%, seam +0.25%, poles +0.86%, equator +0.67%, active>=0.25 +0.95%, active>=0.5 +0.45%, active>=1.0 +0.12%
+
+0.01 / 0.05 / pole 0.10:
+global +0.95%, seam +0.29%, poles +0.44%, equator +0.70%, active>=0.25 +0.88%, active>=0.5 +0.48%, active>=1.0 +0.14%
 ```
 
-See `docs/RAFT_BASELINE.md` for the corrected RAFT baseline and `docs/RAFT_RESIDUAL_EXPERIMENT.md` for the residual experiment protocol and result log.
+Current best candidate:
+
+```text
+RESIDUAL_MAX_RAD=0.01
+RESIDUAL_REG_WEIGHT=0.05
+POLE_RESIDUAL_REG_WEIGHT=0.05
+
+global:       residual 0.2670 vs RAFT 0.2699 (+1.10%)
+poles:        residual 0.3391 vs RAFT 0.3420 (+0.86%)
+equator:      residual 0.2364 vs RAFT 0.2380 (+0.67%)
+seam:         residual 0.8466 vs RAFT 0.8488 (+0.25%)
+active>=0.25: residual 0.6067 vs RAFT 0.6125 (+0.95%)
+active>=0.5:  residual 1.0358 vs RAFT 1.0404 (+0.45%)
+active>=1.0:  residual 2.6333 vs RAFT 2.6365 (+0.12%)
+```
+
+Robustness validation passed:
+
+```text
+seeds: 7, 11, 19
+
+global mean:       0.2669 vs RAFT 0.2699 (+1.11%)
+poles mean:        0.3396 vs RAFT 0.3420 (+0.72%)
+equator mean:      0.2364 vs RAFT 0.2380 (+0.70%)
+seam mean:         0.8466 vs RAFT 0.8488 (+0.26%)
+active>=0.25 mean: 0.6071 vs RAFT 0.6125 (+0.89%)
+active>=0.5 mean:  1.0368 vs RAFT 1.0404 (+0.35%)
+active>=1.0 mean:  2.6342 vs RAFT 2.6365 (+0.08%)
+```
+
+This is the current main result. It is positive across all tracked metrics for all three seeds. More scalar regularizer tuning is lower priority.
+
+The first `direction=both` validation is diagnostic only, not a clean confirmation:
+
+```text
+direction=both, seed=7:
+zero-flow global: 0.4368
+RAFT global:      0.4836
+residual global:  0.4762
+
+zero-flow poles:  0.4644
+RAFT poles:       0.5296
+residual poles:   0.5198
+```
+
+The residual improves RAFT on every tracked `both` metric, but RAFT itself is worse than zero-flow. Since forward-only RAFT is strong, the likely issue is the backward FLOW360 convention or the backward cache transform.
+
+Backward transform diagnostic on 64 test pairs:
+
+```text
+zero-flow mean_epe_px: 4.4501
+best_raw:              identity
+best_raw mean_epe_px:  4.0139
+best_raw improvement:  +9.80%
+```
+
+Full backward-only RAFT with `identity` passed:
+
+```text
+global:       0.2652 vs zero 0.4221 (+37.17%)
+poles:        0.3364 vs zero 0.4455 (+24.48%)
+equator:      0.2345 vs zero 0.3998 (+41.34%)
+seam:         0.5733 vs zero 0.7742 (+25.94%)
+active>=0.5:  0.9912 vs zero 1.7088 (+42.00%)
+```
+
+Use `RAFT_FLOW_TRANSFORM=identity` for backward cache and keep `RAFT_FLOW_TRANSFORM=negated` for forward cache.
+
+Mixed-transform `direction=both` result, seed 7:
+
+```text
+global:       residual 0.2643 vs RAFT 0.2676 (+1.23%)
+poles:        residual 0.3351 vs RAFT 0.3393 (+1.23%)
+equator:      residual 0.2347 vs RAFT 0.2363 (+0.68%)
+seam:         residual 0.7086 vs RAFT 0.7104 (+0.25%)
+active>=0.25: residual 0.5959 vs RAFT 0.6010 (+0.86%)
+active>=0.5:  residual 1.0128 vs RAFT 1.0160 (+0.32%)
+active>=1.0:  residual 2.5491 vs RAFT 2.5512 (+0.08%)
+```
+
+Mixed-transform `direction=both` robustness passed across seeds `7`, `11`, and `19`:
+
+```text
+global mean:       residual 0.2646 vs RAFT 0.2676 (+1.14%)
+poles mean:        residual 0.3356 vs RAFT 0.3393 (+1.08%)
+equator mean:      residual 0.2348 vs RAFT 0.2363 (+0.64%)
+seam mean:         residual 0.7084 vs RAFT 0.7104 (+0.28%)
+active>=0.25 mean: residual 0.5969 vs RAFT 0.6010 (+0.69%)
+active>=0.5 mean:  residual 1.0133 vs RAFT 1.0160 (+0.26%)
+active>=1.0 mean:  residual 2.5495 vs RAFT 2.5512 (+0.07%)
+```
+
+This confirms the correction is not forward-only. The current result set now has robust forward-only and bidirectional validations.
+
+Next priority:
+
+```text
+1. automate result aggregation from metrics JSON files;
+2. add direction-split metrics for direction=both;
+3. add qualitative RAFT-vs-residual error visualizations;
+4. then try a RAFT-error-aware residual objective.
+```
+
+See `docs/NEXT_SESSION_HANDOFF.md` for the current handoff and next-session prompt, `docs/RAFT_BASELINE.md` for the corrected RAFT baseline, and `docs/RAFT_RESIDUAL_EXPERIMENT.md` for the residual experiment protocol and result log.
