@@ -23,6 +23,7 @@ args=(
   --hidden-channels "${HIDDEN_CHANNELS:-48}"
   --residual-max-rad "${RESIDUAL_MAX_RAD:-0.05}"
   --residual-reg-weight "${RESIDUAL_REG_WEIGHT:-0.01}"
+  --pole-residual-reg-weight "${POLE_RESIDUAL_REG_WEIGHT:-0.0}"
   --active-thresholds-deg "${ACTIVE_THRESHOLDS_DEG:-0.25,0.5,1.0}"
   --target-quantile-max-samples "${TARGET_QUANTILE_MAX_SAMPLES:-2000000}"
   --seed "${SEED:-7}"

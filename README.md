@@ -103,6 +103,6 @@ The next useful step is no longer wider local search by itself. The best balance
 
 The corrected ERP RAFT baseline uses `RAFT_FLOW_TRANSFORM=negated` for FLOW360 forward flow and is much stronger than the current OSLO-style MVP across global, poles, equator, seam, and active-motion subsets. Future OSLO work should target that RAFT gap directly rather than only beating zero-flow.
 
-The next experiment is a frozen-RAFT HEALPix residual corrector. It starts exactly at RAFT and learns only a small OSLO/HEALPix tangent-flow correction.
+The first frozen-RAFT HEALPix residual run found a small correction signal for seam, equator, and moderate active motion, but it worsened global error slightly and poles materially. A constrained sweep fixed the global regression: the best current setting is `RESIDUAL_MAX_RAD=0.01` and `RESIDUAL_REG_WEIGHT=0.05`, improving global, seam, equator, and all active-motion subsets against RAFT. The remaining blocker is poles, which still worsen by about 1.5%, so the next experiment is pole-protected residual regularization via `POLE_RESIDUAL_REG_WEIGHT`.
 
 See [docs/RAFT_BASELINE.md](docs/RAFT_BASELINE.md) for the RAFT command and comparison table, [docs/RAFT_RESIDUAL_EXPERIMENT.md](docs/RAFT_RESIDUAL_EXPERIMENT.md) for the new experiment protocol, and [docs/CONTEXT_AND_STATUS.md](docs/CONTEXT_AND_STATUS.md) for the full status.

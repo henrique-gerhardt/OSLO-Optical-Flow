@@ -42,6 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hidden-channels", type=int, default=48)
     parser.add_argument("--residual-max-rad", type=float, default=0.05)
     parser.add_argument("--residual-reg-weight", type=float, default=0.01)
+    parser.add_argument("--pole-residual-reg-weight", type=float, default=0.0)
     parser.add_argument("--amp", action="store_true")
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
@@ -156,13 +157,29 @@ def residual_loss(
     basis_east: torch.Tensor,
     basis_north: torch.Tensor,
     residual_reg_weight: float,
+    pole_residual_reg_weight: float = 0.0,
+    pole_mask: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, Dict[str, torch.Tensor]]:
     maps = compute_maps(pred_flow, batch, points, basis_east, basis_north)
     valid = maps["valid"]
     geo_loss = masked_mean(maps["geo_rad"], valid)
     reg_loss = masked_mean(residual.norm(dim=-1), valid)
-    loss = geo_loss + float(residual_reg_weight) * reg_loss
-    return loss, {**maps, "geo_loss": geo_loss, "residual_reg_loss": reg_loss}
+    pole_reg_loss = torch.zeros((), dtype=geo_loss.dtype, device=geo_loss.device)
+    if pole_residual_reg_weight > 0.0:
+        if pole_mask is None:
+            raise ValueError("pole_mask is required when pole_residual_reg_weight > 0")
+        pole_reg_loss = masked_mean(residual.norm(dim=-1), valid & pole_mask.unsqueeze(0))
+    loss = (
+        geo_loss
+        + float(residual_reg_weight) * reg_loss
+        + float(pole_residual_reg_weight) * pole_reg_loss
+    )
+    return loss, {
+        **maps,
+        "geo_loss": geo_loss,
+        "residual_reg_loss": reg_loss,
+        "pole_residual_reg_loss": pole_reg_loss,
+    }
 
 
 @torch.no_grad()
@@ -318,6 +335,8 @@ def main() -> None:
                 basis_east,
                 basis_north,
                 args.residual_reg_weight,
+                args.pole_residual_reg_weight,
+                region_masks["poles"],
             )
         scaler.scale(loss).backward()
         scaler.step(optimizer)
@@ -328,7 +347,8 @@ def main() -> None:
             print(
                 f"step={step:06d} loss={float(loss.detach().cpu()):.6f} "
                 f"geo_loss={float(maps['geo_loss'].detach().cpu()):.6f} "
-                f"residual_reg={float(maps['residual_reg_loss'].detach().cpu()):.6f}",
+                f"residual_reg={float(maps['residual_reg_loss'].detach().cpu()):.6f} "
+                f"pole_residual_reg={float(maps['pole_residual_reg_loss'].detach().cpu()):.6f}",
                 flush=True,
             )
             print_metrics("train", metrics)

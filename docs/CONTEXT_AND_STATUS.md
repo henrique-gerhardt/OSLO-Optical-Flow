@@ -539,4 +539,63 @@ primary:   seam_geo_deg < 0.8537 and global_geo_deg <= 0.2698
 secondary: improve poles or active-motion while keeping global within 1% of RAFT
 ```
 
-See `docs/RAFT_BASELINE.md` for the corrected RAFT baseline and `docs/RAFT_RESIDUAL_EXPERIMENT.md` for the residual experiment protocol.
+First residual run:
+
+```text
+residual_max_rad:    0.05
+residual_reg_weight: 0.01
+steps:               3000
+seed:                7
+
+global:       residual 0.2705 vs RAFT 0.2699 (-0.20%)
+poles:        residual 0.3605 vs RAFT 0.3420 (-5.40%)
+equator:      residual 0.2367 vs RAFT 0.2380 (+0.54%)
+seam:         residual 0.8466 vs RAFT 0.8488 (+0.25%)
+active>=0.25: residual 0.6049 vs RAFT 0.6125 (+1.23%)
+active>=0.5:  residual 1.0362 vs RAFT 1.0404 (+0.41%)
+active>=1.0:  residual 2.6413 vs RAFT 2.6365 (-0.18%)
+```
+
+Decision:
+
+- The first residual run is a secondary success, not a primary success.
+- It found a small useful correction for seam, equator, and moderate active motion.
+- It is not acceptable as the main result because global worsened slightly and poles worsened materially.
+- The next step is not a larger residual model. The residual must be more conservative.
+
+Recommended next sweep:
+
+```bash
+RESIDUAL_MAX_RAD=0.02 RESIDUAL_REG_WEIGHT=0.05 OUTPUT_DIR=/outputs/raft_residual_r6_constrained_002_005 bash scripts/flow360_raft_residual_r6.sh
+RESIDUAL_MAX_RAD=0.01 RESIDUAL_REG_WEIGHT=0.05 OUTPUT_DIR=/outputs/raft_residual_r6_constrained_001_005 bash scripts/flow360_raft_residual_r6.sh
+RESIDUAL_MAX_RAD=0.02 RESIDUAL_REG_WEIGHT=0.10 OUTPUT_DIR=/outputs/raft_residual_r6_constrained_002_010 bash scripts/flow360_raft_residual_r6.sh
+```
+
+Constrained sweep result:
+
+```text
+0.02 / 0.05:
+global +0.01%, seam +0.24%, poles -3.97%, active>=0.25 +1.11%, active>=0.5 +0.39%, active>=1.0 -0.03%
+
+0.01 / 0.05:
+global +0.51%, seam +0.24%, poles -1.49%, active>=0.25 +1.09%, active>=0.5 +0.40%, active>=1.0 +0.05%
+
+0.02 / 0.10:
+global +0.30%, seam +0.22%, poles -2.53%, active>=0.25 +1.09%, active>=0.5 +0.38%, active>=1.0 +0.02%
+```
+
+Current decision:
+
+- The best setting is `RESIDUAL_MAX_RAD=0.01` and `RESIDUAL_REG_WEIGHT=0.05`.
+- This setting improves global, seam, equator, and active-motion metrics against corrected RAFT.
+- The remaining blocker is pole regression: `poles_geo_deg` rises from `0.3420` to `0.3471`, about `-1.49%` vs RAFT.
+- The next code path is implemented as `POLE_RESIDUAL_REG_WEIGHT`, an extra residual penalty applied only on the polar region.
+
+Next run:
+
+```bash
+RESIDUAL_MAX_RAD=0.01 RESIDUAL_REG_WEIGHT=0.05 POLE_RESIDUAL_REG_WEIGHT=0.05 OUTPUT_DIR=/outputs/raft_residual_r6_pole_001_005_005 bash scripts/flow360_raft_residual_r6.sh
+RESIDUAL_MAX_RAD=0.01 RESIDUAL_REG_WEIGHT=0.05 POLE_RESIDUAL_REG_WEIGHT=0.10 OUTPUT_DIR=/outputs/raft_residual_r6_pole_001_005_010 bash scripts/flow360_raft_residual_r6.sh
+```
+
+See `docs/RAFT_BASELINE.md` for the corrected RAFT baseline and `docs/RAFT_RESIDUAL_EXPERIMENT.md` for the residual experiment protocol and result log.
