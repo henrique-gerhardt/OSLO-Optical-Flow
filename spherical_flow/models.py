@@ -266,3 +266,67 @@ class SphericalFlowMVP(torch.nn.Module):
         if return_debug:
             return flow, debug
         return flow
+
+
+class RaftResidualCorrector(torch.nn.Module):
+    """OSLO-style HEALPix residual head conditioned on frozen RAFT flow.
+
+    The model predicts a small tangent-space delta added to a cached RAFT
+    tangent flow. Its final layer is zero-initialized, so the initial full
+    prediction is exactly the RAFT baseline.
+    """
+
+    def __init__(
+        self,
+        hidden_channels: int = 48,
+        residual_max_rad: float = 0.05,
+        include_points: bool = True,
+        zero_init_residual_head: bool = True,
+    ) -> None:
+        super().__init__()
+        self.residual_max_rad = residual_max_rad
+        self.include_points = include_points
+        in_channels = 3 + 3 + 3 + 2
+        if include_points:
+            in_channels += 3
+        self.blocks = torch.nn.ModuleList(
+            [
+                SphereConvBlock(in_channels, hidden_channels),
+                SphereConvBlock(hidden_channels, hidden_channels),
+                SphereConvBlock(hidden_channels, hidden_channels // 2),
+                SphereConvBlock(hidden_channels // 2, 2, activation=False),
+            ]
+        )
+        if zero_init_residual_head:
+            self._zero_init_residual_head()
+
+    def _zero_init_residual_head(self) -> None:
+        final_conv = self.blocks[-1].conv
+        torch.nn.init.zeros_(final_conv.weight)
+        if final_conv.bias is not None:
+            torch.nn.init.zeros_(final_conv.bias)
+
+    def forward(
+        self,
+        frame1: torch.Tensor,
+        frame2: torch.Tensor,
+        raft_flow: torch.Tensor,
+        index: torch.Tensor,
+        weight: torch.Tensor,
+        valid_index: Optional[torch.Tensor] = None,
+        points: Optional[torch.Tensor] = None,
+        return_residual: bool = False,
+    ) -> torch.Tensor | Tuple[torch.Tensor, torch.Tensor]:
+        inputs = [frame1, frame2, frame2 - frame1, raft_flow]
+        if self.include_points:
+            if points is None:
+                raise ValueError("points must be provided when include_points=True")
+            inputs.append(points.to(frame1.device).unsqueeze(0).expand(frame1.size(0), -1, -1))
+        x = torch.cat(inputs, dim=-1)
+        for block in self.blocks:
+            x = block(x, index, weight, valid_index)
+        residual = self.residual_max_rad * torch.tanh(x)
+        pred = raft_flow + residual
+        if return_residual:
+            return pred, residual
+        return pred

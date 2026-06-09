@@ -22,6 +22,7 @@ Implemented:
 - Docker CUDA runtime for Linux/NVIDIA hosts.
 - Metrics for global, poles, equator, ERP seam, target-motion percentiles, and active-motion subsets.
 - TorchVision RAFT ERP baseline runner evaluated through the same spherical metrics.
+- RAFT-conditioned HEALPix residual experiment scaffold.
 
 Not implemented yet:
 
@@ -36,6 +37,8 @@ Not implemented yet:
 ```text
 run_flow360_mvp.py             FLOW360 supervised train/eval runner
 run_erp_raft_baseline.py       TorchVision RAFT ERP baseline with spherical metrics
+run_flow360_cache_raft.py      Cache RAFT predictions as HEALPix tangent flow
+run_flow360_raft_residual.py   Train/evaluate OSLO residual correction over RAFT
 run_spherical_flow_mvp.py      Synthetic spherical-flow runner
 spherical_flow/                Geometry, datasets, and MVP model modules
 spherical_models/sdpa_conv.py  OSLO SDPAConv reused by the MVP
@@ -47,6 +50,8 @@ scripts/flow360_train_active_r5.sh Motion-weighted follow-up run
 scripts/flow360_train_multihop_r5.sh Multi-hop cost-volume run
 scripts/flow360_train_displacement_r5.sh Displacement-aware residual-matching run
 scripts/flow360_raft_baseline.sh TorchVision RAFT ERP baseline run
+scripts/flow360_cache_raft_r6.sh Cache RAFT train/test predictions
+scripts/flow360_raft_residual_r6.sh Train RAFT-conditioned residual model
 docs/                          Project context, status, and run commands
 README_OSLO_ORIGINAL.md        Original OSLO README kept for reference
 ```
@@ -98,4 +103,6 @@ The next useful step is no longer wider local search by itself. The best balance
 
 The corrected ERP RAFT baseline uses `RAFT_FLOW_TRANSFORM=negated` for FLOW360 forward flow and is much stronger than the current OSLO-style MVP across global, poles, equator, seam, and active-motion subsets. Future OSLO work should target that RAFT gap directly rather than only beating zero-flow.
 
-See [docs/RAFT_BASELINE.md](docs/RAFT_BASELINE.md) for the RAFT command and comparison table, and [docs/CONTEXT_AND_STATUS.md](docs/CONTEXT_AND_STATUS.md) for the plan, decisions already made, prior synthetic results, and next engineering steps.
+The next experiment is a frozen-RAFT HEALPix residual corrector. It starts exactly at RAFT and learns only a small OSLO/HEALPix tangent-flow correction.
+
+See [docs/RAFT_BASELINE.md](docs/RAFT_BASELINE.md) for the RAFT command and comparison table, [docs/RAFT_RESIDUAL_EXPERIMENT.md](docs/RAFT_RESIDUAL_EXPERIMENT.md) for the new experiment protocol, and [docs/CONTEXT_AND_STATUS.md](docs/CONTEXT_AND_STATUS.md) for the full status.

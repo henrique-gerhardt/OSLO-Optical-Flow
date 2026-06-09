@@ -11,7 +11,7 @@ from .geometry import (
     rotate_points,
     tangent_basis,
 )
-from .models import LocalCostVolume, SphericalFlowMVP
+from .models import LocalCostVolume, RaftResidualCorrector, SphericalFlowMVP
 from .synthetic import SyntheticRotationFlowDataset, SyntheticRotationFlowDatasetFromPoints
 
 __all__ = [
@@ -27,6 +27,7 @@ __all__ = [
     "rotate_points",
     "tangent_basis",
     "LocalCostVolume",
+    "RaftResidualCorrector",
     "SphericalFlowMVP",
     "SyntheticRotationFlowDataset",
     "SyntheticRotationFlowDatasetFromPoints",

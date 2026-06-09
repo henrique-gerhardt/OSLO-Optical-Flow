@@ -206,6 +206,33 @@ SAVE_PREDICTIONS=1 bash scripts/flow360_raft_baseline.sh
 
 More details and the comparison table are in [docs/RAFT_BASELINE.md](docs/RAFT_BASELINE.md).
 
+## RAFT-conditioned HEALPix residual
+
+Cache corrected RAFT predictions as HEALPix tangent flow before training:
+
+```bash
+docker run --rm --gpus all --shm-size 16g \
+  -v "$FLOW360_ROOT:/data/flow360:ro" \
+  -v "$OSLO_DATA_ROOT:/data/oslo_data:ro" \
+  -v "$OUTPUT_DIR:/outputs" \
+  -v "$MODEL_CACHE:/models" \
+  oslo-flow360:cuda \
+  bash -lc 'SPLIT=train bash scripts/flow360_cache_raft_r6.sh && SPLIT=test bash scripts/flow360_cache_raft_r6.sh'
+```
+
+Then train the residual corrector:
+
+```bash
+docker run --rm --gpus all --shm-size 16g \
+  -v "$FLOW360_ROOT:/data/flow360:ro" \
+  -v "$OSLO_DATA_ROOT:/data/oslo_data:ro" \
+  -v "$OUTPUT_DIR:/outputs" \
+  oslo-flow360:cuda \
+  bash scripts/flow360_raft_residual_r6.sh
+```
+
+The residual model starts exactly at the corrected RAFT baseline and only learns a small HEALPix tangent-flow correction. See [docs/RAFT_RESIDUAL_EXPERIMENT.md](docs/RAFT_RESIDUAL_EXPERIMENT.md).
+
 ## Docker Compose
 
 Create environment variables:

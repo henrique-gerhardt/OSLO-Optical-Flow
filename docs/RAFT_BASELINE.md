@@ -192,3 +192,5 @@ Decision:
 - The current OSLO-style MVP is not competitive with RAFT on global, poles, equator, seam, or active-motion subsets.
 - The next OSLO experiment should not be justified by beating zero-flow; it must close the gap against this corrected RAFT baseline.
 - The FLOW360 script now defaults to `RAFT_FLOW_TRANSFORM=negated`. Override it only for diagnostics or for datasets with a different convention.
+
+The next experiment is documented in [RAFT_RESIDUAL_EXPERIMENT.md](RAFT_RESIDUAL_EXPERIMENT.md). It freezes this corrected RAFT baseline, caches it as HEALPix tangent flow, and trains an OSLO residual correction head initialized to reproduce RAFT exactly.

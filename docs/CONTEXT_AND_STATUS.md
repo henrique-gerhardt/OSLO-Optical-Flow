@@ -496,7 +496,47 @@ Updated decision:
 - Interpret the negated run, not the original identity run, as the direct ERP RAFT baseline.
 - Corrected direct ERP RAFT is much stronger than the current OSLO-style MVP across every reported subset.
 - The OSLO MVP remains useful as a proof that spherical HEALPix features can learn motion, but it is not competitive with pretrained RAFT.
-- Future OSLO work must target the RAFT gap directly, not just beat zero-flow. The most defensible next OSLO step is to use RAFT as a teacher or feature/cost-volume reference, or to add a stronger RAFT-like update mechanism while preserving spherical sampling.
+- Future OSLO work must target the RAFT gap directly, not just beat zero-flow. The first implemented step is a frozen-RAFT HEALPix residual corrector that starts exactly at RAFT and learns only a small OSLO/HEALPix tangent-flow correction.
 - The FLOW360 RAFT script now defaults to `RAFT_FLOW_TRANSFORM=negated`; override it only for diagnostics or for datasets with a different convention.
 
-See `docs/RAFT_BASELINE.md` for cache mounts, smoke-test command, and the comparison table.
+## RAFT-Conditioned Residual Plan
+
+The next project is implemented around this data flow:
+
+```text
+frozen RAFT ERP flow, negated
+  -> cache as HEALPix tangent flow
+  -> train OSLO/HEALPix residual head
+  -> final prediction = RAFT tangent flow + residual
+```
+
+Implementation entry points:
+
+```text
+run_flow360_cache_raft.py
+run_flow360_raft_residual.py
+scripts/flow360_cache_raft_r6.sh
+scripts/flow360_raft_residual_r6.sh
+```
+
+Run cache generation:
+
+```bash
+SPLIT=train RESOLUTION=6 DIRECTION=forward bash scripts/flow360_cache_raft_r6.sh
+SPLIT=test RESOLUTION=6 DIRECTION=forward bash scripts/flow360_cache_raft_r6.sh
+```
+
+Run the residual experiment:
+
+```bash
+RESOLUTION=6 DIRECTION=forward OUTPUT_DIR=/outputs/raft_residual_r6_forward bash scripts/flow360_raft_residual_r6.sh
+```
+
+Success is measured against corrected RAFT, not against zero-flow:
+
+```text
+primary:   seam_geo_deg < 0.8537 and global_geo_deg <= 0.2698
+secondary: improve poles or active-motion while keeping global within 1% of RAFT
+```
+
+See `docs/RAFT_BASELINE.md` for the corrected RAFT baseline and `docs/RAFT_RESIDUAL_EXPERIMENT.md` for the residual experiment protocol.
