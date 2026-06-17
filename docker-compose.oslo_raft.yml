@@ -1,0 +1,35 @@
+# OSLO-RAFT GPU container.
+#
+#   # build + run the self-contained smoke (proves the image works on the box):
+#   SHARDS_HOST=../sphereflow-dataprep/shards \
+#   docker compose -f docker-compose.oslo_raft.yml run --rm oslo-raft
+#
+#   # real training (override the command):
+#   ... run --rm oslo-raft python run_oslo_raft.py --grid healpix --resolution 4 \
+#       --device cuda --amp --onecycle --steps 100000 --output-dir /outputs/oslo_raft
+services:
+  oslo-raft:
+    build:
+      context: .
+      dockerfile: Dockerfile.oslo_raft
+    image: oslo-raft:cuda
+    shm_size: "16gb"
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      SPHEREFLOW_DATAPREP: /workspace/sphereflow-dataprep
+      OSLO_SHARDS: /data/shards
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      # Normalized tar shards produced by `python -m sfprep materialize`. Read-only.
+      # (The sfprep reader code is baked into the image; only this data is mounted.)
+      - ${SHARDS_HOST:-../sphereflow-dataprep/shards}:/data/shards:ro
+      # Checkpoints + metrics JSON land here.
+      - ${OUTPUT_DIR:-./outputs}:/outputs
+    command: ["bash", "scripts/container_smoke.sh"]

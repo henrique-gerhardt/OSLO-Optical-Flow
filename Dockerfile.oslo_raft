@@ -1,0 +1,47 @@
+# OSLO-RAFT training image (GPU box).
+#
+# Mirrors Dockerfile.flow360 but targets run_oslo_raft.py with real HEALPix
+# (--grid healpix). The sibling sphereflow-dataprep repo (the `sfprep` shard
+# reader) is baked in by cloning it at build time, pinned to SFPREP_REF; only the
+# large, regenerable shard data is mounted at runtime. spherical_flow/shard_dataset.py
+# finds the baked-in code via the SPHEREFLOW_DATAPREP env var.
+FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    TORCH_HOME=/models/torch \
+    SPHEREFLOW_DATAPREP=/workspace/sphereflow-dataprep \
+    OSLO_SHARDS=/data/shards
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace/oslo
+
+COPY requirements-oslo-raft.txt /tmp/requirements-oslo-raft.txt
+RUN python -m pip install --upgrade pip \
+    && python -m pip install -r /tmp/requirements-oslo-raft.txt
+
+# Bake in the sfprep shard reader (sibling repo, no Python packaging -> clone, not
+# pip install). Pinned to a commit for reproducibility; override with
+# --build-arg SFPREP_REF=<sha|branch> to update. Layer is before `COPY . oslo` so
+# OSLO code edits don't re-clone.
+ARG SFPREP_REPO=https://github.com/henrique-gerhardt/sfprep.git
+ARG SFPREP_REF=308eca2783f482bdbce25c77924a3c80e2d2c203
+RUN git clone "$SFPREP_REPO" /workspace/sphereflow-dataprep \
+    && git -C /workspace/sphereflow-dataprep checkout --quiet "$SFPREP_REF" \
+    && rm -rf /workspace/sphereflow-dataprep/.git
+
+COPY . /workspace/oslo
+
+RUN chmod +x /workspace/oslo/scripts/*.sh
+
+# Mount points: shards (ro), outputs (rw). sfprep is baked in above.
+RUN mkdir -p /data/shards /outputs /models
+
+CMD ["bash", "scripts/container_smoke.sh"]

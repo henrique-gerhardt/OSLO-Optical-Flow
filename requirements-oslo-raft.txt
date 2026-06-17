@@ -1,0 +1,11 @@
+# OSLO-RAFT GPU container deps (installed on top of the pytorch base image,
+# which already provides torch / torchvision / numpy with CUDA 12.4).
+#
+# HEALPix: astropy-healpix is used in preference to healpy (no cfitsio system
+# build, pip-clean, and supports the nested ordering + neighbours the upcoming
+# nested-HEALPix builder needs). spherical_flow.geometry.healpix_unit_vectors
+# already falls back to it transparently.
+astropy-healpix==1.1.2
+pillow==10.4.0
+opencv-python-headless==4.10.0.84
+tqdm==4.66.5

@@ -197,6 +197,22 @@ Caveat for the GPU box: `--num-workers>0` under spawn doesn't propagate per-epoc
 at 100k-step scale. Real HEALPix `--grid healpix` still uses the interim knn neighbor
 grid + brute-force ang2pix until the nested-HEALPix builder lands.
 
+**GPU container READY (2026-06-15).** Reproducible image so the project can move to
+the box: `Dockerfile.oslo_raft` (base `pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime`)
++ `requirements-oslo-raft.txt` (astropy-healpix — the cfitsio-free nested backend
+`healpix_unit_vectors` already falls back to — pillow, opencv-headless, tqdm) +
+`docker-compose.oslo_raft.yml` + `scripts/container_smoke.sh` + `OSLO_RAFT_DOCKER.md`.
+The `sfprep` shard reader is **baked in** (Dockerfile clones
+`github.com/henrique-gerhardt/sfprep` pinned to `SFPREP_REF`, no Python packaging so
+clone not pip; `shard_dataset.py` finds it via `SPHEREFLOW_DATAPREP`); only the large,
+regenerable shard *data* is mounted at runtime. The smoke is
+two-tier: (1) data-free — build a real HEALPix level + one OSLO-RAFT forward/backward
+on random frames (proves image/HEALPix/SDPAConv/CUDA), (2) if shards mounted, the full
+`run_oslo_raft.py --grid healpix --smoke-test`. Validated locally as far as possible
+without a GPU: `docker compose config` OK, requirements resolve OK, shell syntax OK,
+tier-1 model wiring OK via the fibonacci stand-in (1.2M params, cold-start zero, finite
+grads). The image build + GPU run themselves are validated on the box.
+
 Loss: iteration-weighted geodesic endpoint loss, the spherical analogue of RAFT's sequence loss:
 
 ```text
