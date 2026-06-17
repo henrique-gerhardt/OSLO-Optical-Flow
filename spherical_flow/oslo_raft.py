@@ -110,7 +110,11 @@ def build_knn_level(
 
     def ang2pix(endpoints: torch.Tensor) -> torch.Tensor:
         flat = endpoints.reshape(-1, 3)
-        idx = (flat @ points_for_lookup.t()).argmax(dim=-1)
+        # Follow the endpoints' device: SphereLevel.to() moves the tensor fields but
+        # this closure still captures the build-time (CPU) points. .to() is a no-op
+        # when already co-located, so this stays cheap on the hot path.
+        pts = points_for_lookup.to(flat.device)
+        idx = (flat @ pts.t()).argmax(dim=-1)
         return idx.reshape(endpoints.shape[:-1])
 
     return SphereLevel(
