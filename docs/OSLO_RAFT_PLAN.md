@@ -139,9 +139,29 @@ exact nested index arithmetic (parent `i>>2`, children `4i..4i+3`, descendant bl
 `SpherePyramid` + `build_healpix_pyramid` (per-resolution `SphereLevel`s + pooling /
 descendant / upsample-neighbor maps), and `convex_upsample` (§4.5). CPU-validated via
 `run_healpix_pyramid_smoke.py` (index bijections, chunked==unblocked kNN, convex-upsample
-cold-start-zero / finite grads / transport consistency 2e-3 rad); the real-geometry build
-is asserted in-container (tier 1.5 of `scripts/container_smoke.sh`). The model wiring that
-consumes this bundle (§4.1/4.2/4.3 + the convex-weight head) is the follow-up increment.
+cold-start-zero / finite grads / transport consistency 2e-3 rad) **and validated on the box
+(2026-06-17): tier 1.5 of `scripts/container_smoke.sh` builds the real r1-r4 pyramid and
+asserts node counts `12·4^r`, nested-child proximity, and descendant sanity — green on the
+RTX 3090.** (`_build_level` clamps the neighbor request to the level's node count so very
+coarse correlation levels don't over-request.)
+
+**Multi-resolution model WIRED (2026-06-17).** `spherical_flow/oslo_raft_pyramid.py`:
+`OSLORAFTPyramid` consumes the pyramid — §4.1 `PyramidEncoder` (one `ResidualSphereBlock`
+per resolution, nested `pool_features` between: r6→r5→r4, ch 32→64→96), §4.2
+`build_correlation_pyramid` (all-pairs at r4, pool the second-image axis to r3/r2/r1),
+§4.3 `pyramid_lookup` (one r4 endpoint, gather + concat each corr level's neighborhood),
+§4.4 the reused SDPAConv `GraphConvGRU` + zero-init delta head at r4, §4.5
+`UpsampleWeightHead` → `convex_upsample` lifting r4 flow to r6. **The loss is now genuinely
+computed at r6 after upsampling.** Reuses all building-block modules from `oslo_raft.py`;
+the single-res `OSLORAFT` is untouched. `run_oslo_raft.py` gains a `--multi-res` path
+(`--estimation-resolution`, `--corr-pool-levels`; `--resolution` = fine grid) that samples
+data at r6 and threads the pyramid through train/eval. 1.36M params (in budget), cold-start
+flow exactly zero at r6 (RAFT contract end-to-end). CPU-validated via
+`run_oslo_raft_pyramid_smoke.py` (synthetic nested pyramid: forward/cold-start/grads/budget)
+and the single-res runner path re-checked for no regression; real-geometry + CUDA
+forward/backward runs in-container as tier 1.6 of `scripts/container_smoke.sh`. Next: a
+multi-res training run (the first test that estimate-coarse/supervise-r6 lifts the r=4
+resolution ceiling).
 
 Original design (reference):
 

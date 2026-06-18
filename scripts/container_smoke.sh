@@ -75,6 +75,40 @@ echo "[tier 1.5] nested-HEALPix pyramid foundation (index + transport + real geo
 python run_healpix_pyramid_smoke.py
 
 echo
+echo "[tier 1.6] multi-res OSLORAFTPyramid forward/backward (real r5/r4 geometry) ..."
+python - <<'PY'
+import torch
+from spherical_flow.healpix_pyramid import build_healpix_pyramid
+from spherical_flow.oslo_raft_pyramid import OSLORAFTPyramid
+from spherical_flow.oslo_raft import sequence_geodesic_loss
+from spherical_flow.geometry import endpoint_from_tangent_flow
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# fine=5/est=4 keeps it quick while exercising the r5 chunked build + the full multi-res
+# forward/backward on real nested geometry (the 3-level r6 shape is covered by the CPU smoke).
+pyr = build_healpix_pyramid(fine_resolution=5, estimation_resolution=4, corr_pool_levels=3).to(device)
+model = OSLORAFTPyramid(pyr, feature_channels=(32, 64), context_channels=(32, 64)).to(device)
+
+b, n = 1, pyr.num_fine_nodes
+f1 = torch.rand(b, n, 3, device=device)
+f2 = torch.rand(b, n, 3, device=device)
+preds = model(f1, f2, pyr, iters=4)
+assert preds[-1].shape == (b, n, 2), "bad fine prediction shape"
+assert torch.count_nonzero(preds[0]) == 0, "cold-start flow should be zero at the fine grid"
+
+gt = endpoint_from_tangent_flow(pyr.fine_level.points, torch.zeros(b, n, 2, device=device),
+                                pyr.fine_level.basis_east, pyr.fine_level.basis_north)
+valid = torch.ones(b, n, dtype=torch.bool, device=device)
+loss = sequence_geodesic_loss(preds, gt, pyr.fine_level, valid)
+loss.backward()
+finite = all(p.grad is None or torch.isfinite(p.grad).all() for p in model.parameters())
+assert finite, "non-finite gradient"
+params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+print(f"  est_nodes={pyr.num_estimation_nodes} fine_nodes={n} params={params:,} "
+      f"loss={loss.item():.4f} device={device.type}  OK")
+PY
+
+echo
 if [ -d "$OSLO_SHARDS" ] && [ -n "$(ls -A "$OSLO_SHARDS" 2>/dev/null)" ]; then
     echo "[tier 2] integration smoke on shards at $OSLO_SHARDS ..."
     DEVICE_ARGS="--device cpu"

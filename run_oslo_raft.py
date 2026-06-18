@@ -76,10 +76,19 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output-dir", default="outputs/oslo_raft")
     # geometry
     p.add_argument("--grid", default="fibonacci", choices=["fibonacci", "healpix"])
-    p.add_argument("--resolution", type=int, default=4, help="HEALPix order (grid=healpix).")
+    p.add_argument("--resolution", type=int, default=4,
+                   help="HEALPix order (grid=healpix); the FINE/supervision order when --multi-res.")
     p.add_argument("--nodes", type=int, default=3072, help="Fibonacci node count (grid=fibonacci).")
     p.add_argument("--conv-neighbors", type=int, default=8)
     p.add_argument("--lookup-neighbors", type=int, default=24)
+    # multi-resolution (estimate coarse, supervise fine via the convex upsampler)
+    p.add_argument("--multi-res", action="store_true",
+                   help="Use OSLORAFTPyramid: estimate at --estimation-resolution, supervise at "
+                        "--resolution. Requires --grid healpix.")
+    p.add_argument("--estimation-resolution", type=int, default=4,
+                   help="Coarse estimation order for --multi-res (correlation/GRU live here).")
+    p.add_argument("--corr-pool-levels", type=int, default=3,
+                   help="Second-image correlation pyramid depth for --multi-res (r_est .. r_est-N).")
     # model / optim
     p.add_argument("--hidden-channels", type=int, default=96)
     p.add_argument("--context-dim", type=int, default=64)
@@ -159,18 +168,20 @@ def move_batch(batch: dict, device: torch.device) -> dict:
 
 
 @torch.no_grad()
-def evaluate(model, loader, level, region_masks, active_thresholds, device, eval_iters, max_pairs):
+def evaluate(model, loader, geom, sup_level, region_masks, active_thresholds, device, eval_iters, max_pairs):
+    # geom is what the model consumes (a SphereLevel single-res, or a SpherePyramid multi-res);
+    # sup_level is the grid the loss/metrics live on (the level itself, or the pyramid's fine level).
     model.eval()
     totals: Dict[str, float] = {}
     counts: Dict[str, float] = {}
     active_counts: Dict[str, float] = {}
     target_chunks: List[torch.Tensor] = []
     seen = 0
-    points = level.points
+    points = sup_level.points
     for batch in loader:
         batch = move_batch(batch, device)
-        pred = model(batch["frame1"], batch["frame2"], level, iters=eval_iters)[-1]
-        maps = compute_maps(pred, batch, points, level.basis_east, level.basis_north)
+        pred = model(batch["frame1"], batch["frame2"], geom, iters=eval_iters)[-1]
+        maps = compute_maps(pred, batch, points, sup_level.basis_east, sup_level.basis_north)
         target_chunks.append(target_sample_from_maps(maps, None))
         accumulate_maps(maps, region_masks, active_thresholds, totals, counts, active_counts)
         seen += batch["frame1"].size(0)
@@ -205,19 +216,56 @@ def main() -> None:
     train_sources = parse_sources(args.train_sources)
     val_sources = parse_sources(args.val_sources)
 
-    points = build_points(args)
-    level = build_knn_level(points, args.conv_neighbors, args.lookup_neighbors).to(device)
-    region_masks = build_region_masks(level.points)
-    print(f"grid={args.grid} nodes={level.num_nodes} device={device} git={git_hash()[:9]}", flush=True)
+    if args.multi_res:
+        if args.grid != "healpix":
+            raise SystemExit("--multi-res requires --grid healpix")
+        if args.resolution <= args.estimation_resolution:
+            raise SystemExit(
+                "--multi-res needs --resolution (fine) > --estimation-resolution "
+                "(e.g. --resolution 6 --estimation-resolution 4)"
+            )
+        from spherical_flow.healpix_pyramid import build_healpix_pyramid
+        from spherical_flow.oslo_raft_pyramid import OSLORAFTPyramid
+
+        pyramid = build_healpix_pyramid(
+            fine_resolution=args.resolution,
+            estimation_resolution=args.estimation_resolution,
+            corr_pool_levels=args.corr_pool_levels,
+            conv_neighbors=args.conv_neighbors,
+            lookup_neighbors=args.lookup_neighbors,
+        )
+        dataset_points = pyramid.fine_level.points  # sample frames/GT at the supervision grid
+        pyramid = pyramid.to(device)
+        geom, sup_level = pyramid, pyramid.fine_level
+        model = OSLORAFTPyramid(
+            pyramid, hidden_channels=args.hidden_channels,
+            context_dim=args.context_dim, flow_scale=args.flow_scale,
+        ).to(device)
+        print(f"grid=healpix multi-res est={args.estimation_resolution} fine={args.resolution} "
+              f"nodes_est={pyramid.num_estimation_nodes} nodes_fine={pyramid.num_fine_nodes} "
+              f"device={device} git={git_hash()[:9]}", flush=True)
+    else:
+        points = build_points(args)
+        level = build_knn_level(points, args.conv_neighbors, args.lookup_neighbors).to(device)
+        dataset_points = points
+        geom, sup_level = level, level
+        model = OSLORAFT(
+            hidden_channels=args.hidden_channels, context_dim=args.context_dim,
+            kernel_size=args.conv_neighbors + 1, lookup_neighbors=args.lookup_neighbors + 1,
+            flow_scale=args.flow_scale,
+        ).to(device)
+        print(f"grid={args.grid} nodes={level.num_nodes} device={device} git={git_hash()[:9]}", flush=True)
+
+    region_masks = build_region_masks(sup_level.points)
 
     train_ds = ShardFlowDataset(
-        args.shards, points, train_sources,
+        args.shards, dataset_points, train_sources,
         shuffle_shards=True, shuffle_buffer=args.shuffle_buffer, seed=args.seed,
         max_pairs=args.max_train_pairs,
         so3_prob=args.so3_prob, so3_max_angle_deg=args.so3_max_angle_deg, so3_uniform=args.so3_uniform,
     )
     val_ds = ShardFlowDataset(
-        args.shards, points, val_sources, shuffle_shards=False, shuffle_buffer=0, seed=args.seed,
+        args.shards, dataset_points, val_sources, shuffle_shards=False, shuffle_buffer=0, seed=args.seed,
     )
     pin = device.type == "cuda"
     train_loader = DataLoader(
@@ -226,11 +274,6 @@ def main() -> None:
     )
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, num_workers=min(2, args.num_workers), pin_memory=pin)
 
-    model = OSLORAFT(
-        hidden_channels=args.hidden_channels, context_dim=args.context_dim,
-        kernel_size=args.conv_neighbors + 1, lookup_neighbors=args.lookup_neighbors + 1,
-        flow_scale=args.flow_scale,
-    ).to(device)
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"params={n_params:,}", flush=True)
 
@@ -250,8 +293,8 @@ def main() -> None:
         batch = move_batch(next(stream), device)
         opt.zero_grad(set_to_none=True)
         with torch.amp.autocast(device_type="cuda", enabled=amp_enabled):
-            preds = model(batch["frame1"], batch["frame2"], level, iters=args.iters)
-            loss = sequence_geodesic_loss(preds, batch["endpoint"], level, batch["valid"], gamma=args.gamma)
+            preds = model(batch["frame1"], batch["frame2"], geom, iters=args.iters)
+            loss = sequence_geodesic_loss(preds, batch["endpoint"], sup_level, batch["valid"], gamma=args.gamma)
         scaler.scale(loss).backward()
         if args.grad_clip > 0:
             scaler.unscale_(opt)
@@ -263,7 +306,7 @@ def main() -> None:
 
         if step == 1 or step == total_steps or step % args.log_every == 0:
             with torch.no_grad():
-                maps = compute_maps(preds[-1], batch, level.points, level.basis_east, level.basis_north)
+                maps = compute_maps(preds[-1], batch, sup_level.points, sup_level.basis_east, sup_level.basis_north)
                 tm = summarize_maps(maps, region_masks, active_thresholds)
             lr_now = opt.param_groups[0]["lr"]
             print(f"step={step:06d} loss_rad={loss.item():.6f} lr={lr_now:.2e} "
@@ -271,12 +314,12 @@ def main() -> None:
             model.train()
 
         if args.eval_every and step % args.eval_every == 0 and step != total_steps:
-            metrics = evaluate(model, val_loader, level, region_masks, active_thresholds,
+            metrics = evaluate(model, val_loader, geom, sup_level, region_masks, active_thresholds,
                                device, args.eval_iters, args.max_val_pairs)
             print_metrics(f"val@{step}", metrics)
             model.train()
 
-    metrics = evaluate(model, val_loader, level, region_masks, active_thresholds,
+    metrics = evaluate(model, val_loader, geom, sup_level, region_masks, active_thresholds,
                        device, args.eval_iters, args.max_val_pairs)
     metrics["elapsed_s"] = time.time() - start
     print_metrics("validation", metrics)
@@ -284,7 +327,7 @@ def main() -> None:
 
     meta = {
         "args": vars(args), "git_hash": git_hash(), "params": n_params,
-        "nodes": level.num_nodes, "train_sources": train_sources, "val_sources": val_sources,
+        "nodes": sup_level.num_nodes, "train_sources": train_sources, "val_sources": val_sources,
     }
     ckpt = args.checkpoint_out or str(Path(args.output_dir) / "oslo_raft.pt")
     torch.save({"model": model.state_dict(), **meta, "metrics": metrics}, ckpt)
