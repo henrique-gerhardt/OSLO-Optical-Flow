@@ -143,11 +143,16 @@ def _build_level(
 ) -> SphereLevel:
     """Memory-safe `SphereLevel` builder (the chunked generalization of build_knn_level)."""
     points = points.detach().float()
+    n = points.size(0)
     east, north = tangent_basis(points)
+    # A level holds at most n-1 conv neighbors and n lookup entries (incl. self); clamp so
+    # very coarse correlation levels (small n) don't request more neighbors than exist.
+    conv_k = min(conv_neighbors, n - 1)
+    lookup_k = min(lookup_neighbors + 1, n)
     conv_index, conv_weight, conv_valid = chunked_directional_knn_graph(
-        points, conv_neighbors, knn_chunk
+        points, conv_k, knn_chunk
     )
-    lookup_index = chunked_nearest(points, lookup_neighbors + 1, knn_chunk)
+    lookup_index = chunked_nearest(points, lookup_k, knn_chunk)
     points_for_lookup = points
 
     def ang2pix(endpoints: torch.Tensor) -> torch.Tensor:

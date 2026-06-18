@@ -166,8 +166,10 @@ def check_convex_upsample() -> None:
 
 def check_real_geometry() -> None:
     try:
+        # Representative shape (coarsest corr level r1 = 48 nodes, like the est=4 default);
+        # small/fast (max level r4 = 3072) so it runs on every container smoke.
         pyr = build_healpix_pyramid(
-            fine_resolution=4, estimation_resolution=2, corr_pool_levels=2, knn_chunk=512
+            fine_resolution=4, estimation_resolution=3, corr_pool_levels=2, knn_chunk=1024
         )
     except ImportError:
         print("SKIP real-geometry pyramid (healpy/astropy-healpix not installed)")
