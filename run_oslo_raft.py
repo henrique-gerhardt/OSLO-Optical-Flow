@@ -132,8 +132,16 @@ def get_device(name: str) -> torch.device:
 
 
 def git_hash() -> str:
+    # OSLO_GIT_SHA lets the container (which has no .git) still record provenance;
+    # the Dockerfile bakes it at build time. stderr is silenced so a missing repo
+    # doesn't print "fatal: not a git repository".
+    env_sha = os.environ.get("OSLO_GIT_SHA")
+    if env_sha:
+        return env_sha
     try:
-        return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL
+        ).strip()
     except Exception:
         return "unknown"
 

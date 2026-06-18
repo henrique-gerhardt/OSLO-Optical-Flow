@@ -39,6 +39,12 @@ RUN git clone "$SFPREP_REPO" /workspace/sphereflow-dataprep \
 
 COPY . /workspace/oslo
 
+# Bake the OSLO commit SHA for run provenance (.git is excluded from the build
+# context, so git_hash() can't read it at runtime). Pass with
+# --build-arg OSLO_GIT_SHA=$(git rev-parse HEAD); compose wires this from the host.
+ARG OSLO_GIT_SHA=unknown
+ENV OSLO_GIT_SHA=$OSLO_GIT_SHA
+
 RUN chmod +x /workspace/oslo/scripts/*.sh
 
 # Mount points: shards (ro), outputs (rw). sfprep is baked in above.

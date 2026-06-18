@@ -71,6 +71,10 @@ print(f"  nodes={n} params={params:,} loss={loss.item():.4f} device={device.type
 PY
 
 echo
+echo "[tier 1.5] nested-HEALPix pyramid foundation (index + transport + real geometry) ..."
+python run_healpix_pyramid_smoke.py
+
+echo
 if [ -d "$OSLO_SHARDS" ] && [ -n "$(ls -A "$OSLO_SHARDS" 2>/dev/null)" ]; then
     echo "[tier 2] integration smoke on shards at $OSLO_SHARDS ..."
     DEVICE_ARGS="--device cpu"

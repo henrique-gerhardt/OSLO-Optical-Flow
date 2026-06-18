@@ -12,6 +12,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.oslo_raft
+      args:
+        # Provenance: set OSLO_GIT_SHA=$(git rev-parse HEAD) at build time.
+        OSLO_GIT_SHA: ${OSLO_GIT_SHA:-unknown}
     image: oslo-raft:cuda
     shm_size: "16gb"
     environment:

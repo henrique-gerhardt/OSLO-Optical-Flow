@@ -229,6 +229,36 @@ def geodesic_distance(a: torch.Tensor, b: torch.Tensor, eps: float = 1e-7) -> to
     return torch.acos(dot)
 
 
+def parallel_transport(
+    t: torch.Tensor,
+    a: torch.Tensor,
+    b: torch.Tensor,
+    eps: float = 1e-8,
+) -> torch.Tensor:
+    """Parallel-transport tangent vector(s) ``t`` at unit point ``a`` to unit point ``b``.
+
+    Uses the standard sphere transport along the geodesic ``a -> b``::
+
+        PT(t) = t - (b·t) / (1 + a·b) * (a + b)
+
+    The result is a tangent vector at ``b`` (orthogonal to ``b``). Crucially,
+    ``PT(0) = 0`` for any ``a, b`` — so transporting a zero tangent flow yields zero,
+    which is what preserves the RAFT cold-start contract through the convex upsampler.
+    The ``1 + a·b`` denominator is singular only for antipodal points (``a·b = -1``);
+    in the upsampler ``a`` and ``b`` are within ~one node, so ``a·b ≈ 1``.
+
+    Args:
+        t: ``[..., 3]`` tangent vector(s) at ``a``.
+        a, b: ``[..., 3]`` unit points (broadcastable with ``t``).
+
+    Returns:
+        ``[..., 3]`` tangent vector(s) at ``b``.
+    """
+    b_dot_t = (b * t).sum(dim=-1, keepdim=True)
+    a_dot_b = (a * b).sum(dim=-1, keepdim=True)
+    return t - (b_dot_t / (1.0 + a_dot_b).clamp_min(eps)) * (a + b)
+
+
 def points_to_equirectangular_pixels(
     points: torch.Tensor,
     height: int,

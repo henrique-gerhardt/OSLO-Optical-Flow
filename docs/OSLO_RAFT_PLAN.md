@@ -132,6 +132,17 @@ Still single-resolution (estimation == supervision grid). The explicit next incr
 encoder downsampling pyramid (§4.1), the second-image correlation pyramid (§4.2), and
 the convex HEALPix upsampler (§4.5). The model's forward signature already leaves room.
 
+**Pyramid geometry foundation DONE (2026-06-17).** `spherical_flow/healpix_pyramid.py`:
+exact nested index arithmetic (parent `i>>2`, children `4i..4i+3`, descendant blocks,
+4-to-1 `pool_features`), a memory-bounded `chunked_directional_knn_graph` /
+`chunked_nearest` (so r5/r6 conv/lookup grids build without a 9.7 GB `[N,N]`),
+`SpherePyramid` + `build_healpix_pyramid` (per-resolution `SphereLevel`s + pooling /
+descendant / upsample-neighbor maps), and `convex_upsample` (§4.5). CPU-validated via
+`run_healpix_pyramid_smoke.py` (index bijections, chunked==unblocked kNN, convex-upsample
+cold-start-zero / finite grads / transport consistency 2e-3 rad); the real-geometry build
+is asserted in-container (tier 1.5 of `scripts/container_smoke.sh`). The model wiring that
+consumes this bundle (§4.1/4.2/4.3 + the convex-weight head) is the follow-up increment.
+
 Original design (reference):
 
 
@@ -169,7 +180,8 @@ This replaces RAFT's planar bilinear grid lookup with an exp-map + neighbor-grid
 
 ### 4.5 Upsampling head
 
-- RAFT's convex upsampling adapted to nested HEALPix: each r=4 parent predicts softmax weights over its 1-hop neighborhood (9 nodes) for each of its 4^2 = 16 r=6 descendants; upsampled flow = weighted combination of coarse tangent flows, re-expressed in the fine node's tangent basis via endpoint transport (compute coarse endpoints, average on the sphere via weighted sum + renormalize, logmap at the fine node).
+- RAFT's convex upsampling adapted to nested HEALPix: each r=4 parent predicts softmax weights over its 1-hop neighborhood (9 nodes) for each of its 4^2 = 16 r=6 descendants; upsampled flow = weighted combination of coarse tangent flows, re-expressed in the fine node's tangent basis.
+- **Implementation note (`convex_upsample`, 2026-06-17):** the transport is **parallel transport of the tangent flow**, not averaging absolute endpoints. Endpoint-averaging breaks the RAFT cold-start contract — at flow=0 the coarse endpoints are the coarse node directions, whose weighted average is *not* the fine node, injecting spurious flow. Transporting the tangent flow gives `parallel_transport(0)=0`, so a zero coarse flow upsamples to exactly zero for any weights (asserted in the smoke).
 
 ### 4.6 Smoke tests (before any real training)
 
@@ -212,6 +224,27 @@ on random frames (proves image/HEALPix/SDPAConv/CUDA), (2) if shards mounted, th
 without a GPU: `docker compose config` OK, requirements resolve OK, shell syntax OK,
 tier-1 model wiring OK via the fibonacci stand-in (1.2M params, cold-start zero, finite
 grads). The image build + GPU run themselves are validated on the box.
+
+**Single-resolution shakeout DONE (2026-06-17, RTX 3090).** A GO/NO-GO de-risk run on the
+current single-resolution model *before* investing in the multi-resolution pyramid: 5000
+steps, r=4 (estimation == supervision), GT mix (replica360 + flow360 + mpf), SO(3) prob
+1.0, OneCycle peak 4e-4, batch 2, AMP, ~36 min. **Result: the architecture learns on real
+data at scale.** Final val (max 512 pairs): the model is marginally *worse* than zero-flow
+globally (global_geo_deg 0.2093 vs 0.2070, −1.1%) but consistently *beats* zero-flow on
+every active subset — active>0.25° +2.9% (0.580 vs 0.597), >0.5° +2.7%, >1.0° +1.2% —
+stable across the last evals over ~380k active pixels. The negative global number is
+expected, not a failure: `active_0_25_frac≈0.24`, so ~76% of pixels barely move and
+zero-flow is the correct answer there; the model is **not** collapsing to zero-flow (that
+would give 0% on active). **Key diagnostic — the case for the pyramid:** motion is sub-node
+at r=4 (node spacing ≈3.67°; GT motion p50=0.099°, p90=0.58° → median flow ≈0.03 of a
+node), so the single-resolution model physically cannot represent the fine flow that
+dominates the GT. Node spacing vs p90 motion: r4 0.16 node, r5 0.32, r6 0.63 — only at r=6
+does motion become node-resolvable, and the convex upsampler regresses the sub-node
+remainder. This quantitatively motivates the estimate-coarse / supervise-at-r6 design.
+Side note: val spiked transiently at the OneCycle LR peak (~4e-4) and recovered — add LR
+warmup / lower peak for the long T1 run. (Possible later tuning: the geodesic loss is
+dominated by near-static pixels, biasing toward zero-flow — consider a motion-weighted /
+active-emphasized loss.)
 
 Loss: iteration-weighted geodesic endpoint loss, the spherical analogue of RAFT's sequence loss:
 

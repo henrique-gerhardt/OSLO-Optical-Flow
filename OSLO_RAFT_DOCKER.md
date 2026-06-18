@@ -33,9 +33,18 @@ container).
 ## Build + smoke
 
 ```bash
+OSLO_GIT_SHA=$(git rev-parse HEAD) \
 SHARDS_HOST=../sphereflow-dataprep/shards \
-docker compose -f docker-compose.oslo_raft.yml run --rm oslo-raft
+docker compose -f docker-compose.oslo_raft.yml run --build --rm oslo-raft
 ```
+
+Two habits this image needs:
+
+- **Always `--build` (or `docker compose build` first) after editing source.**
+  `docker compose run` alone reuses the existing image and silently runs stale code.
+- **Pass `OSLO_GIT_SHA=$(git rev-parse HEAD)`** at build time. The image excludes
+  `.git`, so this is how a run records its provenance hash (otherwise `unknown`);
+  `git_hash()` reads the baked `OSLO_GIT_SHA` env var.
 
 The default command is `scripts/container_smoke.sh`:
 
