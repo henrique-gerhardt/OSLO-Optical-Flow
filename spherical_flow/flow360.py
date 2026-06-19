@@ -122,7 +122,9 @@ def _bilinear_sample_erp(image: torch.Tensor, u: torch.Tensor, v: torch.Tensor) 
 
     u0f = torch.floor(u_wrapped)
     v0f = torch.floor(v_clamped)
-    u0 = u0f.long()
+    # remainder() can round up to exactly `width` in float32 (e.g. a tiny negative u from
+    # SO(3) rotation near the seam), so floor lands on `width`; wrap it back into [0, width).
+    u0 = u0f.long() % width
     v0 = v0f.long()
     u1 = (u0 + 1) % width
     v1 = (v0 + 1).clamp(max=height - 1)
