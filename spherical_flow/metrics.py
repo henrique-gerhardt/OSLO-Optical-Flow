@@ -196,11 +196,15 @@ def finalize_metrics(
     for prefix, count in active_counts.items():
         metrics[f"{prefix}_frac"] = count / global_count
     if target_chunks:
-        target = torch.cat(target_chunks)
-        metrics["target_geo_deg_p50"] = float(torch.quantile(target, 0.50))
-        metrics["target_geo_deg_p90"] = float(torch.quantile(target, 0.90))
-        metrics["target_geo_deg_p95"] = float(torch.quantile(target, 0.95))
-        metrics["target_geo_deg_quantile_samples"] = float(target.numel())
+        # np.quantile (not torch.quantile) — torch hard-errors above 2**24 elements, which
+        # the r=6 supervision grid (~49k nodes x hundreds of val pairs) blows past; numpy
+        # has no such cap, so this stays exact at any resolution / pair count.
+        target = torch.cat(target_chunks).numpy()
+        p50, p90, p95 = np.quantile(target, [0.50, 0.90, 0.95])
+        metrics["target_geo_deg_p50"] = float(p50)
+        metrics["target_geo_deg_p90"] = float(p90)
+        metrics["target_geo_deg_p95"] = float(p95)
+        metrics["target_geo_deg_quantile_samples"] = float(target.size)
     return add_improvement_metrics(metrics)
 
 
