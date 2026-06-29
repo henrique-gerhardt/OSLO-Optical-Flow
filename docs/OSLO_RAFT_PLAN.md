@@ -266,6 +266,33 @@ warmup / lower peak for the long T1 run. (Possible later tuning: the geodesic lo
 dominated by near-static pixels, biasing toward zero-flow — consider a motion-weighted /
 active-emphasized loss.)
 
+**Multi-resolution shakeout DONE (2026-06-18, RTX 3090) — NEGATIVE RESULT.** Same protocol,
+now `--multi-res --resolution 6 --estimation-resolution 4` (estimate at r=4, convex-upsample
++ supervise at r=6), 1.40M params, ~43 min. **The estimate-coarse/supervise-fine hypothesis
+is falsified in this form: it reproduced the single-resolution r=4 ceiling almost exactly.**
+Final val (512 pairs): active>0.25° **+2.82%** (vs single-res +2.9%), >0.5° **+2.58%** (vs
++2.7%), >1.0° **+1.03%** (vs +1.2%), global **−1.05%** (vs −1.1%) — statistically the same
+point, if anything a hair worse. **Why:** the convex upsampler is a spatial *interpolator* —
+it redistributes the r=4 flow field to r=6, it cannot *synthesize* sub-r4-node detail the r=4
+correlation never captured. The resolution ceiling is set by the **estimation/correlation
+grid (r=4), not the supervision grid (r=6)**; moving the loss to r=6 changes what is scored,
+not what r=4 correlation can resolve. The r=4 all-pairs argmax lands on *self* for sub-node
+motion (p50 0.099° = 0.027 node), so there is no discriminative gradient to upsample.
+**Confirming evidence:** (a) the r=6 target distribution reads correctly (p50 0.099°, p90
+0.580°, p95 0.773° over 25.2M samples) so the fine pipeline is sound; (b) the val@2000 spike
+at the OneCycle LR peak (global −86%, active +5%) shows the model *can* emit large flow but
+the static majority pulls it back to a near-zero solution as LR decays — the model is
+signal-starved, not capacity-starved. **Implication — the next lever is the correlation
+resolution, not the upsampler.** Motion as fraction of node spacing: even at r=6 the *median*
+motion is only 0.11 node (sub-node everywhere affordable); only the active subsets (≥0.25°)
+reach ~0.3–0.7 node at r5/r6. Next experiments, cheapest first: (1) `--estimation-resolution
+5` — one flag, r5 all-pairs ≈1.2 GB (B=2, fits the 3090), 1.83° spacing; direct test of "does
+a finer correlation grid lift the active-subset ceiling." (2) If r5 helps, the real fix is to
+estimate at r=6 with a **local** correlation (O(N·K) neighborhood volume, not O(N²) all-pairs)
+— since the match is always within a node's local neighborhood for sub-node motion, a local
+r=6 correlation is both affordable *and* finer than all-pairs at r=4. (3) Orthogonal lever: an
+active-emphasized loss so the static 76% stop dominating the gradient toward zero.
+
 Loss: iteration-weighted geodesic endpoint loss, the spherical analogue of RAFT's sequence loss:
 
 ```text

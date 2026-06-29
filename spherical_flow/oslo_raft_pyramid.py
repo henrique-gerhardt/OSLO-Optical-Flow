@@ -167,8 +167,8 @@ class OSLORAFTPyramid(nn.Module):
         self,
         pyramid: SpherePyramid,
         in_channels: int = 3,
-        feature_channels: Tuple[int, ...] = (32, 64, 96),
-        context_channels: Tuple[int, ...] = (32, 64, 96),
+        feature_channels: Optional[Tuple[int, ...]] = None,
+        context_channels: Optional[Tuple[int, ...]] = None,
         hidden_channels: int = 96,
         context_dim: int = 64,
         flow_scale: float = 0.5,
@@ -183,6 +183,15 @@ class OSLORAFTPyramid(nn.Module):
         resolutions = list(
             range(pyramid.fine_resolution, pyramid.estimation_resolution - 1, -1)
         )
+        # Encoder widths ramp linearly to hidden_channels over the pyramid depth, so they
+        # auto-size to any est/fine pair: depth 3 (est=4) -> (32,64,96) — the validated
+        # default — depth 2 (est=5) -> (48,96), depth 1 -> (96,).
+        n_res = len(resolutions)
+        default_channels = tuple(round(hidden_channels * (i + 1) / n_res) for i in range(n_res))
+        if feature_channels is None:
+            feature_channels = default_channels
+        if context_channels is None:
+            context_channels = default_channels
         kernel_size = pyramid.estimation_level.conv_kernel_size
 
         enc_in = in_channels + (3 if self.include_xyz else 0)
