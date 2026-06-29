@@ -89,6 +89,11 @@ def parse_args() -> argparse.Namespace:
                    help="Coarse estimation order for --multi-res (correlation/GRU live here).")
     p.add_argument("--corr-pool-levels", type=int, default=3,
                    help="Second-image correlation pyramid depth for --multi-res (r_est .. r_est-N).")
+    # single-resolution local correlation (estimate AND supervise at --resolution, e.g. r6)
+    p.add_argument("--local-corr", action="store_true",
+                   help="Use OSLORAFTLocal: single-res model at --resolution with a memory-local "
+                        "correlation lookup (no [N,N] volume), so the estimation grid can be r6. "
+                        "Requires --grid healpix. Mutually exclusive with --multi-res.")
     # model / optim
     p.add_argument("--hidden-channels", type=int, default=96)
     p.add_argument("--context-dim", type=int, default=64)
@@ -216,7 +221,32 @@ def main() -> None:
     train_sources = parse_sources(args.train_sources)
     val_sources = parse_sources(args.val_sources)
 
-    if args.multi_res:
+    if args.multi_res and args.local_corr:
+        raise SystemExit("--multi-res and --local-corr are mutually exclusive")
+
+    if args.local_corr:
+        if args.grid != "healpix":
+            raise SystemExit("--local-corr requires --grid healpix")
+        from spherical_flow.geometry import healpix_unit_vectors
+        from spherical_flow.healpix_pyramid import _build_level
+        from spherical_flow.oslo_raft_local import OSLORAFTLocal
+
+        # _build_level is the chunked SphereLevel builder: it never materializes the [N,N]
+        # similarity that build_knn_level's topk/ang2pix would (9.66 GB at r6). OSLORAFTLocal
+        # never calls level.ang2pix (it resolves the displaced node locally), so the brute
+        # ang2pix closure the builder attaches is never exercised at r6.
+        points = healpix_unit_vectors(args.resolution)
+        level = _build_level(points, args.conv_neighbors, args.lookup_neighbors, knn_chunk=2048).to(device)
+        dataset_points = points
+        geom, sup_level = level, level
+        model = OSLORAFTLocal(
+            hidden_channels=args.hidden_channels, context_dim=args.context_dim,
+            kernel_size=args.conv_neighbors + 1, lookup_neighbors=args.lookup_neighbors + 1,
+            flow_scale=args.flow_scale,
+        ).to(device)
+        print(f"grid=healpix local-corr res={args.resolution} nodes={level.num_nodes} "
+              f"device={device} git={git_hash()[:9]}", flush=True)
+    elif args.multi_res:
         if args.grid != "healpix":
             raise SystemExit("--multi-res requires --grid healpix")
         if args.resolution <= args.estimation_resolution:

@@ -293,6 +293,46 @@ estimate at r=6 with a **local** correlation (O(N·K) neighborhood volume, not O
 r=6 correlation is both affordable *and* finer than all-pairs at r=4. (3) Orthogonal lever: an
 active-emphasized loss so the static 76% stop dominating the gradient toward zero.
 
+**est=5 follow-up DONE (2026-06-29, RTX 3090) — NEGATIVE, and it sharpens the theory.** Same
+protocol, `--estimation-resolution 5` (r5 all-pairs correlation, 1.83° spacing), 1.26M params,
+~67 min. Halving the estimation/correlation spacing (3.67° → 1.83°) moved nothing: final val
+active>0.25° **+2.81%** (est=4 was +2.82%), >0.5° **+2.57%** (+2.58%), >1.0° **+1.02%** (+1.03%),
+global **−1.06%** (−1.05%) — two independently-trained models on the *same* ceiling to <0.02
+points, with the identical val@2000 LR-peak transient (global −86%, active_0_5 +5.2%). **Why r5
+didn't help — the half-node discriminability threshold.** The all-pairs correlation argmax is
+only discriminative when motion exceeds ~½ node; below that it lands on *self* and gives no
+gradient. Active-subset motion as a fraction of node spacing: at r5 (1.83°) active>0.25° = 0.14
+node, >0.5° = 0.27 node, >1.0° = 0.55 node — *all still sub-node*. So r5 never crosses the
+threshold for the active subsets; it's the same non-discriminative regime as r4, hence the same
++2.8% (which is a small-mean-motion bias, not matching). The threshold is first crossed at **r6
+(0.92°)**: there active>0.5° = 0.54 node and >1.0° = 1.09 node become resolvable (only >0.25° =
+0.27 node stays sub-node). **Falsifiable prediction for experiment (2):** estimating at r6 should
+lift active>0.5° and active>1.0° above their +2.6%/+1.0% ceilings while active>0.25° stays capped
+— a signature no resolution ≤ r5 can produce. r6 all-pairs is out of budget (9.66 GB at B=1), so
+this *requires* the local O(N·K) correlation (each node vs its ~K neighbors, [N,K] ≈ 9 MB —
+trivial). That is now the clear next build; the est-grid sweep (r4, r5) is exhausted as a cheap
+lever. Caveat on the orthogonal active-loss lever: the val@2000 +5% is the OneCycle *overshoot*
+(large global bias happens to help the large-GT tail), not recovered matching — an active-emphasized
+loss would likely just slide along the same global↔active bias tradeoff, not add correspondence, so
+it is a diagnostic, not the fix. The fix is the local r6 correlation.
+
+**Local r6 correlation BUILT + CPU-validated (2026-06-29).** `spherical_flow/oslo_raft_local.py`:
+`OSLORAFTLocal` is the single-resolution `OSLORAFT` (same architecture/params, est==sup==r6 so
+*no upsampler*) with one surgical change — the `[B,N,N]` all-pairs volume (9.66 GB at r6) is
+replaced by a **lazy local lookup** (`local_correlation_lookup`): per node, exp-map to the
+endpoint, a *windowed* ang2pix (argmax over the node's own `M`-nearest candidates — no global
+`[N,N]` argmax), gather `f2` over the displaced neighborhood and dot with `f1`. Cost `O(N·M·C)`
+≈ 0.5 GB instead of `O(N²)`; for bounded motion the gathered values are *identical* to
+all-pairs-then-gather (the true nearest node lies in the lookup window). Wired as
+`run_oslo_raft.py --local-corr` (single-res, builds the r6 level with the chunked `_build_level`,
+never calls the brute `[N,N]` ang2pix). CPU checks (Fibonacci level, healpy-free): param parity
+with `OSLORAFT` (byte-identical state_dict), cold-start flow exactly 0, **local lookup ≡ all-pairs
+to 3e-8 wherever the two ang2pix agree (100% at flow=0, 99.7% at small flow)**, full
+encoder→corr→GRU→head chain differentiable (after the zero-init head trains), and the end-to-end
+loss+metrics loop runs. GPU run: `--grid healpix --resolution 6 --local-corr` (drop `--multi-res`).
+**Decisive test:** if r6 lifts active>0.5°/>1.0° above the +2.6%/+1.0% all-pairs ceiling while
+active>0.25° stays capped, correlation discriminability was the bottleneck — confirmed.
+
 Loss: iteration-weighted geodesic endpoint loss, the spherical analogue of RAFT's sequence loss:
 
 ```text
