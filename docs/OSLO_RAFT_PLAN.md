@@ -329,7 +329,12 @@ never calls the brute `[N,N]` ang2pix). CPU checks (Fibonacci level, healpy-free
 with `OSLORAFT` (byte-identical state_dict), cold-start flow exactly 0, **local lookup ≡ all-pairs
 to 3e-8 wherever the two ang2pix agree (100% at flow=0, 99.7% at small flow)**, full
 encoder→corr→GRU→head chain differentiable (after the zero-init head trains), and the end-to-end
-loss+metrics loop runs. GPU run: `--grid healpix --resolution 6 --local-corr` (drop `--multi-res`).
+loss+metrics loop runs. **Gradient checkpointing** (`use_checkpoint`, RAFT-style, on the per-iteration
+update) is required: iterating the GRU/lookup over all ~49k r6 nodes stored an 8x activation stack
+that OOM'd a 24 GB 3090 at B=2 (the 8 fp32 lookups alone are ~7 GB); checkpointing keeps only the
+per-iteration boundary tensors and recomputes the block in backward, collapsing 8x→~1x — verified
+bit-identical forward + gradients (78 param tensors, 0.00e+00) to the non-checkpointed path, and a
+no-op under eval/no_grad. GPU run: `--grid healpix --resolution 6 --local-corr` (drop `--multi-res`).
 **Decisive test:** if r6 lifts active>0.5°/>1.0° above the +2.6%/+1.0% all-pairs ceiling while
 active>0.25° stays capped, correlation discriminability was the bottleneck — confirmed.
 

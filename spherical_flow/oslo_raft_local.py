@@ -25,10 +25,11 @@ path differs. The all-pairs :class:`~spherical_flow.oslo_raft.OSLORAFT` is left 
 from __future__ import annotations
 
 import math
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 
 from .geometry import endpoint_from_tangent_flow
 from .oslo_raft import OSLORAFT, SphereLevel
@@ -101,7 +102,42 @@ class OSLORAFTLocal(OSLORAFT):
     module is harmless (no parameters). Only :meth:`forward` changes — the precomputed
     ``[B, N, N]`` volume and :func:`spherical_lookup` are replaced by
     :func:`local_correlation_lookup`.
+
+    Because the GRU/motion/flow stack now iterates over all ~49k r6 nodes, storing every
+    iteration's activations for backward overflows a 24 GB card at B=2 (the 8 lookups alone
+    are ~7 GB in fp32). :attr:`use_checkpoint` gradient-checkpoints each iteration's update
+    (RAFT-style): the forward keeps only the per-iteration boundary tensors (``h``, ``flow``)
+    and recomputes the block in backward, collapsing the 8x activation stack to ~1x. Eval
+    (no grad) skips checkpointing automatically.
     """
+
+    use_checkpoint: bool = True
+
+    def _update_step(
+        self,
+        h: torch.Tensor,
+        flow: torch.Tensor,
+        f1: torch.Tensor,
+        f2: torch.Tensor,
+        context: torch.Tensor,
+        cand_points: torch.Tensor,
+        idx: torch.Tensor,
+        wgt: torch.Tensor,
+        val: torch.Tensor,
+        level: SphereLevel,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """One refinement iteration: local lookup -> motion -> GRU -> zero-init flow head.
+
+        Returns the new hidden state and the flow delta (the caller adds ``flow_scale*delta``
+        to the detached flow). Self-contained over its tensor inputs so it can be wrapped in
+        :func:`torch.utils.checkpoint.checkpoint`.
+        """
+        corr_feat = local_correlation_lookup(f1, f2, flow, level, cand_points)
+        motion = self.motion_encoder(corr_feat, flow, idx, wgt, val)
+        gru_in = torch.cat([motion, context], dim=-1)
+        h = self.gru(h, gru_in, idx, wgt, val)
+        delta = self.flow_conv2(F.relu(self.flow_conv1(h, idx, wgt, val)), idx, wgt, val)
+        return h, delta
 
     def forward(
         self,
@@ -134,13 +170,20 @@ class OSLORAFTLocal(OSLORAFT):
         )
 
         predictions: List[torch.Tensor] = []
+        ckpt = self.use_checkpoint and torch.is_grad_enabled()
         for _ in range(iters):
             flow = flow.detach()
-            corr_feat = local_correlation_lookup(f1, f2, flow, level, cand_points)
-            motion = self.motion_encoder(corr_feat, flow, idx, wgt, val)
-            gru_in = torch.cat([motion, context], dim=-1)
-            h = self.gru(h, gru_in, idx, wgt, val)
-            delta = self.flow_conv2(F.relu(self.flow_conv1(h, idx, wgt, val)), idx, wgt, val)
+            if ckpt:
+                # use_reentrant=False is the modern, AMP-safe variant; passes the non-grad
+                # geometry tensors through untouched and recomputes only this block.
+                h, delta = checkpoint(
+                    self._update_step, h, flow, f1, f2, context,
+                    cand_points, idx, wgt, val, level, use_reentrant=False,
+                )
+            else:
+                h, delta = self._update_step(
+                    h, flow, f1, f2, context, cand_points, idx, wgt, val, level
+                )
             flow = flow + self.flow_scale * delta
             predictions.append(flow)
         return predictions
