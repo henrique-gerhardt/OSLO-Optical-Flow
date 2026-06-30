@@ -101,6 +101,16 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--eval-iters", type=int, default=12)
     p.add_argument("--flow-scale", type=float, default=0.5)
     p.add_argument("--gamma", type=float, default=0.8)
+    # loss re-balancing (diagnose/break the static-majority ceiling)
+    p.add_argument("--loss-motion-weight", type=float, default=0.0,
+                   help="Up-weight moving pixels: weight = 1 + w*min(gt_motion/ref, 1).")
+    p.add_argument("--loss-motion-ref-deg", type=float, default=1.0,
+                   help="GT-motion (deg) at which --loss-motion-weight saturates.")
+    p.add_argument("--loss-min-target-deg", type=float, default=0.0,
+                   help="Drop pixels with GT motion below this (deg) from the loss (active-only).")
+    p.add_argument("--ablate-corr", action="store_true",
+                   help="Zero the correlation feature before the motion encoder (diagnostic: does "
+                        "the model match, or just regress a motion prior?). Not for --multi-res.")
     p.add_argument("--steps", type=int, default=100000)
     p.add_argument("--batch-size", type=int, default=2)
     p.add_argument("--lr", type=float, default=4e-4)
@@ -223,6 +233,8 @@ def main() -> None:
 
     if args.multi_res and args.local_corr:
         raise SystemExit("--multi-res and --local-corr are mutually exclusive")
+    if args.ablate_corr and args.multi_res:
+        raise SystemExit("--ablate-corr is not supported with --multi-res (no corr ablation hook)")
 
     if args.local_corr:
         if args.grid != "healpix":
@@ -286,6 +298,15 @@ def main() -> None:
         ).to(device)
         print(f"grid={args.grid} nodes={level.num_nodes} device={device} git={git_hash()[:9]}", flush=True)
 
+    # Honored by OSLORAFT / OSLORAFTLocal (guarded above so it is never silently a no-op).
+    model.ablate_corr = args.ablate_corr
+    if args.ablate_corr:
+        print("ablate_corr=True (correlation feature zeroed before the motion encoder)", flush=True)
+    if args.loss_motion_weight > 0.0 or args.loss_min_target_deg > 0.0:
+        print(f"loss re-balance: motion_weight={args.loss_motion_weight} "
+              f"motion_ref_deg={args.loss_motion_ref_deg} min_target_deg={args.loss_min_target_deg}",
+              flush=True)
+
     region_masks = build_region_masks(sup_level.points)
 
     train_ds = ShardFlowDataset(
@@ -324,7 +345,11 @@ def main() -> None:
         opt.zero_grad(set_to_none=True)
         with torch.amp.autocast(device_type="cuda", enabled=amp_enabled):
             preds = model(batch["frame1"], batch["frame2"], geom, iters=args.iters)
-            loss = sequence_geodesic_loss(preds, batch["endpoint"], sup_level, batch["valid"], gamma=args.gamma)
+            loss = sequence_geodesic_loss(
+                preds, batch["endpoint"], sup_level, batch["valid"], gamma=args.gamma,
+                motion_weight=args.loss_motion_weight, motion_ref_deg=args.loss_motion_ref_deg,
+                min_target_deg=args.loss_min_target_deg,
+            )
         scaler.scale(loss).backward()
         if args.grad_clip > 0:
             scaler.unscale_(opt)

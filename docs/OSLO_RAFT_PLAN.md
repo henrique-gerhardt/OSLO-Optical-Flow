@@ -338,6 +338,35 @@ no-op under eval/no_grad. GPU run: `--grid healpix --resolution 6 --local-corr` 
 **Decisive test:** if r6 lifts active>0.5°/>1.0° above the +2.6%/+1.0% all-pairs ceiling while
 active>0.25° stays capped, correlation discriminability was the bottleneck — confirmed.
 
+**r6 local correlation DONE (2026-06-30, RTX 3090, B=2, ~3.2 h) — NEGATIVE, and it falsifies the
+resolution-ceiling hypothesis outright.** r4, r5 and r6 land on the *same* point: active>0.25°
+**+2.80%** (r4 +2.82, r5 +2.81), >0.5° **+2.57%** (+2.58/+2.57), >1.0° **+1.02%** (+1.03/+1.02),
+global **−1.05%**. Not just the same ceiling — the **per-step loss trajectory is near-identical**
+across all three resolutions (step 100 = 0.2607 in est=5 and r6; step 2800 = 0.07420 vs 0.07422)
+despite three different architectures (1.40M / 1.26M / 1.20M params) on three different correlation
+grids, AND the val@2000 LR-peak overshoot is resolution-invariant too (active>0.5° = +5.19%/+5.19%/
++5.20%). Pushing the correlation grid to r6 — where active>0.5° = 0.54 node and active>1.0° = 1.09
+node ARE above the half-node threshold — moved nothing. **Conclusion: the ceiling is NOT correlation
+resolution or locality. It is shared by all three runs → it lives in the LOSS + DATA.** The geodesic
+sequence loss is dominated by the ~76% near-static majority (active>0.25° is only 24% of pixels), so
+every model — regardless of what its correlation can resolve — is pulled to the same conservative
+near-zero solution. The val@2000 overshoot is the proof of headroom: at the LR peak the model emits
+larger flow and reaches +5.2% on active>0.5° (with correct-enough direction to beat zero), but the
+global loss penalizes the static majority and anneals it back to +2.6%; and that +5.2% peak being
+*resolution-invariant* shows the global↔active operating curve is fixed by the loss, not the corr.
+
+**Practical corollary: the ceiling is resolution-invariant, so all further experiments run at r4**
+(~43 min, vs r6's 3.2 h) and transfer. **Next lever = the LOSS, not geometry.** `metrics.compute_loss`
+ALREADY has the knobs (`loss_motion_weight` → up-weight pixels by GT motion magnitude;
+`loss_min_target_deg` → drop near-static pixels from the loss) but `run_oslo_raft.py` calls
+`sequence_geodesic_loss`, which ignores them — so the change is to fold a motion weighting into the
+sequence loss + expose the flags. Hypothesis: a motion-weighted loss lets the model sit at the
++5%-active operating point the overshoot already reached, instead of annealing back. Cheap
+confirmatory ablation first (one eval, no retrain): zero `corr_feat` at eval on the saved r6
+checkpoint — if +2.8% active survives without correlation, the trained model is regressing a smooth
+motion prior, not matching, and the lever is features/architecture; if it collapses, correlation is
+load-bearing and the loss is the right amplifier.
+
 Loss: iteration-weighted geodesic endpoint loss, the spherical analogue of RAFT's sequence loss:
 
 ```text

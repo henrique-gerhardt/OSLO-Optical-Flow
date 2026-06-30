@@ -133,6 +133,8 @@ class OSLORAFTLocal(OSLORAFT):
         :func:`torch.utils.checkpoint.checkpoint`.
         """
         corr_feat = local_correlation_lookup(f1, f2, flow, level, cand_points)
+        if self.ablate_corr:  # diagnostic ablation (inherited from OSLORAFT)
+            corr_feat = torch.zeros_like(corr_feat)
         motion = self.motion_encoder(corr_feat, flow, idx, wgt, val)
         gru_in = torch.cat([motion, context], dim=-1)
         h = self.gru(h, gru_in, idx, wgt, val)

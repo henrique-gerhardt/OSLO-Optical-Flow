@@ -253,6 +253,12 @@ class MotionEncoder(nn.Module):
 class OSLORAFT(nn.Module):
     """HEALPix-native iterative spherical optical-flow model."""
 
+    # Diagnostic: when True the correlation feature is zeroed before the motion encoder, so
+    # the model must regress flow from context + flow-recurrence alone. If the active-subset
+    # improvement survives ablation, the correlation was not load-bearing (the model is a
+    # motion-prior regressor, not a matcher). Inherited and honored by OSLORAFTLocal.
+    ablate_corr: bool = False
+
     def __init__(
         self,
         in_channels: int = 3,
@@ -329,6 +335,8 @@ class OSLORAFT(nn.Module):
         for _ in range(iters):
             flow = flow.detach()
             corr_feat = spherical_lookup(corr, flow, level)
+            if self.ablate_corr:
+                corr_feat = torch.zeros_like(corr_feat)
             motion = self.motion_encoder(corr_feat, flow, idx, wgt, val)
             gru_in = torch.cat([motion, context], dim=-1)
             h = self.gru(h, gru_in, idx, wgt, val)
@@ -347,23 +355,56 @@ def sequence_geodesic_loss(
     level: SphereLevel,
     valid: torch.Tensor,
     gamma: float = 0.8,
+    motion_weight: float = 0.0,
+    motion_ref_deg: float = 1.0,
+    min_target_deg: float = 0.0,
 ) -> torch.Tensor:
     """Iteration-weighted geodesic endpoint loss (the spherical RAFT sequence loss).
 
-    ``L = sum_t gamma^(T-t) * mean_valid( geodesic(expmap(p, f_t), gt_endpoint) )``.
+    ``L = sum_t gamma^(T-t) * weighted_mean( geodesic(expmap(p, f_t), gt_endpoint) )``.
+
+    The plain loss (defaults) averages over all valid pixels, which is dominated by the
+    ~76% near-static majority — the bias the r4/r5/r6 runs all converged to. Two optional
+    knobs (mirroring :func:`spherical_flow.metrics.compute_loss`) re-balance toward movers:
+
+      - ``min_target_deg > 0`` drops pixels whose GT motion (the zero-flow geodesic) is below
+        the threshold — an active-only loss; falls back to all-valid if that empties the mask.
+      - ``motion_weight > 0`` scales each pixel by ``1 + motion_weight * min(gt_motion/ref, 1)``
+        so a pixel moving >= ``motion_ref_deg`` carries up to ``1 + motion_weight`` x the static
+        weight (soft emphasis, keeps every pixel).
+
+    Defaults (``motion_weight=0``, ``min_target_deg=0``) reproduce the original loss exactly.
     """
     n_pred = len(predictions)
     if valid.dim() == 1:
         valid = valid.unsqueeze(0).expand(gt_endpoint.shape[:-1])
-    mask = valid.float()
-    denom = mask.sum().clamp_min(1.0)
+    valid = valid.bool()
+
+    mask = valid
+    weights = None
+    if motion_weight > 0.0 or min_target_deg > 0.0:
+        # GT motion magnitude per pixel = geodesic(node, gt_endpoint) = the zero-flow error.
+        zero_endpoint = level.points.unsqueeze(0).expand_as(gt_endpoint)
+        gt_motion_deg = geodesic_distance(zero_endpoint, gt_endpoint) * (180.0 / torch.pi)
+        if min_target_deg > 0.0:
+            active = valid & (gt_motion_deg >= min_target_deg)
+            if active.any():  # keep the plain mask if a batch happens to have no movers
+                mask = active
+        weights = mask.float()
+        if motion_weight > 0.0:
+            ref = max(motion_ref_deg, 1e-6)
+            weights = weights * (1.0 + motion_weight * (gt_motion_deg / ref).clamp(max=1.0))
+
+    if weights is None:
+        weights = mask.float()
+    denom = weights.sum().clamp_min(1.0)
 
     total = predictions[0].new_zeros(())
     for t, flow in enumerate(predictions):
         endpoint = endpoint_from_tangent_flow(level.points, flow, level.basis_east, level.basis_north)
         geo = geodesic_distance(endpoint, gt_endpoint)  # [B, N], radians
         weight = gamma ** (n_pred - 1 - t)
-        total = total + weight * (geo * mask).sum() / denom
+        total = total + weight * (geo * weights).sum() / denom
     return total
 
 
