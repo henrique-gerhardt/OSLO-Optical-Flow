@@ -442,6 +442,27 @@ GPU run: `--grid healpix --resolution 4 --differential`. Decisive: beats +2.9% �
 used, sub-pixel correspondence recovered (the contribution); ties/underperforms ⇒ the sub-node
 limitation is intrinsic (the characterized negative result stands).
 
+**Differential run DONE (2026-06-30/07-01, r4, `--differential`, ~6 min) — UNDERPERFORMS zero-flow.**
+active>0.25° **−4.43%**, >0.5° **−4.37%**, >1.0° **−3.25%**, global **−16.2%** — worse than predicting
+nothing, on every metric and every eval (−2.4% @1000 drifting to −4.4% @5000; never recovered). The
+operator is provably correct (0.55% synthetic recovery), so the failure is the real-data assumptions,
+not the math: the one-shot LK **amplifies noise**. For sub-node motion the motion-induced part of
+`Δf = f2 − f1` is ≈ `(motion/feature-scale)·Δfeature ≈ 0.027` of the signal at r4, while ~97% of `Δf`
+is non-motion difference (content change, encoder noise, un-enforced feature constancy); the solve
+turns that into spurious flow. The synthetic test passed only because linear features have perfect
+constancy + no noise. **⇒ BOTH correspondence paradigms now fail on this data — discrete matching
+(correlation-argmax) went inert, the differential estimator amplifies noise — which is the coherent
+headline result: sub-node inter-frame motion is below the resolving power of affordable HEALPix grids/
+features, and a frame-1 appearance prior (+2.9% active) is the ceiling.** Remaining principled shots
+for the differential paradigm, in increasing effort (each could floor the failure or flip it): (1)
+**confidence gating** — scale the LK flow by the structure-tensor's smaller eigenvalue (Shi–Tomasi),
+so aperture/flat nodes output ~0 instead of noise (at worst reduces to zero-flow, 0%); (2) **r6** —
+the differential SNR scales with motion/feature-scale (0.027 → 0.11, ~4× better) and, unlike
+correlation-argmax, the differential head improves continuously with resolution; (3) **feature-constancy
+loss** — supervise `fnet` so `f1(p) ≈ f2(endpoint)` at GT correspondences, directly enforcing the LK
+assumption the encoder currently violates. The negative result is already complete and thesis-worthy;
+these are optional insurance / the differential's best-case shot before declaring it final.
+
 Loss: iteration-weighted geodesic endpoint loss, the spherical analogue of RAFT's sequence loss:
 
 ```text

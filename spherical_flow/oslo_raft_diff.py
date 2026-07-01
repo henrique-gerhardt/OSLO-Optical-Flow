@@ -95,22 +95,13 @@ class OSLORAFTDiff(nn.Module):
             self._grad_op_key = key
         return self._grad_op
 
-    def forward(
-        self,
-        frame1: torch.Tensor,
-        frame2: torch.Tensor,
-        level: SphereLevel,
-        iters: int = 1,
-        flow_init: Optional[torch.Tensor] = None,
-    ) -> List[torch.Tensor]:
-        """Return ``[flow]`` — a single differential tangent-flow estimate (LK is one-shot)."""
-        idx, wgt, val = level.conv_index, level.conv_weight, level.conv_valid
-        f1 = self.fnet(self._prep_input(frame1, level), idx, wgt, val)   # [B, N, C]
-        f2 = self.fnet(self._prep_input(frame2, level), idx, wgt, val)
-
-        p = self._gradient_operator(level).to(f1.dtype)                  # [N, 2, K]
-        f1_nbr = f1[:, idx]                                              # [B, N, K, C]
-        df1 = f1_nbr - f1.unsqueeze(2)                                  # [B, N, K, C]
+    def _differential(
+        self, f1: torch.Tensor, f2: torch.Tensor, level: SphereLevel
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """The LK solve on precomputed features. Returns ``(flow [B,N,2], S [B,N,2,2])``."""
+        idx = level.conv_index
+        p = self._gradient_operator(level).to(f1.dtype)                 # [N, 2, K]
+        df1 = f1[:, idx] - f1.unsqueeze(2)                             # [B, N, K, C]
         # G[b,n,a,c] = sum_k P[n,a,k] * df1[b,n,k,c]  (spatial gradient of f1, [B,N,2,C])
         grad = torch.einsum("nak,bnkc->bnac", p, df1)
         dt = f2 - f1                                                    # [B, N, C] temporal difference
@@ -120,10 +111,42 @@ class OSLORAFTDiff(nn.Module):
         s = gw @ grad.transpose(-1, -2)                                 # [B, N, 2, 2] structure tensor
         r = -(gw @ dt.unsqueeze(-1)).squeeze(-1)                        # [B, N, 2] rhs
 
-        # The 2x2 solve runs in fp32 (linalg.solve is fragile / unsupported in fp16 under AMP),
-        # then the result is cast back to the working dtype.
+        # The 2x2 solve runs in fp32 (linalg.solve is fragile / unsupported in fp16 under AMP).
         lam = F.softplus(self.log_lambda.float())
         eye = torch.eye(2, device=f1.device, dtype=torch.float32)
         flow = torch.linalg.solve(s.float() + lam * eye, r.float().unsqueeze(-1)).squeeze(-1)
         flow = (flow * torch.exp(self.log_scale.float())).to(r.dtype)   # [B, N, 2]
+        return flow, s
+
+    def _encode(self, frame1, frame2, level):
+        idx, wgt, val = level.conv_index, level.conv_weight, level.conv_valid
+        f1 = self.fnet(self._prep_input(frame1, level), idx, wgt, val)
+        f2 = self.fnet(self._prep_input(frame2, level), idx, wgt, val)
+        return f1, f2
+
+    def forward(
+        self,
+        frame1: torch.Tensor,
+        frame2: torch.Tensor,
+        level: SphereLevel,
+        iters: int = 1,
+        flow_init: Optional[torch.Tensor] = None,
+    ) -> List[torch.Tensor]:
+        """Return ``[flow]`` — a single differential tangent-flow estimate (LK is one-shot)."""
+        f1, f2 = self._encode(frame1, frame2, level)
+        flow, _ = self._differential(f1, f2, level)
         return [flow]
+
+    @torch.no_grad()
+    def confidence(
+        self, frame1: torch.Tensor, frame2: torch.Tensor, level: SphereLevel
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Diagnostic: return ``(flow [B,N,2], lambda_min [B,N])`` — the LK flow and the
+        smaller eigenvalue of the structure tensor (Shi-Tomasi reliability: large = both
+        tangent directions well-constrained; small = aperture/flat, estimate unreliable)."""
+        f1, f2 = self._encode(frame1, frame2, level)
+        flow, s = self._differential(f1, f2, level)
+        a, b, d = s[..., 0, 0], s[..., 0, 1], s[..., 1, 1]
+        disc = torch.sqrt(torch.clamp(((a - d) * 0.5) ** 2 + b * b, min=0.0))
+        lam_min = (a + d) * 0.5 - disc
+        return flow, lam_min
