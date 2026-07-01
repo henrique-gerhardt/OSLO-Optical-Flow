@@ -94,6 +94,10 @@ def parse_args() -> argparse.Namespace:
                    help="Use OSLORAFTLocal: single-res model at --resolution with a memory-local "
                         "correlation lookup (no [N,N] volume), so the estimation grid can be r6. "
                         "Requires --grid healpix. Mutually exclusive with --multi-res.")
+    p.add_argument("--differential", action="store_true",
+                   help="Use OSLORAFTDiff: a spherical Lucas-Kanade differential flow head (flow from "
+                        "the tangent-space spatial gradient of f1 and the temporal difference f2-f1) "
+                        "— the sub-pixel estimator. Single-res; mutually exclusive with the others.")
     # model / optim
     p.add_argument("--hidden-channels", type=int, default=96)
     p.add_argument("--context-dim", type=int, default=64)
@@ -235,14 +239,27 @@ def main() -> None:
     train_sources = parse_sources(args.train_sources)
     val_sources = parse_sources(args.val_sources)
 
-    if args.multi_res and args.local_corr:
-        raise SystemExit("--multi-res and --local-corr are mutually exclusive")
+    _model_modes = sum([args.multi_res, args.local_corr, args.differential])
+    if _model_modes > 1:
+        raise SystemExit("--multi-res / --local-corr / --differential are mutually exclusive")
+    if args.differential and (args.ablate_corr or args.ablate_context):
+        raise SystemExit("--differential has no correlation/context path to ablate")
     if args.ablate_corr and args.multi_res:
         raise SystemExit("--ablate-corr is not supported with --multi-res (no corr ablation hook)")
     if args.ablate_context and args.multi_res:
         raise SystemExit("--ablate-context is not supported with --multi-res (no context ablation hook)")
 
-    if args.local_corr:
+    if args.differential:
+        from spherical_flow.oslo_raft_diff import OSLORAFTDiff
+
+        points = build_points(args)
+        level = build_knn_level(points, args.conv_neighbors, args.lookup_neighbors).to(device)
+        dataset_points = points
+        geom, sup_level = level, level
+        model = OSLORAFTDiff(kernel_size=args.conv_neighbors + 1).to(device)
+        print(f"grid={args.grid} differential nodes={level.num_nodes} "
+              f"device={device} git={git_hash()[:9]}", flush=True)
+    elif args.local_corr:
         if args.grid != "healpix":
             raise SystemExit("--local-corr requires --grid healpix")
         from spherical_flow.geometry import healpix_unit_vectors

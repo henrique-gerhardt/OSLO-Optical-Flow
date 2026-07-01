@@ -398,6 +398,50 @@ since sub-node targets collapse to self); (c) a **differential/feature-differenc
 sub-node displacement from local feature gradients rather than a correlation argmax (the right tool for
 sub-pixel motion).
 
+**Context-starvation DONE (2026-06-30, r4, `--ablate-context`) — it sharpens the finding to its final
+form: the model does not use frame 2 at all.** Zeroing the entire context net (GRU hidden init + feed)
+so only correlation + recurrence drive flow gave active>0.25° **+2.90%**, >0.5° **+2.70%**, >1.0°
+**+1.19%**, global **−1.10%** — *identical to the full model and to the corr-ablated Run A*
+(`active_0_25_geo` = 0.5799 across all three, matching to 5–6 sig figs). Two disjoint input pathways
+converge to the *same flow field*. **The decisive point: context = `cnet(frame1)` never sees frame 2,
+so Run A (corr off, context on) is a FRAME-1-ONLY model — and it already scores the full +2.9%.** A
+model with zero frame-2 information matches the complete result; and the mirror (context off, so
+correlation is the only frame-2 signal) *also* collapses to that same +2.9%. **⇒ The +2.9% is the
+ceiling of an appearance PRIOR ("given frame 1, predict where things usually move"); frame 2 — the
+entire basis of correspondence — contributes nothing.** This kills the "context shortcut masks usable
+correlation" hypothesis (we removed the shortcut; correlation-only still just reproduced the prior), so
+the lever is NOT training tricks. Root cause, now firmly: the inter-frame motion (p50 0.1°) is sub-node
+at every affordable grid, and correlation-argmax cannot resolve sub-node displacement — no correspondence
+signal is extractable at any resolution (why r6 tied r4). The 2×2 is effectively closed; `B+ablate` is
+now a redundant confirm (would give ≈+3.3%, motion-loss's prior-scaling with corr off).
+
+**Where this leaves the project — one principled lever, and a clean fallback thesis result.** The only
+remaining mechanism that can extract SUB-node motion is a **differential (Lucas–Kanade-style) flow head**:
+estimate flow from the temporal feature difference `f2 − f1` and the tangent-space spatial gradient of
+`f1` (`flow ≈ −(∂f/∂t)/(∂f/∂x)`), which resolves sub-pixel displacement via continuous gradients rather
+than a discrete argmax — the right tool for exactly this regime. It is the decisive test of "is sub-node
+motion extractable at all here": if it beats +2.9%, correspondence is recoverable and the differential
+operator is the contribution; if it too ties the frame-1 prior, that CONFIRMS the motion is fundamentally
+sub-resolution for affordable HEALPix grids — itself a legitimate, well-characterized thesis result
+(a HEALPix-native RAFT degenerates to an appearance prior because the data's motion is sub-node, with
+the full ablation ladder — resolution r4/r5/r6, loss reweighting, corr/context starvation — as evidence).
+
+**Differential head BUILT + CPU-validated (2026-06-30).** `spherical_flow/oslo_raft_diff.py`:
+`OSLORAFTDiff` = the `fnet` feature encoder + a spherical Lucas–Kanade solve, no correlation / GRU /
+context. Per node: parameter-free least-squares tangent gradient of `f1` over the conv neighborhood
+(`tangent_gradient_operator`, fixed geometry), temporal difference `Δf = f2 − f1`, and the
+feature-constancy solve `flow = (S + λI)⁻¹ r` (`S = Σ_c w_c gᵀg`, differentiable 2×2, run in fp32 for
+AMP safety). Learnable: `fnet`, per-channel weight `w_c`, `λ`, output scale (~214k params — far leaner
+than the ~1.2M correlation model; `fnet` carries the capacity). One-shot (sub-node ⇒ LK linearization
+valid, no warping). Wired as `run_oslo_raft.py --differential` (single-res, mutually exclusive with the
+other modes; nothing to ablate). CPU checks: **synthetic RECOVERY — with linear features so `f2` is
+`f1` sampled at a known sub-node displacement, the operator returns it to 0.55% median error, direction
+cos-sim 1.0000** (proves the math; the dataset convention `endpoint = p + flow` ⇒ `G·flow = −Δf` sign
+is correct); end-to-end grads into all params; train+metrics loop runs; AMP/autocast forward finite.
+GPU run: `--grid healpix --resolution 4 --differential`. Decisive: beats +2.9% ⇒ frame 2 is finally
+used, sub-pixel correspondence recovered (the contribution); ties/underperforms ⇒ the sub-node
+limitation is intrinsic (the characterized negative result stands).
+
 Loss: iteration-weighted geodesic endpoint loss, the spherical analogue of RAFT's sequence loss:
 
 ```text
