@@ -163,6 +163,9 @@ class OSLORAFTLocal(OSLORAFT):
         h, context = torch.split(ctx, [self.hidden_channels, self.context_dim], dim=-1)
         h = torch.tanh(h)
         context = F.relu(context)
+        if self.ablate_context:  # diagnostic ablation (inherited from OSLORAFT)
+            h = torch.zeros_like(h)
+            context = torch.zeros_like(context)
 
         b, n = frame1.size(0), frame1.size(1)
         flow = (

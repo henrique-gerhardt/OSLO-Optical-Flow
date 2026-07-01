@@ -367,6 +367,37 @@ checkpoint — if +2.8% active survives without correlation, the trained model i
 motion prior, not matching, and the lever is features/architecture; if it collapses, correlation is
 load-bearing and the loss is the right amplifier.
 
+**Ablation + loss runs DONE (2026-06-30, RTX 3090, r4 single-res, ~33 min each) — THE CORRELATION IS
+INERT. This is the finding that reframes the project.** Run A (`--ablate-corr`, corr feature zeroed
+before the motion encoder): active>0.25° **+2.90%**, >0.5° **+2.69%**, >1.0° **+1.19%**, global
+**−1.10%** — *identical to the full model* (+2.9/+2.7/+1.2/−1.1), same per-step loss curve, same
+val@2000 overshoot (active>0.5° +5.40%), `active_0_25_geo` bit-identical (0.580 vs 0.580). **Zeroing
+the model's central mechanism — the spherical exp-map + neighbor-grid correlation lookup — changes
+nothing. The model is not matching frame1→frame2; it regresses a smooth motion PRIOR from the context
+net + flow recurrence.** This retroactively explains every prior negative: r4=r5=r6, est4=est5, the
+near-identical loss curves, the resolution-invariant overshoot — the correlation grid is irrelevant
+because the correlation is never used. Run B (`--loss-motion-weight 4`, corr on): active>0.25°
+**+3.33%**, >0.5° **+3.12%**, >1.0° **+1.38%**, global **−2.71%**, overshoot +7.95% — a *modest*
+active lift (+0.4 pts) bought with a global drop (−1.1→−2.7); the classic global↔active bias-tradeoff
+slide (bigger prior helps big-GT pixels, hurts the static majority), NOT recovered correspondence.
+**Root cause (hypothesis): sub-node motion + a cold-start bootstrap failure + an easy context
+shortcut.** Correlation-argmax needs multi-node displacement to localize, but the motion is sub-node
+at every affordable grid (p50 0.1° = 0.027 node at r4), so at flow=0 the corr profile is flat →
+near-zero gradient to sharpen features via the corr path → features never become matchable, while the
+context path offers an immediate "predict the mean motion" solution the optimizer locks onto. **The
+lever is no longer loss or geometry — it is MAKING THE CORRELATION/MATCHING PATHWAY LEARN.** Immediate
+airtight confirm: re-run B *with* `--ablate-corr` (2×2 completion) — if `B+ablate ≈ B` (+3.3%), even a
+loss that demands motion accuracy leaves the correlation inert → the +0.4 is pure prior-scaling.
+Then the real fork (attack "make the model estimate sub-node motion"): (a) **context-starvation
+diagnostic** — shrink/remove the context feed to the GRU so the prior shortcut is unavailable; if the
+model then engages correlation the shortcut was the blocker (fixable), if it collapses the features
+fundamentally can't match (need arch); (b) **auxiliary matching loss** — supervise the correlation to
+peak at the GT-displaced node (InfoNCE over the lookup neighborhood) so features get a *direct*
+gradient to become matchable, independent of the flow-head bootstrap (needs r6 for non-trivial targets
+since sub-node targets collapse to self); (c) a **differential/feature-difference flow head** — regress
+sub-node displacement from local feature gradients rather than a correlation argmax (the right tool for
+sub-pixel motion).
+
 Loss: iteration-weighted geodesic endpoint loss, the spherical analogue of RAFT's sequence loss:
 
 ```text

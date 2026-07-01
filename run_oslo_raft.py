@@ -111,6 +111,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--ablate-corr", action="store_true",
                    help="Zero the correlation feature before the motion encoder (diagnostic: does "
                         "the model match, or just regress a motion prior?). Not for --multi-res.")
+    p.add_argument("--ablate-context", action="store_true",
+                   help="Zero the context-net contribution (GRU hidden init + per-iter context feed) "
+                        "so only correlation + flow-recurrence drive flow (diagnostic: does correlation "
+                        "carry usable signal the context shortcut masks?). Not for --multi-res.")
     p.add_argument("--steps", type=int, default=100000)
     p.add_argument("--batch-size", type=int, default=2)
     p.add_argument("--lr", type=float, default=4e-4)
@@ -235,6 +239,8 @@ def main() -> None:
         raise SystemExit("--multi-res and --local-corr are mutually exclusive")
     if args.ablate_corr and args.multi_res:
         raise SystemExit("--ablate-corr is not supported with --multi-res (no corr ablation hook)")
+    if args.ablate_context and args.multi_res:
+        raise SystemExit("--ablate-context is not supported with --multi-res (no context ablation hook)")
 
     if args.local_corr:
         if args.grid != "healpix":
@@ -300,8 +306,11 @@ def main() -> None:
 
     # Honored by OSLORAFT / OSLORAFTLocal (guarded above so it is never silently a no-op).
     model.ablate_corr = args.ablate_corr
+    model.ablate_context = args.ablate_context
     if args.ablate_corr:
         print("ablate_corr=True (correlation feature zeroed before the motion encoder)", flush=True)
+    if args.ablate_context:
+        print("ablate_context=True (context net zeroed; only correlation + recurrence drive flow)", flush=True)
     if args.loss_motion_weight > 0.0 or args.loss_min_target_deg > 0.0:
         print(f"loss re-balance: motion_weight={args.loss_motion_weight} "
               f"motion_ref_deg={args.loss_motion_ref_deg} min_target_deg={args.loss_min_target_deg}",

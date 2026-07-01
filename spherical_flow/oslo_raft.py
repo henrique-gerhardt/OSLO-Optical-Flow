@@ -259,6 +259,13 @@ class OSLORAFT(nn.Module):
     # motion-prior regressor, not a matcher). Inherited and honored by OSLORAFTLocal.
     ablate_corr: bool = False
 
+    # Diagnostic (the mirror image): when True the entire context-network contribution is
+    # zeroed — both the GRU hidden-state init and the per-iteration context feed — so the ONLY
+    # content driving the flow is the correlation + flow recurrence. Removes the "predict the
+    # mean motion" shortcut. If active survives, the correlation carries usable signal the
+    # context path was masking; if it collapses, the features genuinely cannot match.
+    ablate_context: bool = False
+
     def __init__(
         self,
         in_channels: int = 3,
@@ -323,6 +330,9 @@ class OSLORAFT(nn.Module):
         h, context = torch.split(ctx, [self.hidden_channels, self.context_dim], dim=-1)
         h = torch.tanh(h)
         context = F.relu(context)
+        if self.ablate_context:
+            h = torch.zeros_like(h)
+            context = torch.zeros_like(context)
 
         b, n = frame1.size(0), frame1.size(1)
         flow = (
