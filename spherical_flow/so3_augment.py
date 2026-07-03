@@ -121,6 +121,9 @@ def so3_augment_pair(
     rotation: torch.Tensor,
     basis_east: Optional[torch.Tensor] = None,
     basis_north: Optional[torch.Tensor] = None,
+    target_points: Optional[torch.Tensor] = None,
+    target_basis_east: Optional[torch.Tensor] = None,
+    target_basis_north: Optional[torch.Tensor] = None,
 ) -> Dict[str, torch.Tensor]:
     """Apply SO(3) augmentation to one ERP pair, returning node samples.
 
@@ -128,18 +131,22 @@ def so3_augment_pair(
         frame1_erp, frame2_erp: ``[H, W, 3]`` ERP frames in ``[0, 1]``.
         flow_erp: ``[H, W, 2]`` canonical ERP displacement.
         valid_erp: ``[H, W]`` validity.
-        points: ``[N, 3]`` target node directions (unrotated).
+        points: ``[N, 3]`` frame node directions (unrotated).
         rotation: ``[3, 3]`` rotation matrix ``R``.
         basis_east, basis_north: tangent basis at ``points`` (computed if omitted).
+        target_points: optional supervision-grid directions (OSLO-RAFT-R); the same
+            ``R`` rotates their sampling directions, so frames and targets stay
+            consistently paired. ``None`` keeps the single-grid behavior.
+        target_basis_east, target_basis_north: tangent basis at ``target_points``.
 
     Returns:
-        The same dict shape as :func:`sample_pair_to_nodes`: ``frame1``, ``frame2``,
-        ``flow`` (tangent target at ``points``), ``endpoint`` (augmented world),
-        ``valid``.
+        The same dict shape as :func:`sample_pair_to_nodes`: ``frame1``, ``frame2``
+        at the frame grid; ``flow``/``endpoint``/``valid`` at the target grid.
     """
     if basis_east is None or basis_north is None:
         basis_east, basis_north = tangent_basis(points)
     query_points = points @ rotation
+    target_query_points = None if target_points is None else target_points @ rotation
     return sample_pair_to_nodes(
         frame1_erp,
         frame2_erp,
@@ -150,4 +157,8 @@ def so3_augment_pair(
         basis_north,
         query_points=query_points,
         endpoint_rotation=rotation,
+        target_points=target_points,
+        target_basis_east=target_basis_east,
+        target_basis_north=target_basis_north,
+        target_query_points=target_query_points,
     )

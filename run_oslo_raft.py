@@ -21,6 +21,12 @@ core to exercise the whole loop before moving to the GPU.
     python run_oslo_raft.py --grid healpix --resolution 4 --device cuda --amp \
         --train-sources flow360:train,replica360:train,mpf:train \
         --val-sources flow360:val --so3-prob 1.0 --steps 100000
+
+    # OSLO-RAFT-R Stage A matching bootstrap (docs/OSLO_RAFT_RETINA_PLAN.md §8):
+    python run_oslo_raft.py --grid healpix --retina --retina-resolution 7 \
+        --resolution 6 --estimation-resolution 4 --device cuda --amp --onecycle \
+        --train-sources replica360:train --val-sources replica360:val \
+        --synth-rot-prob 0.5 --val-synth-rot-prob 0.5 --steps 5000
 """
 
 from __future__ import annotations
@@ -36,6 +42,7 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from spherical_flow.geometry import fibonacci_unit_vectors, tangent_basis
@@ -98,6 +105,34 @@ def parse_args() -> argparse.Namespace:
                    help="Use OSLORAFTDiff: a spherical Lucas-Kanade differential flow head (flow from "
                         "the tangent-space spatial gradient of f1 and the temporal difference f2-f1) "
                         "— the sub-pixel estimator. Single-res; mutually exclusive with the others.")
+    # retina mode (OSLO-RAFT-R): ingest at --retina-resolution, estimate at
+    # --estimation-resolution, supervise at --resolution (docs/OSLO_RAFT_RETINA_PLAN.md)
+    p.add_argument("--retina", action="store_true",
+                   help="Use OSLORAFTRetina: frames sampled at --retina-resolution, flow estimated "
+                        "at --estimation-resolution, supervised at --resolution via the convex "
+                        "upsampler, with the lazy interpolated correlation lookup. Requires "
+                        "--grid healpix and est < resolution <= retina.")
+    p.add_argument("--retina-resolution", type=int, default=7,
+                   help="Retina (input) HEALPix order for --retina (8 = ERP-pixel parity, ~4x cost).")
+    p.add_argument("--lookup-rings", type=int, default=2,
+                   help="Interp-lookup stencil rings per corr level (--retina).")
+    p.add_argument("--lookup-ring-points", type=int, default=8,
+                   help="Interp-lookup points per stencil ring (--retina).")
+    p.add_argument("--feature-channels", default="",
+                   help="Comma list overriding the retina encoder channel ramp, finest->est "
+                        "(e.g. '16,32,48,64,96'). Empty = the depth-keyed default.")
+    p.add_argument("--pyramid-cache", default="outputs/pyramid_cache",
+                   help="Directory for cached pyramids ('' disables). r7/r8 graphs take minutes "
+                        "to build; the cache is keyed on the full geometry config.")
+    p.add_argument("--no-encoder-checkpoint", action="store_true",
+                   help="Disable encoder gradient checkpointing in --retina mode (on by default).")
+    p.add_argument("--aux-match-weight", type=float, default=0.5,
+                   help="Weight of the stencil matching loss (--retina only). Measured necessary "
+                        "for correlation to bootstrap at all (see the retina plan §9.2 notes); "
+                        "0 disables.")
+    p.add_argument("--aux-warmup-steps", type=int, default=0,
+                   help="Train ONLY the matching loss for the first N steps (--retina; the "
+                        "Stage-A feature bootstrap). 0 = joint from step 1.")
     # model / optim
     p.add_argument("--hidden-channels", type=int, default=96)
     p.add_argument("--context-dim", type=int, default=64)
@@ -121,14 +156,32 @@ def parse_args() -> argparse.Namespace:
                         "carry usable signal the context shortcut masks?). Not for --multi-res.")
     p.add_argument("--steps", type=int, default=100000)
     p.add_argument("--batch-size", type=int, default=2)
+    p.add_argument("--grad-accum", type=int, default=1,
+                   help="Accumulate gradients over N micro-batches per optimizer step "
+                        "(retina-8 memory fallback: --batch-size 1 --grad-accum 2).")
     p.add_argument("--lr", type=float, default=4e-4)
     p.add_argument("--weight-decay", type=float, default=1e-5)
     p.add_argument("--grad-clip", type=float, default=1.0)
     p.add_argument("--onecycle", action="store_true", help="OneCycle LR schedule over --steps.")
+    p.add_argument("--init-checkpoint", default="",
+                   help="Load model weights from a saved checkpoint before training "
+                        "(stage-to-stage init, e.g. Stage B from Stage A).")
+    p.add_argument("--eval-only", action="store_true",
+                   help="Skip training: evaluate --init-checkpoint (or a fresh model) on the val "
+                        "sources and write metrics. Gate R1 = eval-only twice, with and without "
+                        "--ablate-corr.")
     # augmentation
     p.add_argument("--so3-prob", type=float, default=1.0)
     p.add_argument("--so3-max-angle-deg", type=float, default=180.0)
     p.add_argument("--so3-uniform", action="store_true", help="Haar SO(3) angle density.")
+    # synthetic-rotation motion source (the Stage-A matching bootstrap, plan §8)
+    p.add_argument("--synth-rot-prob", type=float, default=0.0,
+                   help="Probability a train record's motion is REPLACED by an exact rotation of "
+                        "its own frame1 (perfect constancy, exact GT — the matching bootstrap).")
+    p.add_argument("--synth-rot-min-deg", type=float, default=1.0)
+    p.add_argument("--synth-rot-max-deg", type=float, default=15.0)
+    p.add_argument("--val-synth-rot-prob", type=float, default=0.0,
+                   help="Same knob for the val stream (Gate R1 uses a synth-rot val set).")
     # data plumbing
     p.add_argument("--shuffle-buffer", type=int, default=512)
     p.add_argument("--num-workers", type=int, default=4)
@@ -176,6 +229,45 @@ def git_hash() -> str:
         ).strip()
     except Exception:
         return "unknown"
+
+
+def load_or_build_pyramid(args: argparse.Namespace):
+    """Build the retina pyramid, disk-cached on the full geometry config (plan §3.4).
+
+    The r7/r8 neighbor graphs take minutes to build; the cache pays that once. The
+    filename keys every parameter that shapes the geometry, so a config change never
+    reads a stale pyramid; a corrupt/old-version file is rebuilt, not trusted.
+    """
+    from spherical_flow.healpix_pyramid import build_healpix_pyramid, load_pyramid, save_pyramid
+
+    cache_path = None
+    if args.pyramid_cache:
+        name = (f"pyramid_ret{args.retina_resolution}_sup{args.resolution}"
+                f"_est{args.estimation_resolution}_cp{args.corr_pool_levels}"
+                f"_cn{args.conv_neighbors}_ln{args.lookup_neighbors}.pt")
+        cache_path = Path(args.pyramid_cache) / name
+        if cache_path.exists():
+            try:
+                pyramid = load_pyramid(cache_path)
+                print(f"pyramid cache hit: {cache_path}", flush=True)
+                return pyramid
+            except Exception as exc:  # version bump / partial write -> rebuild
+                print(f"pyramid cache unusable ({exc}); rebuilding", flush=True)
+
+    t0 = time.time()
+    pyramid = build_healpix_pyramid(
+        fine_resolution=args.resolution,
+        estimation_resolution=args.estimation_resolution,
+        corr_pool_levels=args.corr_pool_levels,
+        conv_neighbors=args.conv_neighbors,
+        lookup_neighbors=args.lookup_neighbors,
+        retina_resolution=args.retina_resolution,
+    )
+    print(f"pyramid built in {time.time() - t0:.1f}s", flush=True)
+    if cache_path is not None:
+        save_pyramid(pyramid, cache_path)
+        print(f"pyramid cached: {cache_path}", flush=True)
+    return pyramid
 
 
 def build_points(args: argparse.Namespace) -> torch.Tensor:
@@ -239,9 +331,9 @@ def main() -> None:
     train_sources = parse_sources(args.train_sources)
     val_sources = parse_sources(args.val_sources)
 
-    _model_modes = sum([args.multi_res, args.local_corr, args.differential])
+    _model_modes = sum([args.multi_res, args.local_corr, args.differential, args.retina])
     if _model_modes > 1:
-        raise SystemExit("--multi-res / --local-corr / --differential are mutually exclusive")
+        raise SystemExit("--multi-res / --local-corr / --differential / --retina are mutually exclusive")
     if args.differential and (args.ablate_corr or args.ablate_context):
         raise SystemExit("--differential has no correlation/context path to ablate")
     if args.ablate_corr and args.multi_res:
@@ -249,7 +341,41 @@ def main() -> None:
     if args.ablate_context and args.multi_res:
         raise SystemExit("--ablate-context is not supported with --multi-res (no context ablation hook)")
 
-    if args.differential:
+    # OSLO-RAFT-R decouples the frame grid from the supervision grid; the dataset then
+    # samples frames at the retina and targets at the fine (supervision) grid.
+    target_points = None
+
+    if args.retina:
+        if args.grid != "healpix":
+            raise SystemExit("--retina requires --grid healpix")
+        if not (args.estimation_resolution < args.resolution <= args.retina_resolution):
+            raise SystemExit(
+                "--retina needs estimation < resolution (supervision) <= retina-resolution, got "
+                f"est={args.estimation_resolution} sup={args.resolution} ret={args.retina_resolution}"
+            )
+        from spherical_flow.oslo_raft_retina import OSLORAFTRetina
+
+        pyramid = load_or_build_pyramid(args)
+        dataset_points = pyramid.retina_level.points   # frames at the retina
+        target_points = pyramid.fine_level.points      # targets at the supervision grid
+        pyramid = pyramid.to(device)
+        geom, sup_level = pyramid, pyramid.fine_level
+        feature_channels = (
+            tuple(int(t) for t in args.feature_channels.split(",") if t.strip())
+            or None
+        )
+        model = OSLORAFTRetina(
+            pyramid, hidden_channels=args.hidden_channels, context_dim=args.context_dim,
+            flow_scale=args.flow_scale, feature_channels=feature_channels,
+            context_channels=feature_channels,
+            lookup_rings=args.lookup_rings, lookup_ring_points=args.lookup_ring_points,
+            use_checkpoint_encoder=not args.no_encoder_checkpoint,
+        ).to(device)
+        print(f"grid=healpix retina={args.retina_resolution} est={args.estimation_resolution} "
+              f"sup={args.resolution} nodes_ret={pyramid.retina_level.num_nodes} "
+              f"nodes_est={pyramid.num_estimation_nodes} nodes_sup={pyramid.num_fine_nodes} "
+              f"device={device} git={git_hash()[:9]}", flush=True)
+    elif args.differential:
         from spherical_flow.oslo_raft_diff import OSLORAFTDiff
 
         points = build_points(args)
@@ -321,7 +447,13 @@ def main() -> None:
         ).to(device)
         print(f"grid={args.grid} nodes={level.num_nodes} device={device} git={git_hash()[:9]}", flush=True)
 
-    # Honored by OSLORAFT / OSLORAFTLocal (guarded above so it is never silently a no-op).
+    if args.init_checkpoint:
+        payload = torch.load(args.init_checkpoint, map_location="cpu", weights_only=False)
+        model.load_state_dict(payload.get("model", payload), strict=True)
+        print(f"loaded init checkpoint: {args.init_checkpoint}", flush=True)
+
+    # Honored by OSLORAFT / OSLORAFTLocal / OSLORAFTRetina (guarded above so it is never
+    # silently a no-op).
     model.ablate_corr = args.ablate_corr
     model.ablate_context = args.ablate_context
     if args.ablate_corr:
@@ -332,6 +464,12 @@ def main() -> None:
         print(f"loss re-balance: motion_weight={args.loss_motion_weight} "
               f"motion_ref_deg={args.loss_motion_ref_deg} min_target_deg={args.loss_min_target_deg}",
               flush=True)
+    if args.synth_rot_prob > 0.0 or args.val_synth_rot_prob > 0.0:
+        print(f"synth-rot: train_prob={args.synth_rot_prob} val_prob={args.val_synth_rot_prob} "
+              f"angle=[{args.synth_rot_min_deg}, {args.synth_rot_max_deg}] deg", flush=True)
+    if args.retina and args.aux_match_weight > 0.0:
+        print(f"aux stencil matching: weight={args.aux_match_weight} "
+              f"warmup_steps={args.aux_warmup_steps}", flush=True)
 
     region_masks = build_region_masks(sup_level.points)
 
@@ -340,9 +478,15 @@ def main() -> None:
         shuffle_shards=True, shuffle_buffer=args.shuffle_buffer, seed=args.seed,
         max_pairs=args.max_train_pairs,
         so3_prob=args.so3_prob, so3_max_angle_deg=args.so3_max_angle_deg, so3_uniform=args.so3_uniform,
+        target_points=target_points,
+        synth_rot_prob=args.synth_rot_prob,
+        synth_rot_min_deg=args.synth_rot_min_deg, synth_rot_max_deg=args.synth_rot_max_deg,
     )
     val_ds = ShardFlowDataset(
         args.shards, dataset_points, val_sources, shuffle_shards=False, shuffle_buffer=0, seed=args.seed,
+        target_points=target_points,
+        synth_rot_prob=args.val_synth_rot_prob,
+        synth_rot_min_deg=args.synth_rot_min_deg, synth_rot_max_deg=args.synth_rot_max_deg,
     )
     pin = device.type == "cuda"
     train_loader = DataLoader(
@@ -362,21 +506,54 @@ def main() -> None:
     amp_enabled = args.amp and device.type == "cuda"
     scaler = torch.amp.GradScaler("cuda", enabled=amp_enabled)
 
+    # Auxiliary stencil matching loss (retina only): direct matching supervision at the
+    # estimation grid — measured necessary for the correlation to bootstrap at all (the
+    # retina plan §9.2 notes). Est-grid GT endpoints are the normalized mean of each est
+    # node's supervision-grid descendants (exact for locally-smooth motion; the loss's
+    # window mask drops the rest).
+    aux_w = args.aux_match_weight if args.retina else 0.0
+    if aux_w > 0.0:
+        from spherical_flow.oslo_raft_retina import stencil_match_loss
+
     stream = cycling_loader(train_ds, train_loader)
     start = time.time()
     model.train()
-    total_steps = 1 if args.smoke_test else args.steps
+    accum = max(1, args.grad_accum)
+    total_steps = 0 if args.eval_only else (1 if args.smoke_test else args.steps)
     for step in range(1, total_steps + 1):
-        batch = move_batch(next(stream), device)
         opt.zero_grad(set_to_none=True)
-        with torch.amp.autocast(device_type="cuda", enabled=amp_enabled):
-            preds = model(batch["frame1"], batch["frame2"], geom, iters=args.iters)
-            loss = sequence_geodesic_loss(
-                preds, batch["endpoint"], sup_level, batch["valid"], gamma=args.gamma,
-                motion_weight=args.loss_motion_weight, motion_ref_deg=args.loss_motion_ref_deg,
-                min_target_deg=args.loss_min_target_deg,
-            )
-        scaler.scale(loss).backward()
+        loss_total = 0.0
+        warmup_only = aux_w > 0.0 and step <= args.aux_warmup_steps
+        for _ in range(accum):
+            batch = move_batch(next(stream), device)
+            with torch.amp.autocast(device_type="cuda", enabled=amp_enabled):
+                if aux_w > 0.0:
+                    preds, (f1e, f2e) = model(
+                        batch["frame1"], batch["frame2"], geom, iters=args.iters,
+                        return_features=True,
+                    )
+                    est_end = F.normalize(
+                        batch["endpoint"][:, geom.descendant_index].mean(dim=2), dim=-1
+                    )
+                    est_valid = batch["valid"][:, geom.descendant_index].float().mean(dim=2) > 0.5
+                    aux = stencil_match_loss(
+                        f1e, f2e, est_end, geom.estimation_level, valid=est_valid
+                    )
+                else:
+                    preds = model(batch["frame1"], batch["frame2"], geom, iters=args.iters)
+                    aux = None
+                if warmup_only:
+                    loss = aux / accum
+                else:
+                    loss = sequence_geodesic_loss(
+                        preds, batch["endpoint"], sup_level, batch["valid"], gamma=args.gamma,
+                        motion_weight=args.loss_motion_weight, motion_ref_deg=args.loss_motion_ref_deg,
+                        min_target_deg=args.loss_min_target_deg,
+                    ) / accum
+                    if aux is not None:
+                        loss = loss + aux_w * aux / accum
+            scaler.scale(loss).backward()
+            loss_total += loss.item()
         if args.grad_clip > 0:
             scaler.unscale_(opt)
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
@@ -390,7 +567,10 @@ def main() -> None:
                 maps = compute_maps(preds[-1], batch, sup_level.points, sup_level.basis_east, sup_level.basis_north)
                 tm = summarize_maps(maps, region_masks, active_thresholds)
             lr_now = opt.param_groups[0]["lr"]
-            print(f"step={step:06d} loss_rad={loss.item():.6f} lr={lr_now:.2e} "
+            aux_txt = ""
+            if aux_w > 0.0:
+                aux_txt = f" aux={aux.item():.4f}{' (warmup: aux-only)' if warmup_only else ''}"
+            print(f"step={step:06d} loss_rad={loss_total:.6f}{aux_txt} lr={lr_now:.2e} "
                   f"train_global={tm.get('global_geo_deg', float('nan')):.4f}", flush=True)
             model.train()
 
@@ -410,9 +590,10 @@ def main() -> None:
         "args": vars(args), "git_hash": git_hash(), "params": n_params,
         "nodes": sup_level.num_nodes, "train_sources": train_sources, "val_sources": val_sources,
     }
-    ckpt = args.checkpoint_out or str(Path(args.output_dir) / "oslo_raft.pt")
-    torch.save({"model": model.state_dict(), **meta, "metrics": metrics}, ckpt)
-    print(f"saved_checkpoint={ckpt}", flush=True)
+    if not args.eval_only:  # eval-only must never clobber the checkpoint it is judging
+        ckpt = args.checkpoint_out or str(Path(args.output_dir) / "oslo_raft.pt")
+        torch.save({"model": model.state_dict(), **meta, "metrics": metrics}, ckpt)
+        print(f"saved_checkpoint={ckpt}", flush=True)
 
     metrics_out = args.metrics_out or str(Path(args.output_dir) / "oslo_raft_metrics.json")
     with open(metrics_out, "w", encoding="utf-8") as fh:

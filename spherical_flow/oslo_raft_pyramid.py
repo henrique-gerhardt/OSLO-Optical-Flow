@@ -27,6 +27,7 @@ from typing import List, Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 
 from .geometry import endpoint_from_tangent_flow
 from .healpix_pyramid import SpherePyramid, convex_upsample, pool_features
@@ -44,7 +45,15 @@ from .oslo_raft import (
 # --------------------------------------------------------------------------- #
 class PyramidEncoder(nn.Module):
     """Siamese encoder over the HEALPix hierarchy: one residual block per resolution,
-    nested 4-to-1 pooling between levels (finest -> estimation grid)."""
+    nested 4-to-1 pooling between levels (finest -> estimation grid).
+
+    ``use_checkpoint`` gradient-checkpoints each per-resolution block (retina-depth
+    chains store a [B, N, 9, C] SDPAConv gather per conv — ~0.9 GB fp16 at r8/C=16 —
+    while the per-stage boundary features kept by checkpointing are only [B, N, C]).
+    Off by default so existing models are byte-identical; the retina model turns it on.
+    """
+
+    use_checkpoint: bool = False
 
     def __init__(
         self,
@@ -69,9 +78,16 @@ class PyramidEncoder(nn.Module):
         self.out_channels = c_prev
 
     def forward(self, x: torch.Tensor, pyramid: SpherePyramid) -> torch.Tensor:
+        ckpt = self.use_checkpoint and torch.is_grad_enabled()
         for i, res in enumerate(self.resolutions):
             level = pyramid.levels[res]
-            x = self.blocks[i](x, level.conv_index, level.conv_weight, level.conv_valid)
+            if ckpt:
+                x = checkpoint(
+                    self.blocks[i], x, level.conv_index, level.conv_weight,
+                    level.conv_valid, use_reentrant=False,
+                )
+            else:
+                x = self.blocks[i](x, level.conv_index, level.conv_weight, level.conv_valid)
             if i < len(self.resolutions) - 1:
                 # pool res -> res-1 (pool_index[res-1] holds the children at res)
                 x = pool_features(x, pyramid.pool_index[res - 1])

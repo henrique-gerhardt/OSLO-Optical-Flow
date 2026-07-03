@@ -36,7 +36,7 @@ All paths under `/Volumes/External SSD/Mestrado/Datasets`.
 | dataset | dir | content | role |
 | --- | --- | --- | --- |
 | FLOW360 (SLOF) | `FLOW360_train_test/` | 18 train + 11 test seqs, frames + fflows/bflows `.npy`, dynamic scenes | primary train + the held-out benchmark |
-| Replica 360 (tangent-images dataset, arXiv 2301.11880) | `released/` | 54 seqs (18 scenes x circ/line/rand), RGB pano + fwd/bwd `.flo` + depth `.dpt` + masks | static camera-motion GT; curriculum "easy" data; cross-dataset eval |
+| Replica 360 (tangent-images dataset, arXiv 2112.14331; 2301.11880 is the FLOW360 journal paper — citation fixed per the retina-plan post-mortem) | `released/` | 54 seqs (18 scenes x circ/line/rand), RGB pano + fwd/bwd `.flo` + depth `.dpt` + masks | static camera-motion GT; curriculum "easy" data; cross-dataset eval |
 | MPF City | `ECCV2022MPF-net_dataset/` | City_100_r, City_200_r, City_2000_r (images re-downloaded) | additional GT diversity (urban, rendered) |
 | OmniFlow 512 | `omniflow_512/` | 320 seqs, 180-degree FOV, EXR flow | optional auxiliary only, behind hemisphere validity mask; skip unless data-starved |
 | RAFT pseudo-labels | existing cache pipeline | unlimited (any 360 video) | distillation pretraining |
@@ -462,6 +462,26 @@ correlation-argmax, the differential head improves continuously with resolution;
 loss** — supervise `fnet` so `f1(p) ≈ f2(endpoint)` at GT correspondences, directly enforcing the LK
 assumption the encoder currently violates. The negative result is already complete and thesis-worthy;
 these are optional insurance / the differential's best-case shot before declaring it final.
+
+**Confidence-gating diagnostic DONE (2026-07-01) — CLOSES the differential; write up.** Before spending
+a retrain on gating (shot 1), `analyze_differential.py` measured, on the saved r4 checkpoint, whether
+the LK flow carries ANY motion signal where the structure tensor is strongest — the best case gating
+could ever exploit. It does not, and the result is *worse* than "no signal": (1) median cos-sim(LK, GT)
+on active pixels is **negative at every confidence level and grows MORE negative with confidence** —
+−0.072 (all) → −0.145 (top 25%) → −0.181 (top 5%). Where the aperture is best-conditioned the LK flow
+points *most* wrong. (2) Simulated hard gating (emit LK only on the top-X% most-reliable nodes, zero
+elsewhere) leaves active improvement **negative at every fraction** (best −0.04% @ top 2%, i.e. asymptoting
+to zero-flow from below); kept nodes beat zero-flow only 45–46% of the time — below a coin flip. (3) LK
+magnitude p50 0.069° is *under* GT p50 0.099°, so the failure is direction, not over-shoot. The
+interpretation confirms the whole thesis from an INDEPENDENT estimator: where features are sharp (high
+λ_min), `Δf = f2 − f1` is dominated by appearance change, not motion, so the confident solve fits that
+structured non-motion difference to a flow uncorrelated (anti-correlated) with the truth. Shot 1 (gating)
+is therefore dead — there is no reliable subset to gate onto — and shots 2/3 (r6, constancy loss) would
+be pushing a paradigm whose confident predictions are anti-correlated with motion. **DECISION: stop the
+ablation ladder and write up the negative result.** Final synthesis: matching went *inert* and the
+differential goes *actively wrong*; both correspondence paradigms fail because sub-node inter-frame motion
+(p50 0.099°) is below the resolving power of affordable HEALPix grids and learned features, and a frame-1
+appearance prior (+2.9% active) is the ceiling — a complete, characterized negative result.
 
 Loss: iteration-weighted geodesic endpoint loss, the spherical analogue of RAFT's sequence loss:
 

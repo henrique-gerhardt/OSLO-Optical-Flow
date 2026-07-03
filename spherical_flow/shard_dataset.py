@@ -85,6 +85,10 @@ def sample_pair_to_nodes(
     basis_north: torch.Tensor,
     query_points: Optional[torch.Tensor] = None,
     endpoint_rotation: Optional[torch.Tensor] = None,
+    target_points: Optional[torch.Tensor] = None,
+    target_basis_east: Optional[torch.Tensor] = None,
+    target_basis_north: Optional[torch.Tensor] = None,
+    target_query_points: Optional[torch.Tensor] = None,
 ) -> Dict[str, torch.Tensor]:
     """Sample one ERP pair onto HEALPix nodes and build tangent-flow targets.
 
@@ -96,15 +100,28 @@ def sample_pair_to_nodes(
         frame1_erp, frame2_erp: float32 ``[H, W, 3]`` ERP frames in ``[0, 1]``.
         flow_erp: float32 ``[H, W, 2]`` ERP pixel displacement (frame1 -> frame2).
         valid_erp: ``[H, W]`` validity (bool or float); bilinearly resampled.
-        points: ``[N, 3]`` target node directions (where the flow is *expressed*).
+        points: ``[N, 3]`` frame node directions (the model's input/retina grid).
         basis_east, basis_north: tangent basis at ``points`` (``tangent_basis``).
-        query_points: ``[N, 3]`` directions at which to *sample* frames/GT. Defaults
+        query_points: ``[N, 3]`` directions at which to *sample* frames. Defaults
             to ``points`` (no augmentation); the SO(3) seam passes rotated directions
             ``q = points @ R``.
         endpoint_rotation: ``[3, 3]`` rotation ``R``. The world-frame endpoint ``e(q)``
             (and thus the validity check) is computed in the unrotated frames; the
             target endpoint is rotated into the augmented world as ``e' = e @ R.T``
-            before ``logmap`` at ``points``. ``None`` leaves the endpoint untouched.
+            before ``logmap`` at the target nodes. ``None`` leaves it untouched.
+        target_points: ``[N_sup, 3]`` node directions where the flow target is sampled
+            and *expressed* (OSLO-RAFT-R decouples this supervision grid from the frame
+            grid). ``None`` keeps today's behavior bit-for-bit: one grid for both.
+        target_basis_east, target_basis_north: tangent basis at ``target_points``
+            (computed if omitted).
+        target_query_points: rotated target directions under SO(3) augmentation
+            (``target_points @ R``). Required whenever both ``target_points`` and
+            ``endpoint_rotation`` are given — rotating the frames but sampling GT at
+            unrotated targets would silently mis-pair them.
+
+    Returns:
+        ``frame1``/``frame2`` on the frame grid; ``flow``/``endpoint``/``valid`` on the
+        target grid (= frame grid when ``target_points`` is None).
     """
     height, width = frame1_erp.shape[:2]
     if frame2_erp.shape[:2] != (height, width):
@@ -119,13 +136,31 @@ def sample_pair_to_nodes(
 
     frame1 = bilinear_sample_erp(frame1_erp, u, v)
     frame2 = bilinear_sample_erp(frame2_erp, u, v)
-    sampled_flow = bilinear_sample_erp(flow_erp, u, v)
+
+    if target_points is None:
+        # Single-grid path (pre-retina models): targets share the frame samples.
+        t_points, t_east, t_north = points, basis_east, basis_north
+        tu, tv = u, v
+    else:
+        if endpoint_rotation is not None and target_query_points is None:
+            raise ValueError(
+                "target_query_points is required when combining target_points with "
+                "endpoint_rotation (pass target_points @ R)"
+            )
+        t_points = target_points
+        if target_basis_east is None or target_basis_north is None:
+            target_basis_east, target_basis_north = tangent_basis(target_points)
+        t_east, t_north = target_basis_east, target_basis_north
+        t_dirs = target_points if target_query_points is None else target_query_points
+        tu, tv = points_to_equirectangular_pixels(t_dirs, height, width)
+
+    sampled_flow = bilinear_sample_erp(flow_erp, tu, tv)
 
     valid_map = valid_erp.float().unsqueeze(-1) if valid_erp.ndim == 2 else valid_erp.float()
-    sampled_valid = bilinear_sample_erp(valid_map, u, v).squeeze(-1) > 0.999
+    sampled_valid = bilinear_sample_erp(valid_map, tu, tv).squeeze(-1) > 0.999
 
-    endpoint_u = u + sampled_flow[:, 0]
-    endpoint_v = v + sampled_flow[:, 1]
+    endpoint_u = tu + sampled_flow[:, 0]
+    endpoint_v = tv + sampled_flow[:, 1]
     inside_vertical = (endpoint_v >= 0.0) & (endpoint_v <= float(height - 1))
     valid = sampled_valid & inside_vertical
 
@@ -134,7 +169,7 @@ def sample_pair_to_nodes(
         # Carry the world-frame endpoint into the augmented world: e' = e @ R.T.
         endpoint = endpoint @ endpoint_rotation.transpose(-1, -2)
     # Express the target as tangent flow at the (unrotated) target nodes.
-    flow = logmap(points, endpoint, basis_east, basis_north).squeeze(0)
+    flow = logmap(t_points, endpoint, t_east, t_north).squeeze(0)
 
     return {
         "frame1": frame1,
@@ -142,6 +177,57 @@ def sample_pair_to_nodes(
         "flow": flow,
         "endpoint": endpoint,
         "valid": valid,
+    }
+
+
+def synth_rotation_record(
+    frame1_erp: torch.Tensor,
+    frame_points: torch.Tensor,
+    target_points: torch.Tensor,
+    target_basis_east: torch.Tensor,
+    target_basis_north: torch.Tensor,
+    rotation: torch.Tensor,
+    view_rotation: Optional[torch.Tensor] = None,
+) -> Dict[str, torch.Tensor]:
+    """Synthesize an exact-motion pair from one real ERP frame (§4.4, the bootstrap data).
+
+    Frame 2 *is* frame 1 seen after the world rotates: perfect brightness constancy,
+    exact correspondence at any magnitude — the in-house FlyingChairs that exercises
+    matching by construction. Conventions match ``SyntheticRotationFlowDataset``
+    (``R = rotation_matrix(axis, angle)``, i.e. ``R @ v`` rotates ``v``):
+
+      - world endpoint of direction ``d`` is ``e = R d``  (rows: ``d @ R.T``);
+      - frame 2 observed at ``d`` shows what frame 1 held at ``R^{-1} d``  (rows:
+        ``d @ R``), so ``frame2 = frame1_erp`` sampled at ``frame_points @ R``.
+
+    ``view_rotation`` composes the usual SO(3) *viewpoint* augmentation ``R_v`` (a
+    different thing: it rotates where the fixed nodes look, not the world between
+    frames): frames are sampled at ``q = p @ R_v`` and the endpoint is carried back
+    with ``e' = e @ R_v.T``, exactly as the ``sample_pair_to_nodes`` SO(3) seam.
+
+    Returns the same dict shape as :func:`sample_pair_to_nodes`; ``valid`` is all True
+    (the rotation is defined everywhere on the sphere).
+    """
+    height, width = frame1_erp.shape[:2]
+
+    q = frame_points if view_rotation is None else frame_points @ view_rotation
+    u1, v1 = points_to_equirectangular_pixels(q, height, width)
+    frame1 = bilinear_sample_erp(frame1_erp, u1, v1)
+    u2, v2 = points_to_equirectangular_pixels(q @ rotation, height, width)
+    frame2 = bilinear_sample_erp(frame1_erp, u2, v2)
+
+    qt = target_points if view_rotation is None else target_points @ view_rotation
+    endpoint = qt @ rotation.transpose(-1, -2)
+    if view_rotation is not None:
+        endpoint = endpoint @ view_rotation.transpose(-1, -2)
+    flow = logmap(target_points, endpoint, target_basis_east, target_basis_north).squeeze(0)
+
+    return {
+        "frame1": frame1,
+        "frame2": frame2,
+        "flow": flow,
+        "endpoint": endpoint,
+        "valid": torch.ones(target_points.size(0), dtype=torch.bool),
     }
 
 
@@ -168,11 +254,17 @@ def _sample_record(
     points: torch.Tensor,
     basis_east: torch.Tensor,
     basis_north: torch.Tensor,
+    target_points: Optional[torch.Tensor] = None,
+    target_basis_east: Optional[torch.Tensor] = None,
+    target_basis_north: Optional[torch.Tensor] = None,
 ) -> Dict[str, object]:
     """Turn one raw shard record into a node-sample dict (+ provenance)."""
     frame1_erp, frame2_erp, flow_erp, valid_erp = _record_tensors(record)
     sample = sample_pair_to_nodes(
-        frame1_erp, frame2_erp, flow_erp, valid_erp, points, basis_east, basis_north
+        frame1_erp, frame2_erp, flow_erp, valid_erp, points, basis_east, basis_north,
+        target_points=target_points,
+        target_basis_east=target_basis_east,
+        target_basis_north=target_basis_north,
     )
     return _attach_meta(sample, record)
 
@@ -200,6 +292,10 @@ class ShardFlowDataset(IterableDataset):
         so3_prob: float = 0.0,
         so3_max_angle_deg: float = 180.0,
         so3_uniform: bool = False,
+        target_points: Optional[torch.Tensor] = None,
+        synth_rot_prob: float = 0.0,
+        synth_rot_min_deg: float = 1.0,
+        synth_rot_max_deg: float = 15.0,
     ) -> None:
         if points.ndim != 2 or points.size(-1) != 3:
             raise ValueError("points must have shape [N, 3]")
@@ -219,6 +315,18 @@ class ShardFlowDataset(IterableDataset):
         self.so3_prob = float(so3_prob)
         self.so3_max_angle_deg = float(so3_max_angle_deg)
         self.so3_uniform = bool(so3_uniform)
+        # OSLO-RAFT-R: frames at `points` (retina), targets at `target_points` (supervision).
+        if target_points is not None:
+            target_points = target_points.detach().cpu().float()
+            self.target_basis_east, self.target_basis_north = tangent_basis(target_points)
+        else:
+            self.target_basis_east = self.target_basis_north = None
+        self.target_points = target_points
+        # Synthetic-rotation motion source (§4.4): with this probability a record's
+        # frame2/targets are REPLACED by an exact rotation of its own frame1.
+        self.synth_rot_prob = float(synth_rot_prob)
+        self.synth_rot_min_deg = float(synth_rot_min_deg)
+        self.synth_rot_max_deg = float(synth_rot_max_deg)
 
         self._iter_shard, self._list_shards = _import_sfprep()
         self._shards: List[Path] = []
@@ -257,7 +365,7 @@ class ShardFlowDataset(IterableDataset):
 
         gen = None
         so3 = None
-        if self.so3_prob > 0.0:
+        if self.so3_prob > 0.0 or self.synth_rot_prob > 0.0:
             # Lazy import avoids a shard_dataset <-> so3_augment import cycle.
             from .so3_augment import sample_rotation, so3_augment_pair
 
@@ -270,10 +378,21 @@ class ShardFlowDataset(IterableDataset):
         for record in stream:
             if self.max_pairs is not None and yielded >= self.max_pairs:
                 break
-            if so3 is not None and float(torch.rand((), generator=gen)) < self.so3_prob:
+            if (
+                self.synth_rot_prob > 0.0
+                and float(torch.rand((), generator=gen)) < self.synth_rot_prob
+            ):
+                yield self._synth_record(record, gen, so3[0])
+            elif (
+                self.so3_prob > 0.0
+                and float(torch.rand((), generator=gen)) < self.so3_prob
+            ):
                 yield self._augment_record(record, gen, so3)
             else:
-                yield _sample_record(record, self.points, self.basis_east, self.basis_north)
+                yield _sample_record(
+                    record, self.points, self.basis_east, self.basis_north,
+                    self.target_points, self.target_basis_east, self.target_basis_north,
+                )
             yielded += 1
 
     def _augment_record(self, record, gen, so3) -> Dict[str, object]:
@@ -285,6 +404,36 @@ class ShardFlowDataset(IterableDataset):
         sample = so3_augment_pair(
             frame1_erp, frame2_erp, flow_erp, valid_erp,
             self.points, rotation, self.basis_east, self.basis_north,
+            target_points=self.target_points,
+            target_basis_east=self.target_basis_east,
+            target_basis_north=self.target_basis_north,
+        )
+        return _attach_meta(sample, record)
+
+    def _synth_record(self, record, gen, sample_rotation) -> Dict[str, object]:
+        """Replace a record's motion by an exact rotation of its own frame 1 (§4.4)."""
+        from .so3_augment import rotation_matrix
+
+        frame1_erp = _to_chw_free_float(record["frame1"])  # type: ignore[index]
+        axis = torch.randn(3, generator=gen)
+        angle_deg = self.synth_rot_min_deg + float(torch.rand((), generator=gen)) * (
+            self.synth_rot_max_deg - self.synth_rot_min_deg
+        )
+        rotation = rotation_matrix(axis, torch.tensor(angle_deg * torch.pi / 180.0))
+        # Compose with the usual viewpoint augmentation (independent draw, same knob).
+        view_rotation = None
+        if self.so3_prob > 0.0 and float(torch.rand((), generator=gen)) < self.so3_prob:
+            view_rotation = sample_rotation(
+                gen, max_angle_deg=self.so3_max_angle_deg, uniform_so3=self.so3_uniform
+            )
+        if self.target_points is not None:
+            t_points, t_east, t_north = (
+                self.target_points, self.target_basis_east, self.target_basis_north
+            )
+        else:
+            t_points, t_east, t_north = self.points, self.basis_east, self.basis_north
+        sample = synth_rotation_record(
+            frame1_erp, self.points, t_points, t_east, t_north, rotation, view_rotation
         )
         return _attach_meta(sample, record)
 
@@ -313,6 +462,7 @@ def load_shard_subset(
     *,
     max_pairs: Optional[int] = None,
     direction: Optional[str] = None,
+    target_points: Optional[torch.Tensor] = None,
 ) -> List[Dict[str, object]]:
     """Eagerly materialize node samples into a list (overfit / deterministic val).
 
@@ -323,6 +473,10 @@ def load_shard_subset(
         raise ValueError("points must have shape [N, 3]")
     points = points.detach().cpu().float()
     basis_east, basis_north = tangent_basis(points)
+    target_basis_east = target_basis_north = None
+    if target_points is not None:
+        target_points = target_points.detach().cpu().float()
+        target_basis_east, target_basis_north = tangent_basis(target_points)
     iter_shard, list_shards = _import_sfprep()
 
     out: List[Dict[str, object]] = []
@@ -332,7 +486,10 @@ def load_shard_subset(
             for record in iter_shard(shard):
                 if direction is not None and record.get("meta", {}).get("direction") != direction:
                     continue
-                out.append(_sample_record(record, points, basis_east, basis_north))
+                out.append(_sample_record(
+                    record, points, basis_east, basis_north,
+                    target_points, target_basis_east, target_basis_north,
+                ))
                 if max_pairs is not None and len(out) >= max_pairs:
                     return out
     return out
