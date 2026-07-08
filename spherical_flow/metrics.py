@@ -31,15 +31,22 @@ def parse_thresholds(text: str) -> list[float]:
 
 
 def build_region_masks(points: torch.Tensor, seam_width_deg: float = 15.0) -> Dict[str, torch.Tensor]:
-    x, y, z = points.unbind(dim=-1)
+    # Boundary decisions in float64 with an include-the-boundary tolerance: HEALPix
+    # grids place node columns exactly ON region boundaries (44 nodes at the r6 seam
+    # edge, fp32 margin ~1e-7 rad; one full ring exactly at |lat| = 30 deg, fp64 margin
+    # ~1e-16), where a one-ulp CPU-vs-CUDA atan2/asin difference flips them all at once
+    # (measured: ~0.03 deg seam-mean skew between devices). All true margins are either
+    # < 1e-15 (mathematically on the boundary) or > 7e-11 across r4-r7, so eps = 1e-12
+    # decides every node deterministically on any device.
+    eps = 1e-12
+    x, y, z = points.double().unbind(dim=-1)
     lon = torch.atan2(y, x)
     lat = torch.asin(z.clamp(-1.0, 1.0))
-    seam_width = torch.tensor(np.deg2rad(seam_width_deg), dtype=points.dtype, device=points.device)
     return {
         "global": torch.ones(points.size(0), dtype=torch.bool, device=points.device),
-        "poles": lat.abs() >= np.deg2rad(60.0),
-        "equator": lat.abs() <= np.deg2rad(30.0),
-        "seam": (torch.pi - lon.abs()) <= seam_width,
+        "poles": lat.abs() >= np.deg2rad(60.0) - eps,
+        "equator": lat.abs() <= np.deg2rad(30.0) + eps,
+        "seam": (torch.pi - lon.abs()) <= np.deg2rad(seam_width_deg) + eps,
     }
 
 
