@@ -57,10 +57,27 @@ geodesic from day one.
 
 Re-run the triangle's *resampled* leg on the existing B′ checkpoint but with
 increasing asymmetric jitter injected into the resampled frame 2 (eval-only, ~30 s per
-point, 5 points from 0 to full jitter). Output: the degradation curve +80.6% → ? as
-photometric nuisance approaches real-Δf levels. **This curve is the paper's Figure 1
-regardless of outcome** — it locates the wall on a continuous axis and predicts how
-much of the real gap is photometric (vs occlusion/parallax). Zero training cost.
+point). Output: the degradation curve +80.6% → ? as photometric nuisance approaches
+real-Δf levels. **This curve is the paper's Figure 1 regardless of outcome** — it
+locates the wall on a continuous axis and predicts how much of the real gap is
+photometric (vs occlusion/parallax). Zero training cost.
+
+**Status: lever implemented + gated (2026-07-11).** `spherical_flow/photometric.py`
+(RAFT-parity ranges × scale; brightness→contrast→saturation→hue, hue = YIQ chroma
+rotation) applied to the synthetic frame 2 via `--synth-photo-scale` (dataset knob
+`synth_photo_scale`, train+val synth records alike). Jitter draws use a *dedicated*
+generator, so runs differing only in scale share bit-identical rotations/frames/GT
+(gated in Docker: scale-0 no-op & deterministic; isolation — only frame2 moves;
+nested determinism at scale>0; monotone delta). **Measured calibration
+(flow360:val, 4 pairs):** mean |Δframe2| = 3.9 / 7.8 / 11.6 / 15.4 per 255 at
+scales 0.25/0.5/0.75/1.0 (≈ 15.6·scale); context: real pairs |f2−f1| = 3.03/255 vs
+synth motion-only 2.61/255 — the *mean* photometric excess of real imagery is
+≈ 0.4/255, i.e. scale ≈ 0.03. The sweep therefore concentrates low:
+scales {0, 0.05, 0.1, 0.25, 0.5, 1.0}. Interpretation guide: if the model survives
+scale ≥ 0.1 (≈ 4× the real mean excess) while the real leg sits at −32%, plain
+photometric *magnitude* does not explain the wall — its spatially-structured
+component (specularity, shading, occlusion edges) does, and the eraser/occlusion
+levers outrank global jitter for stage P1.
 
 ### Stage P1 — Chairs-360 bootstrap (~28 h)
 

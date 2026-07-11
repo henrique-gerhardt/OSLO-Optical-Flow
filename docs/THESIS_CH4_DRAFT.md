@@ -326,6 +326,40 @@ accuracy drops. The honest summary for the chapter: the poles advantage is
 demonstrated in-domain; whether it survives domain shift is exactly what the
 Phase-2 multi-dataset training (P2C) is designed to test.
 
+#### 5.1.2 The EPE leg: the same comparison in the unit the field publishes
+
+Every published 360°-flow table reports mean endpoint error in **ERP pixels**. The
+P2A readout (`run_epe_eval.py`; interpolation of the node flow back to the raster,
+validated to 0.001–0.02 px on closed-form rotation fields, seam and poles included)
+lets us score the same predictions in that unit. Same 162 replica360:val pairs:
+
+| replica360:val, EPE px (cos-lat in parens) | frozen RAFT-large | OSLO-RAFT-R (Stage A, seed 7) | oracle @ r6 (grid floor) | zero-flow |
+| --- | --- | --- | --- | --- |
+| global | 31.28 (9.12) | **14.25 (7.33)** | 2.02 (1.86) | 90.90 (62.44) |
+| equator | **1.29 (1.28)** | 3.27 (3.25) | 2.08 (2.08) | 47.56 |
+| poles | 90.94 (53.26) | **33.29 (24.63)** | 2.58 (2.06) | 167.74 |
+| seam | 40.71 (13.64) | **18.23 (10.26)** | 11.14 (14.28) | 96.79 |
+| p50 | **1.38** | 3.59 | 0.47 | — |
+
+Three readings:
+
+1. **The unit flips the global winner.** In the geodesic node metric (area-fair,
+   §5.1) RAFT wins global 1.16° vs 1.56°; in ERP-pixel EPE OSLO wins global by
+   2.2× (14.25 vs 31.28). No contradiction: a horizontal angular error at latitude
+   φ costs ~1/cos φ *pixels*, and ERP allocates one third of its rows to |lat| ≥
+   60°, so the published unit structurally punishes polar failure — RAFT's poles
+   read 90.9 px. Under the cos-lat (solid-angle-fair) EPE the flip survives,
+   narrower: 7.33 vs 9.12. The chapter reports both metrics and lets the poles
+   row — which OSLO wins under *every* metric (2.7× here) — carry the claim.
+2. **RAFT keeps the precision crown.** Equator 1.29 vs 3.27 px and median 1.38 vs
+   3.59 px: where the projection is clean, the pretrained model is ~2.5× more
+   precise. OSLO wins means through uniformity, not median sharpness.
+3. **The grid is not the bottleneck.** The r6 oracle floor is 2.02 px global — 14%
+   of OSLO's current error, 2.2% of the zero baseline. And pushing RAFT's own flow
+   through the node round-trip (`raft_nodes`) moves it by −0.75 px global /
+   +0.004 px at the median — i.e. the node representation + readout are
+   transparent at current error levels; capability, not resolution, is what's left.
+
 ## 6. Stage B/B′ and Gate R2: the FLOW360 gate fails twice
 
 **Stage B** (init from A; mix replica360+mpf+flow360; synth-rot 0.1; 5k steps): on
@@ -422,6 +456,21 @@ while the same correspondence under exact brightness constancy was learned to 0.
 — robustness to real image formation is the missing ingredient, and it is a data/
 robustness problem, no longer an architecture problem.**
 
+**The wall is shared by the published-pipeline proxy (EPE evidence, P2A runs).**
+Marker (ii) needs its own honest complement: on the *full* flow360:val (791 pairs,
+~76% near-static), frozen RAFT-large **loses to zero-flow globally in ERP-pixel
+EPE** — 1.716 vs 1.424 px (−20.5%), negative in every region — the very signature
+Gate R2 penalized B′ for (−2.9%). Sharper still: RAFT's equator EPE (0.8172 px)
+and B′'s (0.8204 px) agree to 0.4% — a fully-pretrained 5.3M perspective model and
+our 1.56M from-scratch spherical model settle onto the *same* confident-small-
+prediction noise floor where the projection is cleanest. Both facts coexist with
+(ii): the signal is extractable on the moving subset, but at this motion scale *no
+current model* — ours or the field's default — beats doing nothing on the full
+frame. B′'s global EPE is worse than RAFT's (2.88 vs 1.72 px, driven by poles/seam
+noise), but the failure class is the same. The wall, priced in the published unit,
+is universal — which is exactly what makes it worth attacking (plan P2C) rather
+than an artifact of this architecture.
+
 ## 8. Conclusions
 
 **Contributions.**
@@ -503,6 +552,15 @@ Eval-only on flow360:val with `--val-synth-rot-prob 1.0 --synth-rot-min-deg 0.1
   eval's GT columns bit-compatibly.
 - OSLO column: the §9.1 real-only eval re-run under the fixed region masks
   (`/outputs/oslo_raft_retina_stageA_R1_real_full_v2`).
+
+### 9.3c EPE leg (§5.1.2, §7.4)
+
+`run_epe_eval.py --shards /data/shards --sources {replica360,flow360}:val
+--resolution 6 --predictor {oracle,raft,raft_nodes,oslo} --device cuda`
+(`oslo` adds `--init-checkpoint`; readout stencil validated by `run_epe_smoke.py`:
+0.001–0.02 px on closed-form rotation fields at 512×1024/r6, seam and polar caps
+included; the polar-cap stencil is affine-reproducing, exact for rotation fields).
+Outputs under `/outputs/epe_*`.
 
 ### 9.4 Bookkeeping runs (filled 2026-07-09)
 

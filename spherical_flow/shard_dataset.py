@@ -296,6 +296,7 @@ class ShardFlowDataset(IterableDataset):
         synth_rot_prob: float = 0.0,
         synth_rot_min_deg: float = 1.0,
         synth_rot_max_deg: float = 15.0,
+        synth_photo_scale: float = 0.0,
     ) -> None:
         if points.ndim != 2 or points.size(-1) != 3:
             raise ValueError("points must have shape [N, 3]")
@@ -327,6 +328,11 @@ class ShardFlowDataset(IterableDataset):
         self.synth_rot_prob = float(synth_rot_prob)
         self.synth_rot_min_deg = float(synth_rot_min_deg)
         self.synth_rot_max_deg = float(synth_rot_max_deg)
+        # P2C nuisance axis: asymmetric photometric jitter on the synthetic frame 2
+        # (RAFT-parity ranges x scale). Params are drawn AFTER the rotation draws, so
+        # runs differing only in scale share identical rotations/frames — and scale 0
+        # adds no RNG draws, keeping existing runs bit-identical.
+        self.synth_photo_scale = float(synth_photo_scale)
 
         self._iter_shard, self._list_shards = _import_sfprep()
         self._shards: List[Path] = []
@@ -365,6 +371,7 @@ class ShardFlowDataset(IterableDataset):
 
         gen = None
         so3 = None
+        photo_gen = None
         if self.so3_prob > 0.0 or self.synth_rot_prob > 0.0:
             # Lazy import avoids a shard_dataset <-> so3_augment import cycle.
             from .so3_augment import sample_rotation, so3_augment_pair
@@ -373,6 +380,14 @@ class ShardFlowDataset(IterableDataset):
             worker_id = info.id if info is not None else 0
             gen = torch.Generator().manual_seed(self.seed + self.epoch * 131 + worker_id)
             so3 = (sample_rotation, so3_augment_pair)
+            if self.synth_photo_scale > 0.0:
+                # Dedicated stream: jitter draws must never advance the main gen, or
+                # runs differing only in scale would see different rotations from the
+                # second record on. Same raw uniforms at every scale -> the nuisance
+                # curve is nested (same jitter directions, scaled magnitudes).
+                photo_gen = torch.Generator().manual_seed(
+                    self.seed + self.epoch * 131 + worker_id + 777_000_000
+                )
 
         yielded = 0
         for record in stream:
@@ -382,7 +397,7 @@ class ShardFlowDataset(IterableDataset):
                 self.synth_rot_prob > 0.0
                 and float(torch.rand((), generator=gen)) < self.synth_rot_prob
             ):
-                yield self._synth_record(record, gen, so3[0])
+                yield self._synth_record(record, gen, so3[0], photo_gen)
             elif (
                 self.so3_prob > 0.0
                 and float(torch.rand((), generator=gen)) < self.so3_prob
@@ -410,7 +425,7 @@ class ShardFlowDataset(IterableDataset):
         )
         return _attach_meta(sample, record)
 
-    def _synth_record(self, record, gen, sample_rotation) -> Dict[str, object]:
+    def _synth_record(self, record, gen, sample_rotation, photo_gen=None) -> Dict[str, object]:
         """Replace a record's motion by an exact rotation of its own frame 1 (§4.4)."""
         from .so3_augment import rotation_matrix
 
@@ -435,6 +450,11 @@ class ShardFlowDataset(IterableDataset):
         sample = synth_rotation_record(
             frame1_erp, self.points, t_points, t_east, t_north, rotation, view_rotation
         )
+        if photo_gen is not None:
+            from .photometric import apply_jitter, sample_jitter_params
+
+            params = sample_jitter_params(photo_gen, self.synth_photo_scale)
+            sample["frame2"] = apply_jitter(sample["frame2"], params)
         return _attach_meta(sample, record)
 
 

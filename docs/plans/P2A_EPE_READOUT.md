@@ -10,7 +10,22 @@ inflation + discontinuities dominate the unweighted mean. One design addition ov
 §1.1: polar-cap stencils (rings 1–9, where the 4i-node rings span ≥5° of longitude
 and bilinear attenuates the cos(lon) harmonic by cos(gap/2) — measured 0.707× at
 ring 1) use min-norm affine-reproducing weights (Σw=1, Σw·pᵢ=p_pixel), exact for
-rotation fields. Full-val box runs pending (§3).
+rotation fields.
+
+**FULL-VAL BOX RUNS DONE + VERDICT (2026-07-11).** Floors: replica global 2.02 px
+(p50 0.47, 2.2% of zero); flow360 global 0.50 px unweighted / 0.076 cos-lat
+(equator 0.038 = 6% of zero-equator; p50 0.00013). G4 at scale: raft vs raft_nodes
+= +0.004 px median, −0.75 px global (round-trip transparent-to-helpful).
+**Acceptance verdict (§4): interpolation readout suffices for the P2C campaign**
+— the floor is 14% of OSLO's current replica error and the node route costs RAFT
+nothing measurable; the learned ERP head stays deferred. One carve-out: on flow360
+*unweighted global* EPE the r6 floor is 35% of the zero baseline (pole-row 1/cos
+px inflation + discontinuities), so leaderboard-grade flow360 global numbers will
+eventually need r7 supervision or the learned head — equator/active numbers do not.
+Headline findings logged in chapter §5.1.2 (EPE flips the replica global winner to
+OSLO: 14.25 vs 31.28 px, cos-lat 7.33 vs 9.12) and §7.4 (frozen RAFT loses to
+zero-flow on flow360:val global EPE, −20.5%; RAFT/B′ equator noise floors agree to
+0.4%: 0.8172 vs 0.8204 px — the wall is universal).
 
 **Goal.** Report OSLO-RAFT in the unit every published 360° method reports — mean
 endpoint error in ERP pixels — without building the learned upsampling head yet. A

@@ -182,6 +182,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--synth-rot-max-deg", type=float, default=15.0)
     p.add_argument("--val-synth-rot-prob", type=float, default=0.0,
                    help="Same knob for the val stream (Gate R1 uses a synth-rot val set).")
+    p.add_argument("--synth-photo-scale", type=float, default=0.0,
+                   help="Asymmetric photometric jitter on the synthetic frame 2, RAFT-parity "
+                        "ranges x this scale in [0,1] (P2C nuisance axis; probe P0 sweeps it). "
+                        "Applies to train and val synth records alike; 0 = bit-identical to "
+                        "the pre-flag pipeline.")
     # data plumbing
     p.add_argument("--shuffle-buffer", type=int, default=512)
     p.add_argument("--num-workers", type=int, default=4)
@@ -467,6 +472,9 @@ def main() -> None:
     if args.synth_rot_prob > 0.0 or args.val_synth_rot_prob > 0.0:
         print(f"synth-rot: train_prob={args.synth_rot_prob} val_prob={args.val_synth_rot_prob} "
               f"angle=[{args.synth_rot_min_deg}, {args.synth_rot_max_deg}] deg", flush=True)
+    if args.synth_photo_scale > 0.0:
+        print(f"synth-photo: asymmetric jitter on synth frame 2, scale={args.synth_photo_scale}",
+              flush=True)
     if args.retina and args.aux_match_weight > 0.0:
         print(f"aux stencil matching: weight={args.aux_match_weight} "
               f"warmup_steps={args.aux_warmup_steps}", flush=True)
@@ -481,12 +489,14 @@ def main() -> None:
         target_points=target_points,
         synth_rot_prob=args.synth_rot_prob,
         synth_rot_min_deg=args.synth_rot_min_deg, synth_rot_max_deg=args.synth_rot_max_deg,
+        synth_photo_scale=args.synth_photo_scale,
     )
     val_ds = ShardFlowDataset(
         args.shards, dataset_points, val_sources, shuffle_shards=False, shuffle_buffer=0, seed=args.seed,
         target_points=target_points,
         synth_rot_prob=args.val_synth_rot_prob,
         synth_rot_min_deg=args.synth_rot_min_deg, synth_rot_max_deg=args.synth_rot_max_deg,
+        synth_photo_scale=args.synth_photo_scale,
     )
     pin = device.type == "cuda"
     train_loader = DataLoader(
