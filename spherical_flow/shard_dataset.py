@@ -297,6 +297,7 @@ class ShardFlowDataset(IterableDataset):
         synth_rot_min_deg: float = 1.0,
         synth_rot_max_deg: float = 15.0,
         synth_photo_scale: float = 0.0,
+        synth_photo_noise_std: float = 0.0,
     ) -> None:
         if points.ndim != 2 or points.size(-1) != 3:
             raise ValueError("points must have shape [N, 3]")
@@ -333,6 +334,10 @@ class ShardFlowDataset(IterableDataset):
         # runs differing only in scale share identical rotations/frames — and scale 0
         # adds no RNG draws, keeping existing runs bit-identical.
         self.synth_photo_scale = float(synth_photo_scale)
+        # P0b: per-pixel iid Gaussian noise on the synthetic frame 2, std in 1/255
+        # units — the spatially-unstructured nuisance axis (global jitter above is
+        # the spatially-coherent one).
+        self.synth_photo_noise_std = float(synth_photo_noise_std)
 
         self._iter_shard, self._list_shards = _import_sfprep()
         self._shards: List[Path] = []
@@ -380,11 +385,11 @@ class ShardFlowDataset(IterableDataset):
             worker_id = info.id if info is not None else 0
             gen = torch.Generator().manual_seed(self.seed + self.epoch * 131 + worker_id)
             so3 = (sample_rotation, so3_augment_pair)
-            if self.synth_photo_scale > 0.0:
-                # Dedicated stream: jitter draws must never advance the main gen, or
-                # runs differing only in scale would see different rotations from the
-                # second record on. Same raw uniforms at every scale -> the nuisance
-                # curve is nested (same jitter directions, scaled magnitudes).
+            if self.synth_photo_scale > 0.0 or self.synth_photo_noise_std > 0.0:
+                # Dedicated stream: jitter/noise draws must never advance the main
+                # gen, or runs differing only in scale would see different rotations
+                # from the second record on. Same raw draws at every scale/std -> the
+                # nuisance curves are nested (same directions, scaled magnitudes).
                 photo_gen = torch.Generator().manual_seed(
                     self.seed + self.epoch * 131 + worker_id + 777_000_000
                 )
@@ -451,10 +456,15 @@ class ShardFlowDataset(IterableDataset):
             frame1_erp, self.points, t_points, t_east, t_north, rotation, view_rotation
         )
         if photo_gen is not None:
-            from .photometric import apply_jitter, sample_jitter_params
+            from .photometric import apply_jitter, apply_noise, sample_jitter_params
 
-            params = sample_jitter_params(photo_gen, self.synth_photo_scale)
-            sample["frame2"] = apply_jitter(sample["frame2"], params)
+            if self.synth_photo_scale > 0.0:
+                params = sample_jitter_params(photo_gen, self.synth_photo_scale)
+                sample["frame2"] = apply_jitter(sample["frame2"], params)
+            if self.synth_photo_noise_std > 0.0:
+                sample["frame2"] = apply_noise(
+                    sample["frame2"], photo_gen, self.synth_photo_noise_std
+                )
         return _attach_meta(sample, record)
 
 

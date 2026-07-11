@@ -81,3 +81,16 @@ def apply_jitter(frame: torch.Tensor, params: Dict[str, float]) -> torch.Tensor:
             dim=-1,
         )
     return out.clamp(0.0, 1.0)
+
+
+def apply_noise(frame: torch.Tensor, gen: torch.Generator, std_255: float) -> torch.Tensor:
+    """Add per-pixel iid Gaussian noise of std ``std_255``/255 to a [0, 1] RGB frame.
+
+    The *spatially-unstructured* counterpart of :func:`apply_jitter` (which shifts
+    the whole frame coherently): probe P0 showed global jitter at real-magnitude
+    mean delta costs ~2 points while the real leg costs ~110, so the P0b sweep uses
+    this knob to test whether high-frequency appearance noise alone reproduces the
+    damage. Mean |delta| of the noise is std * sqrt(2/pi) ~ 0.80 * std.
+    """
+    noise = torch.randn(frame.shape, generator=gen, dtype=frame.dtype)
+    return (frame + noise * (std_255 / 255.0)).clamp(0.0, 1.0)

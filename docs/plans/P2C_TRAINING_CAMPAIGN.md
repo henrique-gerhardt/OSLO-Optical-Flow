@@ -79,6 +79,37 @@ photometric *magnitude* does not explain the wall — its spatially-structured
 component (specularity, shading, occlusion edges) does, and the eraser/occlusion
 levers outrank global jitter for stage P1.
 
+**P0 RESULTS (2026-07-11, box, B′ ckpt, flow360:val, synth-rot 0.1–0.5°, 791 pairs;
+scale-0 re-anchors +80.6% exactly under post-fix masks):**
+
+| scale | mean Δ /255 | global | active₀.₂₅ | poles | equator |
+| --- | --- | --- | --- | --- | --- |
+| 0.00 | 0.0 | +80.6% | +86.1% | +67.4% | +83.3% |
+| 0.05 | 0.8 | +75.7% | +82.3% | +61.4% | +79.3% |
+| 0.10 | 1.6 | +69.0% | +77.0% | +53.6% | +73.5% |
+| 0.25 | 3.9 | +51.1% | +62.2% | +33.3% | +56.7% |
+| 0.50 | 7.8 | +26.1% | +40.4% | +6.1% | +32.0% |
+| 1.00 | 15.4 | −6.2% | +10.0% | −28.9% | +0.1% |
+
+Near-linear: global ≈ 77.4 − 5.71·Δ₂₅₅ (graceful, no cliff; poles degrade ~1.4×
+faster than equator). **Verdict: photometric magnitude is ruled out as the wall.**
+At the real-pair photometric excess (Δ ≈ 0.42/255) the curve predicts **+75%**;
+the real leg measures **−32.2%** — a 107-point structured-damage gap. To cause
+−32% with global jitter takes Δ = 19.2/255 = **46× the real mean excess**. ⇒ the
+decision tree's first branch fires: the operative nuisance is spatially structured
+(per-pixel render/AA noise, specularity, shading, occlusion edges, parallax), and
+eraser/occlusion + per-pixel noise levers outrank global jitter for P1. This
+table + the real-leg point below it = paper Figure 1.
+
+**P0b (next 5-min probe, lever implemented+gated 2026-07-11):** per-pixel iid
+Gaussian noise via `--synth-photo-noise-std` (std in 1/255 units; mean Δ = 0.8·std,
+verified to 3 decimals; same dedicated-generator nesting). Discriminates the two
+remaining suspects: if std 0.5–2/255 (real-magnitude, spatially *unstructured*)
+reproduces the damage, the wall is high-frequency appearance noise (render/AA) and
+P1 centers on per-pixel-noise robustness; if the model shrugs it off like global
+jitter, the wall is *structural* (occlusion/specular edges) and the eraser +
+real-pair emphasis wins. Sweep: std {0.5, 1, 2, 4, 8}.
+
 ### Stage P1 — Chairs-360 bootstrap (~28 h)
 
 `chairs360:train`, 100k steps, full augmentation, `--so3-prob 1.0`.
