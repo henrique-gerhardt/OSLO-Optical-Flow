@@ -471,6 +471,37 @@ noise), but the failure class is the same. The wall, priced in the published uni
 is universal — which is exactly what makes it worth attacking (plan P2C) rather
 than an artifact of this architecture.
 
+### 7.5 Post-campaign decomposition (Phase-2 probes, 2026-07-11)
+
+Four cheap eval-time probes on the B′ checkpoint decomposed the §7.4 bundle that
+this chapter left unresolved. (1) The measured real nuisance (constancy residual
+under exact-GT warping) has mean 3.1/255 and is sparse, edge-anchored (top-decile-
+gradient pixels carry 33% of its mass at 17× flat-region amplitude), mesoscale
+(~3 px), luma-dominant. (2) At that magnitude, synthetic nuisance costs: iid
+per-pixel noise 7 improvement points, coherent global jitter 23, a
+structure-matched edge-anchored corruption 36 — against the real leg's 113.
+(3) The decisive fourth vertex: **real GT motion with perfectly clean appearance
+(frame 2 = frame 1 resampled at the real endpoints) scores −72.5% — worse than
+the real pair's −32.2%.** The motion-structure swap costs −153 points at clean
+appearance, 4× the appearance swap (−36), and the appearance effect flips sign at
+real motion (+40): noise damps confidence, accidentally helping when the true
+field is near-zero. The §7.2 statement therefore sharpens: the wall is not
+primarily appearance robustness — it is the *structure of the real sub-pixel
+field* (mostly-static, sparse parallax, not globally aggregatable) interacting
+with the model's learned coherence prior, with structured appearance nuisance a
+compounding second factor (~1/3 at most). Checkpoint controls make the finding
+robust: the same clean-appearance real-field leg scores −57.6% on Stage B (whose
+synthetic-rotation exposure was minimal) and −118% on Stage A (never trained on
+flow360) — every variant errs *above its own real-leg floor* on clean inputs, so
+the sign-flip is systematic, and the B′-vs-B gap (~15 points) bounds the
+rotation-curriculum prior misfire as a minor component. Decisively, the axis is
+*trainable*: 5k steps (95 min) of training on the clean-real-field family takes
+the same leg from −72.5% to **+42.7%** (+63% on moving nodes) — so the
+field-structure wall is a data/curriculum gap, not an architectural limit, while
+the appearance gap re-measured on the field-trained model is 115 points: the two
+factors interact rather than add, and closing one exposes the other at full
+size. This is where the chapter hands over to the Phase-2 campaign.
+
 ## 8. Conclusions
 
 **Contributions.**

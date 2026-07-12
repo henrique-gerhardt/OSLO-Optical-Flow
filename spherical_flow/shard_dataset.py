@@ -417,7 +417,7 @@ class ShardFlowDataset(IterableDataset):
                 self.real_resample_prob > 0.0
                 and float(torch.rand((), generator=gen)) < self.real_resample_prob
             ):
-                yield self._real_resample_record(record)
+                yield self._real_resample_record(record, photo_gen)
             elif (
                 self.synth_rot_prob > 0.0
                 and float(torch.rand((), generator=gen)) < self.synth_rot_prob
@@ -450,8 +450,14 @@ class ShardFlowDataset(IterableDataset):
         )
         return _attach_meta(sample, record)
 
-    def _real_resample_record(self, record) -> Dict[str, object]:
-        """P0d: real GT motion + exact brightness constancy (frame 2 = f1 at GT endpoints)."""
+    def _real_resample_record(self, record, photo_gen=None) -> Dict[str, object]:
+        """P0d/P1: real GT motion + exact constancy (frame 2 = f1 at GT endpoints).
+
+        With ``photo_gen`` and the nuisance knobs set, the P0 levers compose onto
+        the resampled frame 2 (edge corruption on the source raster, then
+        jitter/noise on the node samples) — the P1b training family: real motion
+        structure + measured-shape nuisance, GT untouched.
+        """
         frame1_erp, _frame2, flow_erp, valid_erp = _record_tensors(record)
         sample = sample_pair_to_nodes(
             frame1_erp, frame1_erp, flow_erp, valid_erp,
@@ -460,12 +466,29 @@ class ShardFlowDataset(IterableDataset):
             target_basis_east=self.target_basis_east,
             target_basis_north=self.target_basis_north,
         )
+        frame2_src = frame1_erp
+        if photo_gen is not None and self.synth_edge_corrupt_delta > 0.0:
+            from .photometric import edge_corruption
+
+            frame2_src = edge_corruption(
+                frame1_erp, photo_gen, self.synth_edge_corrupt_delta
+            )
         height, width = frame1_erp.shape[:2]
         u, v = points_to_equirectangular_pixels(self.points, height, width)
         fl = bilinear_sample_erp(flow_erp, u, v)
         sample["frame2"] = bilinear_sample_erp(
-            frame1_erp, u + fl[:, 0], (v + fl[:, 1]).clamp(0.0, float(height - 1))
+            frame2_src, u + fl[:, 0], (v + fl[:, 1]).clamp(0.0, float(height - 1))
         )
+        if photo_gen is not None:
+            from .photometric import apply_jitter, apply_noise, sample_jitter_params
+
+            if self.synth_photo_scale > 0.0:
+                params = sample_jitter_params(photo_gen, self.synth_photo_scale)
+                sample["frame2"] = apply_jitter(sample["frame2"], params)
+            if self.synth_photo_noise_std > 0.0:
+                sample["frame2"] = apply_noise(
+                    sample["frame2"], photo_gen, self.synth_photo_noise_std
+                )
         return _attach_meta(sample, record)
 
     def _synth_record(self, record, gen, sample_rotation, photo_gen=None) -> Dict[str, object]:

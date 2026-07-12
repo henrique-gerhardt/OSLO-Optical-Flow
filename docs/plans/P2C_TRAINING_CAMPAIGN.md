@@ -183,13 +183,73 @@ jitter ~6×, noise ~12× real. **Un-modeled remainder (~2/3): (a) extreme cross-
 events (the hi/lo 17× ± 27 heterogeneity), (b) occlusion/disocclusion bands, and
 (c) the motion-field-structure axis** — the val protocol's global rotations are
 GRU-aggregatable; real parallax is not, and no appearance op touches that.
-**Next probe (P0d, the missing triangle vertex):** resample frame 2 at the REAL GT
-endpoints (appearance perfectly clean, motion structure real — node-wise:
-frame2 = sample(f1_erp, endpoint_uv), GT = real flow; pointwise, no raster op).
-High score ⇒ motion structure innocent, appearance events carry the rest; low
-score ⇒ aggregatability dominates and Chairs-360's independent-sprite motion
-(P2B) is the central asset. Either way P1 = edge-op + jitter (attacks the
-measured 1/3) + Chairs-360 occlusion/non-rigid motion (attacks the rest).
+**P0d RESULTS (2026-07-11) — THE DOMINANT AXIS IS THE MOTION FIELD, NOT
+APPEARANCE.** Real GT motion + perfectly clean appearance (`--val-real-resample-
+prob 1.0`, zero columns identical to the real eval's): global **−72.5%** (error
+0.363° vs zero 0.211°), active₀.₂₅ −57.6%, poles −93.4% — *worse than the real
+leg's −32.2%*. The decomposition square (B′, flow360:val):
+
+| | clean appearance | real / matched appearance |
+| --- | --- | --- |
+| rotation motion (0.1–0.5°) | **+80.6%** | +44.4% (edge-op @ 3.1) |
+| real motion field | **−72.5%** | −32.2% (real) |
+
+Motion-structure swap at clean appearance: **−153 pts** — 4× the appearance swap
+(−36 pts at rotation motion). And the appearance effect *flips sign* at real
+motion (+40 pts): appearance noise damps the model's confidence, accidentally
+helping when the true field is near-zero. Reading: B′ resolves sub-pixel
+*coherent* fields to 0.046° but cannot read the real field's structure
+(mostly-static with sparse sub-pixel parallax); clean inputs raise its confidence
+in a rotation-like prior (its synth curriculum's family) and errors grow.
+**Controls (2026-07-12): the failure is checkpoint-universal.** Same P0d leg on
+Stage B (synth exposure only prob 0.1 @ 1–15°): **−57.6%** (0.332°, poles −112%);
+on Stage A (never saw flow360): **−118%** (0.459°). Ordering B (−58) > B′ (−73) >
+A (−118): every trained variant fails on the clean-appearance real field, all
+with errors above their own real-leg floors (B 0.332 vs 0.295; B′ 0.363 vs
+0.278 — the sign-flip is consistent). The B′-vs-B gap (~15 pts) isolates the
+rotation-curriculum prior misfire as a *minor* component; the shared −58%+ is
+the field-structure wall itself. Even active₁.₀ nodes (GT ≥ 1°) are negative on
+all three. **P0 is closed: 6-cell decomposition + 3-checkpoint robustness.**
+
+**P1a RESULTS (2026-07-12): GATE PASSED — the real field IS learnable.** Init B′,
+flow360:train, `--real-resample-prob 1.0 --loss-motion-weight 1.0`, 5k steps
+(95 min): clean-leg val −72.5% → **+31.7% @ 1k → +42.9% @ 2k → plateau +42.7% @
+5k** (equator +46, poles +23, seam +29; active₀.₂₅ **+63.4%**, active₀.₅ +61.1%,
+active₁.₀ +32.9%; error 0.121° vs zero 0.211°; aux at its floor throughout). The
+field-structure wall is *trainable*, not architectural — 95 GPU-minutes settled
+it. Plateau by 2k steps suggests the next gains need lr schedule/steps/data, not
+a redesign.
+
+**P1a transfer eval (real pairs, the money leg): −72.8%** — worse than B′'s
+−32.2% globally, BUT the active subsets are the best any variant has scored on
+real pairs: active₀.₂₅ **−11.0%**, active₀.₅ −6.6%, active₁.₀ −4.2% (B′: −2.9%
+active₀.₅ with a zero-collapsed global). Reading: the field-trained model now
+*commits* — on static nodes its confidence costs it globally, and its clean-field
+reading strategy leans on exactly the sub-pixel edge cues where the measured
+nuisance is 17× concentrated. **The appearance gap at fixed (learned) motion
+structure is now cleanly measured: +42.7 → −72.8 = 115 points — the axes
+interact; peeling the field layer exposed the appearance layer at full size.**
+
+**⇒ P1b (the composition, ~95 min): train on real fields WITH the nuisance ramp**
+— real-resample pairs + edge-corruption (+ jitter) on the resampled frame 2, val
+on *plain real pairs* so the eval-every trajectory tracks Gate R2 directly.
+Requires wiring the photometric levers into `_real_resample_record` (they
+currently only touch `_synth_record`). If the trained-with-nuisance model holds
+part of its active-subset gain on real pairs, the recipe (field + nuisance
+robustness co-trained) is the campaign core and Chairs-360 scales it; if nuisance
+training destroys the field skill, the un-modeled nuisance components
+(cross-pair events) become the bottleneck to model next.
+
+**Campaign-design consequence (binding for P1):** the coherence prior is the
+enemy as much as the nuisance. (i) `--real-resample-prob` is now a TRAINING lever
+— real GT fields with exact constancy are a new exact-supervision data source
+that teaches real field structure nuisance-free; (ii) Chairs-360's independent
+sprites (locally coherent, globally incoherent, static background) are the
+synthetic family that breaks the global-aggregation shortcut — promoted from
+"occlusion source" to the campaign's central asset; (iii) the P0a–c nuisance
+levers remain the robustness axis, layered on top. P1 curriculum: real-resample
++ Chairs-360 first (learn the field), nuisance ramp second (keep it under
+noise).
 
 ### Stage P1 — Chairs-360 bootstrap (~28 h)
 
