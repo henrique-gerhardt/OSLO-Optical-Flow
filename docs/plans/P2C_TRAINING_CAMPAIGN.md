@@ -173,12 +173,23 @@ autocorr h1/h4/v1 0.73/0.18/0.71 vs 0.70/0.22/0.69 ✓; luma 0.83 vs 0.84 ✓;
 hi/lo ratio 8× vs 17× (**known gap** — the real ratio has ±27 cross-pair std;
 chasing it would over-fit a high-variance statistic). Isolation/determinism/
 nesting gates pass through the dataset (GT bit-identical across deltas).
-**P0c sweep = the honest predictor of the real leg:** B′ eval-only, deltas
-{1.5, 3.1, 6.2} (half/match/double the real magnitude) vs anchor 0 = +80.6% and
-real leg = −32.2%. If delta 3.1 lands near −32%, the nuisance is captured and
-training against this op (P1) attacks the measured wall; if it stays high, the
-un-modeled parts (occlusion bands, pair-heterogeneous specular events, parallax
-GT structure) carry the remainder — either way the decomposition quantifies it.
+**P0c RESULTS (2026-07-11):** delta 1.5/3.1/6.2 → global +64.8/+44.4/+12.3%
+(anchor +80.6, real −32.2). **Damage ladder at the real magnitude Δ=3.1/255:**
+iid noise 7 pts, global jitter 23 pts, edge-structured 36 pts, real 113 pts —
+structure ordering confirmed (edge-op 1.6× jitter, 5× noise per unit delta), but
+the matched op explains only **~1/3 of the wall**; even at 2× real magnitude it
+sits 44 pts above the real leg. Magnitude-equivalents to reach −32%: edge-op ~3×,
+jitter ~6×, noise ~12× real. **Un-modeled remainder (~2/3): (a) extreme cross-pair
+events (the hi/lo 17× ± 27 heterogeneity), (b) occlusion/disocclusion bands, and
+(c) the motion-field-structure axis** — the val protocol's global rotations are
+GRU-aggregatable; real parallax is not, and no appearance op touches that.
+**Next probe (P0d, the missing triangle vertex):** resample frame 2 at the REAL GT
+endpoints (appearance perfectly clean, motion structure real — node-wise:
+frame2 = sample(f1_erp, endpoint_uv), GT = real flow; pointwise, no raster op).
+High score ⇒ motion structure innocent, appearance events carry the rest; low
+score ⇒ aggregatability dominates and Chairs-360's independent-sprite motion
+(P2B) is the central asset. Either way P1 = edge-op + jitter (attacks the
+measured 1/3) + Chairs-360 occlusion/non-rigid motion (attacks the rest).
 
 ### Stage P1 — Chairs-360 bootstrap (~28 h)
 

@@ -303,6 +303,7 @@ class ShardFlowDataset(IterableDataset):
         synth_photo_scale: float = 0.0,
         synth_photo_noise_std: float = 0.0,
         synth_edge_corrupt_delta: float = 0.0,
+        real_resample_prob: float = 0.0,
     ) -> None:
         if points.ndim != 2 or points.size(-1) != 3:
             raise ValueError("points must have shape [N, 3]")
@@ -347,6 +348,10 @@ class ShardFlowDataset(IterableDataset):
         # the RASTER copy that synth frame 2 is sampled from, so it needs spatial
         # structure (gradient envelope + correlated noise) unavailable node-wise.
         self.synth_edge_corrupt_delta = float(synth_edge_corrupt_delta)
+        # P0d (the missing triangle vertex): frame 2 REPLACED by frame 1 resampled at
+        # the REAL GT endpoints — appearance perfectly clean, motion structure real.
+        # GT/valid are bit-identical to the untouched record's.
+        self.real_resample_prob = float(real_resample_prob)
 
         self._iter_shard, self._list_shards = _import_sfprep()
         self._shards: List[Path] = []
@@ -386,7 +391,7 @@ class ShardFlowDataset(IterableDataset):
         gen = None
         so3 = None
         photo_gen = None
-        if self.so3_prob > 0.0 or self.synth_rot_prob > 0.0:
+        if self.so3_prob > 0.0 or self.synth_rot_prob > 0.0 or self.real_resample_prob > 0.0:
             # Lazy import avoids a shard_dataset <-> so3_augment import cycle.
             from .so3_augment import sample_rotation, so3_augment_pair
 
@@ -409,6 +414,11 @@ class ShardFlowDataset(IterableDataset):
             if self.max_pairs is not None and yielded >= self.max_pairs:
                 break
             if (
+                self.real_resample_prob > 0.0
+                and float(torch.rand((), generator=gen)) < self.real_resample_prob
+            ):
+                yield self._real_resample_record(record)
+            elif (
                 self.synth_rot_prob > 0.0
                 and float(torch.rand((), generator=gen)) < self.synth_rot_prob
             ):
@@ -437,6 +447,24 @@ class ShardFlowDataset(IterableDataset):
             target_points=self.target_points,
             target_basis_east=self.target_basis_east,
             target_basis_north=self.target_basis_north,
+        )
+        return _attach_meta(sample, record)
+
+    def _real_resample_record(self, record) -> Dict[str, object]:
+        """P0d: real GT motion + exact brightness constancy (frame 2 = f1 at GT endpoints)."""
+        frame1_erp, _frame2, flow_erp, valid_erp = _record_tensors(record)
+        sample = sample_pair_to_nodes(
+            frame1_erp, frame1_erp, flow_erp, valid_erp,
+            self.points, self.basis_east, self.basis_north,
+            target_points=self.target_points,
+            target_basis_east=self.target_basis_east,
+            target_basis_north=self.target_basis_north,
+        )
+        height, width = frame1_erp.shape[:2]
+        u, v = points_to_equirectangular_pixels(self.points, height, width)
+        fl = bilinear_sample_erp(flow_erp, u, v)
+        sample["frame2"] = bilinear_sample_erp(
+            frame1_erp, u + fl[:, 0], (v + fl[:, 1]).clamp(0.0, float(height - 1))
         )
         return _attach_meta(sample, record)
 

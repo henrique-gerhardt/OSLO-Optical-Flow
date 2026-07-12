@@ -191,6 +191,12 @@ def parse_args() -> argparse.Namespace:
                    help="Per-pixel iid Gaussian noise on the synthetic frame 2, std in 1/255 "
                         "units (P0b: the spatially-unstructured nuisance axis; mean |delta| "
                         "= 0.8 x std).")
+    p.add_argument("--real-resample-prob", type=float, default=0.0,
+                   help="Probability a train record's frame 2 is REPLACED by frame 1 resampled "
+                        "at the REAL GT endpoints (P0d: real motion structure, exact constancy; "
+                        "GT untouched).")
+    p.add_argument("--val-real-resample-prob", type=float, default=0.0,
+                   help="Same knob for the val stream (the P0d probe uses 1.0).")
     p.add_argument("--synth-edge-corrupt-delta", type=float, default=0.0,
                    help="Edge-modulated structured corruption of the synth frame-2 raster, "
                         "target mean |delta| in 1/255 units (P0c: the measured real-nuisance "
@@ -480,6 +486,10 @@ def main() -> None:
     if args.synth_rot_prob > 0.0 or args.val_synth_rot_prob > 0.0:
         print(f"synth-rot: train_prob={args.synth_rot_prob} val_prob={args.val_synth_rot_prob} "
               f"angle=[{args.synth_rot_min_deg}, {args.synth_rot_max_deg}] deg", flush=True)
+    if args.real_resample_prob > 0.0 or args.val_real_resample_prob > 0.0:
+        print(f"real-resample: train_prob={args.real_resample_prob} "
+              f"val_prob={args.val_real_resample_prob} (frame2 = f1 @ real GT endpoints)",
+              flush=True)
     if (args.synth_photo_scale > 0.0 or args.synth_photo_noise_std > 0.0
             or args.synth_edge_corrupt_delta > 0.0):
         print(f"synth-photo: jitter scale={args.synth_photo_scale} "
@@ -503,6 +513,7 @@ def main() -> None:
         synth_photo_scale=args.synth_photo_scale,
         synth_photo_noise_std=args.synth_photo_noise_std,
         synth_edge_corrupt_delta=args.synth_edge_corrupt_delta,
+        real_resample_prob=args.real_resample_prob,
     )
     val_ds = ShardFlowDataset(
         args.shards, dataset_points, val_sources, shuffle_shards=False, shuffle_buffer=0, seed=args.seed,
@@ -512,6 +523,7 @@ def main() -> None:
         synth_photo_scale=args.synth_photo_scale,
         synth_photo_noise_std=args.synth_photo_noise_std,
         synth_edge_corrupt_delta=args.synth_edge_corrupt_delta,
+        real_resample_prob=args.val_real_resample_prob,
     )
     pin = device.type == "cuda"
     train_loader = DataLoader(
