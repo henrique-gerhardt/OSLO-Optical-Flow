@@ -101,14 +101,84 @@ decision tree's first branch fires: the operative nuisance is spatially structur
 eraser/occlusion + per-pixel noise levers outrank global jitter for P1. This
 table + the real-leg point below it = paper Figure 1.
 
-**P0b (next 5-min probe, lever implemented+gated 2026-07-11):** per-pixel iid
-Gaussian noise via `--synth-photo-noise-std` (std in 1/255 units; mean Δ = 0.8·std,
-verified to 3 decimals; same dedicated-generator nesting). Discriminates the two
-remaining suspects: if std 0.5–2/255 (real-magnitude, spatially *unstructured*)
-reproduces the damage, the wall is high-frequency appearance noise (render/AA) and
-P1 centers on per-pixel-noise robustness; if the model shrugs it off like global
-jitter, the wall is *structural* (occlusion/specular edges) and the eraser +
-real-pair emphasis wins. Sweep: std {0.5, 1, 2, 4, 8}.
+**P0b RESULTS (2026-07-11; per-pixel iid Gaussian via `--synth-photo-noise-std`,
+std in 1/255 units, mean Δ = 0.8·std):** std 0.5/1/2/4/8 → global
++80.3/+79.6/+77.7/+73.0/+62.5% (slope −2.92 pts per 1/255 — *half* the jitter
+slope; iid noise averages out in pooled correlation features). **At the
+real-magnitude delta (0.42/255): iid noise costs 0.33 pts, global jitter 2.65 pts,
+the real leg costs 112.8 pts.** Combined P0+P0b verdict — the decomposition triad
+is measured: spatially-coherent photometric shifts (eliminated), spatially-
+unstructured per-pixel noise (eliminated, even more robust), leaving
+**spatially-STRUCTURED appearance change** as the wall: view-dependent
+specular/shading shifts tied to scene surfaces, render/AA differences concentrated
+at image edges, occlusion/disocclusion bands, plus the §7.4 residual confound
+(non-rigid parallax field vs global rotation — a GT-structure, not appearance,
+difference). Paper Figure 1 = both curves + the real-leg point 100+ points below.
+
+**P1 design implication (binding):** global jitter and iid noise are cheap
+regularizers but demonstrably cannot carry robustness to the real nuisance; the
+levers that model *structured* nuisance move to the front, and Chairs-360's
+layered occlusion (P2B) gains weight as the primary training signal.
+
+**Δf-STRUCTURE DIAGNOSTIC RESULTS (2026-07-11, `analyze_appearance_residual.py`,
+local Docker; self-test: copy→0, jitter→autocorr .98, noise→white/uniform).**
+Constancy residual Δ(x) = f2[x + GT(x)] − f1(x), full flow360:val (791) and
+replica360:val (162):
+
+| stat | flow360:val | replica360:val |
+| --- | --- | --- |
+| mean abs Δ (warped) | **3.12/255** | 4.17/255 |
+| mean abs (no-warp) | 3.10/255 | 31.6/255 (GT explains 87%) |
+| p50 / p90 / p99 | 1.33 / 6.7 / **32** | 1.60 / 7.9 / 52 |
+| edge corr / top-10% mass / hi-lo ratio | 0.46 / **0.33** / **17×** | 0.43 / 0.35 / 9× |
+| autocorr lag-1 / lag-4 | 0.70 / 0.22 | 0.67 / 0.39 |
+| luma share | 0.84 | 0.95 |
+| corr with motion magnitude | 0.10 | −0.01 |
+
+**Correction to the P0 anchor.** The earlier "real excess ≈ 0.42/255" subtracted
+two |f2−f1| means with different motion contents — methodologically inferior. The
+direct measurement: the motion-compensated residual is **3.12/255** (warping with
+exact GT reduces nothing on flow360 — appearance change is ~100% of the
+inter-frame difference at sub-pixel motion). Revised bookkeeping: at Δ = 3.12 the
+jitter curve gives ≈ +57%, the noise curve ≈ +73%, the real leg −32.2% ⇒
+magnitude explains ~10–20% of the 113-point wall; **structure still carries
+80–90%**. Qualitative P0 verdict unchanged, numbers corrected.
+
+**The measured enemy:** sparse (p99/p50 ≈ 24×), edge-anchored (top-decile-gradient
+pixels carry 33% of the mass at 17× the flat-region amplitude), mesoscale-
+correlated (coherence length ~2–4 px), luma-dominant (84–95%). This also
+*explains the Act-I LK anti-correlation* (LK more wrong where features are
+sharpest): the nuisance is 17× stronger exactly where the sub-pixel motion signal
+(|∇f|·displacement) lives. The wall in one sentence: **at sub-pixel motion, the
+appearance residual is concentrated on the same edge pixels that carry all the
+correspondence signal, and is larger than that signal.**
+
+**P1 augmentation spec (from the measurement):** an edge-modulated corruption op —
+`field = envelope(|∇f1|) × smooth_noise(corr_len≈3px) × heavy_tail_amplitude`,
+luma-dominant, calibrated to mean Δ ≈ 3–4/255 with p99/p50 ≈ 25× — applied
+asymmetrically to frame 2 (synth and, in training, real pairs too). Gate: re-run
+this diagnostic on augmented synth pairs and match the table above; then the P0
+sweep with *this* op is the honest predictor of the real leg.
+
+**IMPLEMENTED + MATCH-THE-TABLE PASSED (2026-07-11):**
+`photometric.edge_corruption` — envelope = 3·(|∇luma|/mean)·sigmoid-gate + 0.35
+floor, where the gate is broad-scale (σ 14 px, bias 0.8: only ~20% of edge patches
+light up, matching the real residual's *partial* edge coverage), noise = two-scale
+blur mix (σ 0.9 + 6.0 px, weight 0.45) shared-luma + 0.45·per-channel chroma;
+corrupts the **raster** frame 2 is sampled from (`synth_rotation_record` gained
+`frame2_erp`), flag `--synth-edge-corrupt-delta` (target mean Δ in 1/255). Match
+vs the measured real table (8 flow360 frames, diagnostic metrics):
+mean 2.96 vs 3.12 ✓; edge_corr 0.49 vs 0.46 ✓; top-10% mass 0.38 vs 0.33 ✓;
+autocorr h1/h4/v1 0.73/0.18/0.71 vs 0.70/0.22/0.69 ✓; luma 0.83 vs 0.84 ✓;
+hi/lo ratio 8× vs 17× (**known gap** — the real ratio has ±27 cross-pair std;
+chasing it would over-fit a high-variance statistic). Isolation/determinism/
+nesting gates pass through the dataset (GT bit-identical across deltas).
+**P0c sweep = the honest predictor of the real leg:** B′ eval-only, deltas
+{1.5, 3.1, 6.2} (half/match/double the real magnitude) vs anchor 0 = +80.6% and
+real leg = −32.2%. If delta 3.1 lands near −32%, the nuisance is captured and
+training against this op (P1) attacks the measured wall; if it stays high, the
+un-modeled parts (occlusion bands, pair-heterogeneous specular events, parallax
+GT structure) carry the remainder — either way the decomposition quantifies it.
 
 ### Stage P1 — Chairs-360 bootstrap (~28 h)
 

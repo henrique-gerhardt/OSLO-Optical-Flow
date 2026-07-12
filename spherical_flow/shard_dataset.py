@@ -188,6 +188,7 @@ def synth_rotation_record(
     target_basis_north: torch.Tensor,
     rotation: torch.Tensor,
     view_rotation: Optional[torch.Tensor] = None,
+    frame2_erp: Optional[torch.Tensor] = None,
 ) -> Dict[str, torch.Tensor]:
     """Synthesize an exact-motion pair from one real ERP frame (§4.4, the bootstrap data).
 
@@ -214,7 +215,10 @@ def synth_rotation_record(
     u1, v1 = points_to_equirectangular_pixels(q, height, width)
     frame1 = bilinear_sample_erp(frame1_erp, u1, v1)
     u2, v2 = points_to_equirectangular_pixels(q @ rotation, height, width)
-    frame2 = bilinear_sample_erp(frame1_erp, u2, v2)
+    # frame2_erp lets the nuisance levers corrupt the raster frame 2 is observed
+    # from (edge-anchored corruption needs spatial structure); None keeps the exact
+    # brightness-constancy pair bit-for-bit.
+    frame2 = bilinear_sample_erp(frame1_erp if frame2_erp is None else frame2_erp, u2, v2)
 
     qt = target_points if view_rotation is None else target_points @ view_rotation
     endpoint = qt @ rotation.transpose(-1, -2)
@@ -298,6 +302,7 @@ class ShardFlowDataset(IterableDataset):
         synth_rot_max_deg: float = 15.0,
         synth_photo_scale: float = 0.0,
         synth_photo_noise_std: float = 0.0,
+        synth_edge_corrupt_delta: float = 0.0,
     ) -> None:
         if points.ndim != 2 or points.size(-1) != 3:
             raise ValueError("points must have shape [N, 3]")
@@ -338,6 +343,10 @@ class ShardFlowDataset(IterableDataset):
         # units — the spatially-unstructured nuisance axis (global jitter above is
         # the spatially-coherent one).
         self.synth_photo_noise_std = float(synth_photo_noise_std)
+        # Edge-modulated corruption (the *measured* real-nuisance shape): applied to
+        # the RASTER copy that synth frame 2 is sampled from, so it needs spatial
+        # structure (gradient envelope + correlated noise) unavailable node-wise.
+        self.synth_edge_corrupt_delta = float(synth_edge_corrupt_delta)
 
         self._iter_shard, self._list_shards = _import_sfprep()
         self._shards: List[Path] = []
@@ -385,7 +394,8 @@ class ShardFlowDataset(IterableDataset):
             worker_id = info.id if info is not None else 0
             gen = torch.Generator().manual_seed(self.seed + self.epoch * 131 + worker_id)
             so3 = (sample_rotation, so3_augment_pair)
-            if self.synth_photo_scale > 0.0 or self.synth_photo_noise_std > 0.0:
+            if (self.synth_photo_scale > 0.0 or self.synth_photo_noise_std > 0.0
+                    or self.synth_edge_corrupt_delta > 0.0):
                 # Dedicated stream: jitter/noise draws must never advance the main
                 # gen, or runs differing only in scale would see different rotations
                 # from the second record on. Same raw draws at every scale/std -> the
@@ -452,8 +462,16 @@ class ShardFlowDataset(IterableDataset):
             )
         else:
             t_points, t_east, t_north = self.points, self.basis_east, self.basis_north
+        frame2_src = frame1_erp
+        if photo_gen is not None and self.synth_edge_corrupt_delta > 0.0:
+            from .photometric import edge_corruption
+
+            frame2_src = edge_corruption(
+                frame1_erp, photo_gen, self.synth_edge_corrupt_delta
+            )
         sample = synth_rotation_record(
-            frame1_erp, self.points, t_points, t_east, t_north, rotation, view_rotation
+            frame1_erp, self.points, t_points, t_east, t_north, rotation, view_rotation,
+            frame2_erp=frame2_src,
         )
         if photo_gen is not None:
             from .photometric import apply_jitter, apply_noise, sample_jitter_params

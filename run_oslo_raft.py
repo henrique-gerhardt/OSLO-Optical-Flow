@@ -191,6 +191,10 @@ def parse_args() -> argparse.Namespace:
                    help="Per-pixel iid Gaussian noise on the synthetic frame 2, std in 1/255 "
                         "units (P0b: the spatially-unstructured nuisance axis; mean |delta| "
                         "= 0.8 x std).")
+    p.add_argument("--synth-edge-corrupt-delta", type=float, default=0.0,
+                   help="Edge-modulated structured corruption of the synth frame-2 raster, "
+                        "target mean |delta| in 1/255 units (P0c: the measured real-nuisance "
+                        "shape; real magnitude is ~3.1).")
     # data plumbing
     p.add_argument("--shuffle-buffer", type=int, default=512)
     p.add_argument("--num-workers", type=int, default=4)
@@ -476,9 +480,12 @@ def main() -> None:
     if args.synth_rot_prob > 0.0 or args.val_synth_rot_prob > 0.0:
         print(f"synth-rot: train_prob={args.synth_rot_prob} val_prob={args.val_synth_rot_prob} "
               f"angle=[{args.synth_rot_min_deg}, {args.synth_rot_max_deg}] deg", flush=True)
-    if args.synth_photo_scale > 0.0 or args.synth_photo_noise_std > 0.0:
-        print(f"synth-photo: asymmetric jitter scale={args.synth_photo_scale} "
-              f"noise_std={args.synth_photo_noise_std}/255 on synth frame 2", flush=True)
+    if (args.synth_photo_scale > 0.0 or args.synth_photo_noise_std > 0.0
+            or args.synth_edge_corrupt_delta > 0.0):
+        print(f"synth-photo: jitter scale={args.synth_photo_scale} "
+              f"noise_std={args.synth_photo_noise_std}/255 "
+              f"edge_corrupt_delta={args.synth_edge_corrupt_delta}/255 on synth frame 2",
+              flush=True)
     if args.retina and args.aux_match_weight > 0.0:
         print(f"aux stencil matching: weight={args.aux_match_weight} "
               f"warmup_steps={args.aux_warmup_steps}", flush=True)
@@ -495,6 +502,7 @@ def main() -> None:
         synth_rot_min_deg=args.synth_rot_min_deg, synth_rot_max_deg=args.synth_rot_max_deg,
         synth_photo_scale=args.synth_photo_scale,
         synth_photo_noise_std=args.synth_photo_noise_std,
+        synth_edge_corrupt_delta=args.synth_edge_corrupt_delta,
     )
     val_ds = ShardFlowDataset(
         args.shards, dataset_points, val_sources, shuffle_shards=False, shuffle_buffer=0, seed=args.seed,
@@ -503,6 +511,7 @@ def main() -> None:
         synth_rot_min_deg=args.synth_rot_min_deg, synth_rot_max_deg=args.synth_rot_max_deg,
         synth_photo_scale=args.synth_photo_scale,
         synth_photo_noise_std=args.synth_photo_noise_std,
+        synth_edge_corrupt_delta=args.synth_edge_corrupt_delta,
     )
     pin = device.type == "cuda"
     train_loader = DataLoader(
