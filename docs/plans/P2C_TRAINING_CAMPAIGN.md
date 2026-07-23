@@ -230,15 +230,48 @@ nuisance is 17× concentrated. **The appearance gap at fixed (learned) motion
 structure is now cleanly measured: +42.7 → −72.8 = 115 points — the axes
 interact; peeling the field layer exposed the appearance layer at full size.**
 
-**⇒ P1b (the composition, ~95 min): train on real fields WITH the nuisance ramp**
-— real-resample pairs + edge-corruption (+ jitter) on the resampled frame 2, val
-on *plain real pairs* so the eval-every trajectory tracks Gate R2 directly.
-Requires wiring the photometric levers into `_real_resample_record` (they
-currently only touch `_synth_record`). If the trained-with-nuisance model holds
-part of its active-subset gain on real pairs, the recipe (field + nuisance
-robustness co-trained) is the campaign core and Chairs-360 scales it; if nuisance
-training destroys the field skill, the un-modeled nuisance components
-(cross-pair events) become the bottleneck to model next.
+**P1b RESULTS (2026-07-12): FIRST POSITIVE REAL-PAIR ACTIVES IN THE PROJECT.**
+Init P1a, real-resample 1.0 + edge-corrupt 3.1 + jitter 0.2, val on plain real
+pairs, 5k steps (96 min). Trajectory (active₀.₂₅ / active₀.₅ / global):
+−12.4/−13.1/−33.2 @1k → −16.9/−17.2/−38.1 @2k → **+4.1/+5.3/−32.8 @3k** →
+dip @4k (−16.0/−3.6/−95.5, training noise at constant lr, batch 2) →
+**+4.5/+4.4/−46.4 @5k, active₁.₀ +5.1%**. Every prior variant's best real
+active₀.₅ was −2.9% (B′), and the Act-I appearance-prior ceiling was +2.9% —
+**exceeded**, on the full val, by a field+nuisance-co-trained model. Gate R2
+(active₀.₅ > +5.2%) is 0.85 points away after 190 total training minutes.
+Global remains −46% (the static-majority confidence penalty — a calibration
+problem, distinct from the correspondence problem now demonstrably solved on
+movers). **Corr control (2026-07-12): PASSED** — eval-time `--ablate-corr` on the P1b ckpt
+collapses everything (global 0.31° → 14.7°, actives −1551%…−2244%): the positive
+real-pair actives ride entirely on correlation. Genuine correspondence, the first
+in the project on real flow360 movers.
+
+**P1c RESULTS (15k steps, 4.9 h): capability confirmed, consolidation NOT
+achieved.** active₀.₅ crossed the +5.2% gate at three evals — **+7.4% @4k,
++6.8% @14k, +7.3% @15k** — but the 15-eval trajectory is an oscillation with no
+trend (active₀.₅ swings −20%…+7.4%; global −36%…−82%, no improvement; train loss
+flat ~0.79). Honest verdict: Gate R2's spirit (a *held* +5.2%) is not met; the
+optimum is in reach of the parameter neighborhood but the optimization bounces
+through it. Diagnosis: batch 2 + constant lr 1e-4 on an extremely heterogeneous
+objective (76% near-static nodes, sparse movers, stochastic nuisance) = gradient
+noise ≫ signal near the optimum. The val stream is deterministic, so the swings
+are model movement, not eval noise.
+
+**P1d RESULTS (2026-07-13): anneal damps the noise and exposes the true basin —
+which is SUB-GATE.** Effective batch 8 + onecycle 3e-5 over 3k steps: swings
+shrink as predicted (active₀.₅ range −1.5…+4.6 vs P1c's −20…+7.4 — the noise
+diagnosis was right), but the converged state is active₀.₂₅ −7.6 / active₀.₅
+**+1.1** / active₁.₀ +0.7 / global −53.6. P1c's +7.4 peaks were transient noise
+excursions, not a stable basin. **P1 mini-campaign verdict:** the field is
+learnable (+42.7 clean), co-training produces genuine first-ever real-pair
+positives (corr-ablation-proven), but the *stable* optimum reachable with
+flow360:train alone + a nuisance op covering ~1/3 of the wall is ≈ +1% active₀.₅
+— Gate R2 not passed stably. The bottleneck is now data: single-domain training
+with modeled nuisance has plateaued. **⇒ Stage P1-proper: Chairs-360 at scale**
+(generator done, all gates passed — see P2B status) mixed with the real-resample
+family and real pairs; the eval-time levers stay as the honest gate trajectory.
+Parallel engineering item unchanged: static-confidence calibration (global capped
+≈ −50%).
 
 **Campaign-design consequence (binding for P1):** the coherence prior is the
 enemy as much as the nuisance. (i) `--real-resample-prob` is now a TRAINING lever
@@ -260,6 +293,89 @@ noise).
   P1: active₀.₅ vs the Phase-1 best (−2.4%). *Any* positive value is the first
   crossing ever; even −1% → 0 movement tells us nuisance training transfers.
 - **Gate P1c:** replica360:val real ≥ +80% zero-shot (no catastrophic domain gap).
+
+#### 2026-07-22 — box acceptance smokes: chairs360-only from-scratch DOES NOT BOOTSTRAP
+
+Box shards validated first (model-free warp check: chairs360 train/val +61/+65%,
+flowscape +42%; replica regen bit-exact 13.534007/16.98537; flow360:val −10% is the
+known Δf sub-pixel effect, not a bug). Then two from-scratch smokes on
+`chairs360:train` (2k; 8k + `--loss-motion-weight 1.0`) both converged to EXACT
+zero-flow parity (global +0.005% / +0.0004%; train loss trendless over 8k; aux stuck
+oscillating 1.6–3.3) — while Stage A ZERO-SHOT on chairs360:val scores act₁.₀
+**+28.9%** / act₀.₅ +22.0% / act₀.₂₅ +14.9% (global −2.2%, poles −9.8% = the known
+static-commit pattern). The data teaches; from-scratch optimization never takes off.
+
+Reading: the §9.2d chicken-and-egg persists on sub-node-dominated data even WITH the
+stencil-match aux. chairs360 p50 = 1.3° vs r4 spacing 3.67°: ~65% of aux targets are
+near-trivial self-matches, and much of the mover tail (p90 14°) falls outside the
+stencil `inside` window (~7–11°) and is dropped — the cross-node teaching mass that
+bootstrapped replica (p50 11.9°) is exactly what chairs360 lacks by design.
+
+**DECISION: Stage P1-proper runs WARM-STARTED from Stage A** on the full mix
+(chairs360 + flowscape + flow360 + real-resample + nuisance ops). This is the RAFT
+precedent itself — chairs → things is a staged warm-start, never from-scratch per
+stage — and Gate R2 does not require from-scratch purity. The chairs360-only 100k
+Stage P1 above is superseded. chairs360 acceptance evidence becomes: the final mix
+checkpoint on chairs360:val must beat the +29% zero-shot by a wide margin, plus
+corr-ablation collapse on real actives (P1b protocol).
+
+**Control RESULT (same day): replica360-only from-scratch, today's code, identical
+flags — PASSED decisively.** 2k steps → global **+80.9%** (2.58°; equator +85.6%,
+poles +61.9%, seam +70.2%); train loss 2.57→0.77, aux 2.57→~1.45 falling from inside
+the warmup, train_global 8.7→0.7–1.0. Same pipeline that sat trendless for 8k steps
+on chairs360 reaches Stage-A-neighborhood numbers on replica in 33 min ⇒ no code
+regression; the chairs360 from-scratch failure is purely data-conditional
+(sub-node-dominated composition starves the aux of cross-node teaching mass).
+
+#### 2026-07-23 — Stage P1-proper 20k RESULT: best campaign numbers, gate NOT consolidated; bottleneck is now VARIANCE
+
+`/outputs/P1proper_mix20k`: 20k steps warm-started from Stage A on
+chairs360+flowscape+flow360 (+real-resample 0.3, edge-op 3.1, jitter 0.2,
+motion-weight 1.0, onecycle 2e-4, 22.6 h). Final (converged, lr→0) on flow360:val
+REAL pairs: act₀.₂₅ **+1.1%** / act₀.₅ **+4.0%** / act₁.₀ −0.6%, global −31.1%,
+poles −100.6%.
+
+- **Gate R2 (act₀.₅ > +5.2% consolidated): NOT MET** — final +4.0, tail evals
+  (16k–20k) = +13.0 / +4.3 / −3.5 / −2.1 / +4.0 (mean ≈ +3.2).
+- **But the data lever WORKED, on every axis vs the P1 ladder**: stable converged
+  point +1.1 → **+4.0** (P1d anneal → this run); best peaks +7.4 (P1c) → **+13.1
+  TWICE** (act₀.₅ @5k and @16k — all-time best real actives; act₀.₂₅ peak +13.7 @5k,
+  act₁.₀ peak +7.9 @6k); global −53.6 → **−31.1** (best ever for a model trained on
+  real actives; static-calibration item still the dominant global cost).
+- **The blocker is no longer the level of the optimum, it is CONSOLIDATION**: the
+  raw trajectory swings −24.9…+13.1 mid-run and still ±8 pts between evals deep in
+  the anneal (lr ≤ 4e-5). Same P1c diagnosis — gradient noise (effective batch 8)
+  ≫ signal near the optimum; annealing to 0 parks at a random phase of the swing
+  (P1d showed the basin mean, +1; this run got luckier, +4).
+
+**NEXT LEVER: EMA/Polyak weight averaging** (`--ema-decay`, implemented + Docker
+CPU smoke passed 2026-07-23; shadow evals logged as `val_ema@N`, EMA checkpoint
+saved as `oslo_raft_ema.pt`). Consolidation run = continue from the 20k checkpoint,
+CONSTANT lr 3e-5 (the level where late-run visits to the good rim happened),
+6k steps, `--ema-decay 0.999` (~1000-step window), eval every 500 — SWA logic: keep
+exploring the basin, let the average sit at its center. Gate read = **EMA act₀.₅
+> +5.2 sustained over the last ~4 evals** (the EMA curve is intrinsically smooth,
+so "consolidated" is finally meaningful). If the EMA parks at the basin mean (+3–4)
+instead of the good rim, next lever is noise reduction itself: `--grad-accum 8`
+continuation (2× wall-clock per step).
+
+#### 2026-07-23 — closing pair on the 20k ckpt: corr-ablation PASSES decisively; chairs360 posteval flips the PROFILE, not the margin
+
+- **Corr-ablation (flow360:val real pairs): PASS — strongest collapse ever
+  measured.** Global 0.276° → **54.0°**, actives → 43–52° (the P1b ckpt collapsed
+  to 14.7°). Nothing of the real-actives gain survives without correlation; the
+  P1proper model is a genuine matcher end-to-end.
+- **chairs360:val posteval** (`/outputs/P1proper_posteval_c360`): actives
+  **+16.2 / +16.5 / +16.9%** (0.25/0.5/1.0°), global **+15.7%** (4.33°→3.65°),
+  ALL regions positive (poles +9.8, equator +18.1, seam +14.5). Against the Stage
+  A zero-shot (+14.9/+22.0/+28.9 actives, global −2.2, poles −9.8): the "beat
+  +29% by a wide margin" criterion is **NOT met on actives** — instead the profile
+  FLIPPED, from aggressive-commit (big active wins, negative global/poles) to
+  calibrated (uniform +16–17% everywhere). The mix training traded peak active
+  commitment for global validity — the same calibration it needs on flow360.
+- chairs360's MARGINAL contribution to the real-pair gain remains unmeasured
+  (P1d→P1proper changed data AND init together; isolating it needs a 20k
+  mix-minus-chairs360 control). Deferred — not on the Gate R2 critical path.
 
 ### Stage P2 — Things-analog mix (~28 h)
 

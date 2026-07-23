@@ -163,6 +163,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--weight-decay", type=float, default=1e-5)
     p.add_argument("--grad-clip", type=float, default=1.0)
     p.add_argument("--onecycle", action="store_true", help="OneCycle LR schedule over --steps.")
+    p.add_argument("--ema-decay", type=float, default=0.0,
+                   help="Polyak/EMA weight averaging: shadow = d*shadow + (1-d)*weights after each "
+                        "optimizer step (0 disables). Evals also report the shadow weights and the "
+                        "EMA checkpoint is saved as oslo_raft_ema.pt (P1 consolidation: the raw "
+                        "trajectory oscillates around the optimum at effective batch 8).")
     p.add_argument("--init-checkpoint", default="",
                    help="Load model weights from a saved checkpoint before training "
                         "(stage-to-stage init, e.g. Stage B from Stage A).")
@@ -552,6 +557,23 @@ def main() -> None:
     if aux_w > 0.0:
         from spherical_flow.oslo_raft_retina import stencil_match_loss
 
+    # Polyak/EMA shadow weights: averages over the oscillating raw trajectory so the
+    # eval'd/saved point sits near the basin center instead of a random phase of the swing.
+    ema_decay = 0.0 if args.eval_only else args.ema_decay
+    ema_state = None
+    if ema_decay > 0.0:
+        ema_state = {k: v.detach().clone().float() for k, v in model.state_dict().items()}
+        print(f"ema: decay={ema_decay} (shadow weights eval'd alongside; saved as oslo_raft_ema.pt)",
+              flush=True)
+
+    def evaluate_state(state: dict) -> dict:
+        backup = {k: v.detach().clone() for k, v in model.state_dict().items()}
+        model.load_state_dict({k: s.to(backup[k].dtype) for k, s in state.items()})
+        m = evaluate(model, val_loader, geom, sup_level, region_masks, active_thresholds,
+                     device, args.eval_iters, args.max_val_pairs)
+        model.load_state_dict(backup)
+        return m
+
     stream = cycling_loader(train_ds, train_loader)
     start = time.time()
     model.train()
@@ -598,6 +620,14 @@ def main() -> None:
         scaler.update()
         if sched is not None:
             sched.step()
+        if ema_state is not None:
+            with torch.no_grad():
+                for k, v in model.state_dict().items():
+                    s = ema_state[k]
+                    if s.dtype.is_floating_point:
+                        s.mul_(ema_decay).add_(v.detach().float(), alpha=1.0 - ema_decay)
+                    else:
+                        s.copy_(v)
 
         if step == 1 or step == total_steps or step % args.log_every == 0:
             with torch.no_grad():
@@ -615,12 +645,18 @@ def main() -> None:
             metrics = evaluate(model, val_loader, geom, sup_level, region_masks, active_thresholds,
                                device, args.eval_iters, args.max_val_pairs)
             print_metrics(f"val@{step}", metrics)
+            if ema_state is not None:
+                print_metrics(f"val_ema@{step}", evaluate_state(ema_state))
             model.train()
 
     metrics = evaluate(model, val_loader, geom, sup_level, region_masks, active_thresholds,
                        device, args.eval_iters, args.max_val_pairs)
     metrics["elapsed_s"] = time.time() - start
     print_metrics("validation", metrics)
+    metrics_ema = None
+    if ema_state is not None:
+        metrics_ema = evaluate_state(ema_state)
+        print_metrics("validation_ema", metrics_ema)
     print(f"elapsed_s={metrics['elapsed_s']:.1f}", flush=True)
 
     meta = {
@@ -631,10 +667,19 @@ def main() -> None:
         ckpt = args.checkpoint_out or str(Path(args.output_dir) / "oslo_raft.pt")
         torch.save({"model": model.state_dict(), **meta, "metrics": metrics}, ckpt)
         print(f"saved_checkpoint={ckpt}", flush=True)
+        if ema_state is not None:
+            ema_ckpt = str(Path(args.output_dir) / "oslo_raft_ema.pt")
+            ema_model = {k: s.detach().cpu().to(model.state_dict()[k].dtype)
+                         for k, s in ema_state.items()}
+            torch.save({"model": ema_model, **meta, "metrics": metrics_ema}, ema_ckpt)
+            print(f"saved_checkpoint_ema={ema_ckpt}", flush=True)
 
     metrics_out = args.metrics_out or str(Path(args.output_dir) / "oslo_raft_metrics.json")
+    payload = {**meta, "metrics": metrics}
+    if metrics_ema is not None:
+        payload["metrics_ema"] = metrics_ema
     with open(metrics_out, "w", encoding="utf-8") as fh:
-        json.dump({**meta, "metrics": metrics}, fh, indent=2)
+        json.dump(payload, fh, indent=2)
     print(f"saved_metrics={metrics_out}", flush=True)
 
 

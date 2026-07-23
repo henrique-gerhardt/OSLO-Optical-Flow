@@ -1,5 +1,24 @@
 # P2B: FlyingChairs-360 — the spherical matching bootstrap dataset
 
+**Status: generator IMPLEMENTED as a standalone project (2026-07-12), all gates
+passed.** Location: `/Volumes/External SSD/Mestrado/chairs360` (`python -m
+chairs360 {generate,selfcheck}`) — per user decision, generation lives outside
+sphereflow-dataprep; sfprep keeps only the thin `chairs360` adapter (§3, still
+pending) that indexes the generated layout for sharding. Deviations from §3
+below: numpy+PIL only (no torch); splits are grouped by *scene directory* (the
+replica pano source is thousands of frames of ~18 scenes — a per-file split
+would leak rooms across train/val; for flat collections like Poly Haven each
+file is its own group); texture crops restricted to same-split, different-scene
+panoramas. Measured gates (replica panos, 8 pairs @256×512): G1 bit-identical;
+G2 warp error 0.82/255 (< 2); G3 occlusion 5.2% (1.3–9.1%); G4 pooled p10
+0.00° / p50 0.77° / p95 13.8°, direction-disagreement 100%; G6 anchors mean z
+−0.04, frac|z|>0.5 = 0.40. Post-P0d retune: static-background prob 0.2 (the
+flow360-like regime is a first-class citizen), sprites 4–8 @ half-size 5–25°,
+sprite rotations log-uniform 0.5–60°. Timing ≈ 0.5 s/pair emulated ⇒ 23.5k
+pairs ≈ 2–3 h (less native). G5 (shard round-trip) runs when the sfprep adapter
+lands. Remaining: adapter + datasets.toml entry + shard build + the §5
+acceptance smoke (2k-step train where `--ablate-corr` collapses).
+
 **Goal.** Recreate, on the sphere, the thing FlyingChairs actually gave RAFT: tens of
 thousands of pairs with (a) **exact, dense GT** (no rendering/annotation noise), (b)
 **layered independent motion with occlusion** (background + foreground objects moving
