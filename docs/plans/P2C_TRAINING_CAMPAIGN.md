@@ -377,6 +377,86 @@ continuation (2× wall-clock per step).
   (P1d→P1proper changed data AND init together; isolating it needs a 20k
   mix-minus-chairs360 control). Deferred — not on the Gate R2 critical path.
 
+#### 2026-07-23 — EMA consolidation 6k RESULT: variance SOLVED (9×), consolidated level = +4.5 act₀.₅ — 0.75 pts below gate
+
+`/outputs/P1proper_ema6k` — init `P1proper_mix20k`, 6k steps, const lr 3e-5,
+batch 2 × accum 4, `--ema-decay 0.999`, same mix/nuisance recipe, 27089 s (7.5 h),
+git 6488bef27 (EMA code live on the box).
+
+- **The EMA instrument works exactly as designed.** Raw act₀.₅ across the 12
+  evals: mean **+1.3, σ ≈ 8.6** (swings −15.0…+13.1 — still the same walk).
+  EMA act₀.₅: mean **+4.46, σ ≈ 0.92** — a **9× variance reduction**. Note EMA
+  mean (+4.5) ≫ raw mean (+1.3): weight-averaging beats score-averaging because
+  the score landscape is asymmetric (bad excursions cost more than good ones pay).
+- **Gate R2 NOT passed — but the blocker is now cleanly re-converted from
+  VARIANCE back to LEVEL, measured reliably for the first time.** EMA act₀.₅
+  crossed +5.2 three times (@1k +5.97, @3.5k +5.45, @4.5k +5.82) but the last-4
+  read = 5.82/4.41/3.58/4.18 (mean +4.5). The basin center sits at **+4.5 ± 0.9**,
+  ~0.75 pts below the gate. P1c/P1proper peaks (+13) are confirmed as noise
+  excursions off a +4.5 basin.
+- **Best-ever consolidated numbers on every axis.** Final EMA point: act₀.₂₅
+  **+3.52** / act₀.₅ **+4.18** / act₁.₀ −1.27, global **−16.8%** (0.2458°, from
+  −31.1 at 20k), poles −56.1 (from −100.6), equator −8.5, seam −11.7. EMA global
+  improved nearly monotonically (−27.7 → −16.8) and was still improving at 6k.
+  act₀.₂₅ consolidated +3.5% is the **first consolidated beat of the Act-I
+  appearance-prior ceiling (+2.9%)**. EMA beats raw-final on every single metric.
+- **Ladder of converged points:** P1d +1.1 act₀.₅ / −53.6 global → P1proper 20k
+  +4.0 / −31.1 → **EMA 6k +4.5 ± 0.9 / −16.8**.
+- **Next (pre-registered fallback): grad-accum 8 continuation from the EMA
+  ckpt** (`/outputs/P1proper_ema6k/oslo_raft_ema.pt`, same "model" format). EMA
+  averages the walk but cannot move the basin; halving the gradient temperature
+  (effective batch 16) narrows the walk around the true optimum and can lift the
+  center — the raw trajectory still visits +13, so a better rim is adjacent.
+  4k steps @ accum 8, const lr 3e-5, decay 0.999 (~10 h). Gate read unchanged:
+  `val_ema` act₀.₅ > +5.2 sustained over the last ~4 evals. If it also parks at
+  ~+4.5: the campaign number stands as **consolidated +4.5 act₀.₅ (86% of gate)**
+  — first-ever consolidated positive real actives, matcher-genuine by ablation —
+  and Gate R2 is recorded as approached-not-met at this data scale.
+
+#### 2026-07-24 — grad-accum-8 fallback RESULT: FAILS, informatively — the +4.5 level is noise-sustained; **P1 CAMPAIGN CLOSED, Gate R2 approached-not-met**
+
+`/outputs/P1proper_accum8_4k` — init `P1proper_ema6k/oslo_raft_ema.pt`, 4k steps,
+batch 2 × accum 8 (effective 16), const lr 3e-5, decay 0.999, 33766 s (9.4 h).
+
+- **The fallback did not park at +4.5 — it declined away from it, monotonically.**
+  EMA act₀.₅ by eval: **+5.18 / +4.00 / +3.54 / +2.48 / +3.16 / +2.05 / +1.39 /
+  +0.09**. The @500 read (+5.18) is mostly the inherited init (shadow still ≈61%
+  init weights at step 500); every subsequent read tracks the new raw walk, whose
+  center is **−2.7** (raw act₀.₅: −2.7/+8.0/−2.1/−8.3/−2.3/−6.1/−0.6/−7.3) vs
+  +1.3 at accum 4. EMA act₀.₂₅ declines the same way (+4.3 → +0.9); EMA global
+  parks at −16…−19 (no improvement over the 6k run's −16.8). Train loss flat
+  (1.0–1.6) throughout.
+- **Reading: halving the gradient temperature LOWERS the basin center.** The
+  real-actives optimum is noise-sustained — with less noise the optimizer
+  descends the train objective more faithfully, and the train-loss minimum does
+  not coincide with the gate metric (train = mix + modeled nuisance; gate = real
+  movers). SGD noise was acting as implicit regularization holding the model in
+  the actives-positive region. Honest confound: part of the decline could be
+  plain continued-training drift (10k total const-lr steps); separating that
+  needs an accum-4 control of equal length, which would not change the decision
+  — continued training degrades either way.
+- **⇒ the optimization avenue is closed from BOTH ends**: variance is solved
+  (EMA, 9×) and level cannot be bought with bigger batch (it actively hurts).
+  Remaining identified paths to +5.2 are DATA SCALE (Stage-P2-style) and the
+  static-confidence calibration / objective-alignment engineering item.
+- **CAMPAIGN CLOSE (pre-registered): Gate R2 = approached-not-met (86%).**
+  Final model = **`/outputs/P1proper_ema6k/oslo_raft_ema.pt`**. Headline
+  consolidated numbers (flow360:val real pairs): act₀.₅ **+4.5 ± 0.9** (crossed
+  +5.2 3×, not sustained), act₀.₂₅ **+3.5** (first consolidated beat of the
+  Act-I +2.9% appearance ceiling), act₁.₀ −1.3, global −16.8%, poles −56;
+  matcher-genuine (corr-ablation 0.276°→54.0°). Thesis narrative: consolidated
+  positive real actives for the first time + the miss precisely factored
+  (variance solved, level noise-sustained, data/objective-limited).
+- **Retention stamp (final model on replica360:val, out-of-mix, real pairs):
+  +15.5% global** (11.44° vs zero 13.53°; actives all +15.5 at ~100% frac, poles
+  +9.1, equator +17.2, seam +11.9). Ladder: Stage A (in-domain init) **+88.4%**
+  → B′ sequential-FT retention **−0.1%** (total forgetting) → P1proper mix after
+  26k non-replica steps **+15.5%**. The mix contains no replica frames but does
+  contain the large-motion REGIME (flowscape p90 70–93px, chairs360 p90 13.6°)
+  ⇒ mixing preserves a meaningful fraction (~18% of the init capability) of
+  out-of-mix large-motion skill where sequential FT preserved none — the
+  "must mix" lesson, now quantified. `/outputs/P1final_reteval_replica`, 31 s.
+
 ### Stage P2 — Things-analog mix (~28 h)
 
 `chairs360:train,replica360:train,mpf:train` (real parallax + rendered scenes), 100k

@@ -73,7 +73,7 @@ under qemu there; on the native GPU box the defaults apply.
 
 ## Real training
 
-Override the command. **OSLO-RAFT-R Stage A** (the matching bootstrap — see
+Override the command. **OSLO-RAFT-R Stage A**  (the matching bootstrap — see
 `docs/OSLO_RAFT_RETINA_PLAN.md` §8; run the default smoke once first so the
 pyramid cache in `/outputs/pyramid_cache` is warm):
 
