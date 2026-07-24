@@ -66,7 +66,20 @@ Source: `SLOF.tar.gz` (163 MB, Dropbox, siamlof.github.io), Nov 2021.
   standard ops only (no custom CUDA needed; alt_cuda_corr optional). Should run
   under a modern torch in a small `baselines` image.
 
-## 3. Integration plan
+## 3. Integration plan — **harness DONE + Docker-validated 2026-07-24**
+
+Implemented: `spherical_flow/princeton_raft.py` (vendored inference-only
+princeton RAFT, BSD-3; loader strips DataParallel `module.` and SLOF's SimSiam
+`encoder.` prefixes, drops the 20 `predictor.*` projector keys, and hard-fails
+on any missing model key); `predict_princeton_flow` in `raft_adapter.py`
+(optional `infer_size` resize with flow magnitude rescale, mirroring SLOF's
+loader convention); `run_raft_shard_baseline.py` gains `--checkpoint`,
+`--iters`, `--infer-size` (metadata recorded in the JSON). Local Docker checks:
+all 5 SLOF ckpts load exactly (179/179 keys) and forward finite at real sizes
+(the 64×128 smoke NaN is the known RAFT pyramid degeneracy, not a bug);
+end-to-end on 2 local flow360:val pairs through the full spherical metric path
+passes. Box protocol: iters 64 @ 320×640 (their published setting), full
+flow360:val, one output dir per checkpoint (`universality_slof_<ck>`).
 
 Wire their checkpoints into OUR harness (not their loader): the existing
 RAFT-shard baseline / P2A EPE path already runs princeton RAFT-large on

@@ -58,10 +58,12 @@ from spherical_flow.metrics import (
     print_metrics,
     target_sample_from_maps,
 )
+from spherical_flow.princeton_raft import load_princeton_checkpoint
 from spherical_flow.raft_adapter import (
     FLOW_TRANSFORMS,
     erp_flow_to_tangent,
     load_raft_model,
+    predict_princeton_flow,
     predict_raft_flow,
     require_divisible_by_8,
 )
@@ -97,6 +99,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--predictor", default="raft", choices=["raft", "oracle", "zero"])
     parser.add_argument("--model", default="raft_large", choices=["raft_large", "raft_small"])
     parser.add_argument("--weights", default="default", choices=["default", "none"])
+    parser.add_argument("--checkpoint", default="",
+                        help="Path to a princeton-tree RAFT checkpoint (SLOF etc.). When set, "
+                             "the vendored princeton RAFT replaces the TorchVision model; "
+                             "--model picks large/small, --weights is ignored.")
+    parser.add_argument("--iters", type=int, default=32,
+                        help="Refinement iterations for the princeton path (SLOF evals used 64).")
+    parser.add_argument("--infer-size", default="",
+                        help="Optional HxW (e.g. 320x640) to run princeton inference at; flow is "
+                             "resampled+rescaled back to shard resolution. Empty = shard resolution.")
     parser.add_argument("--flow-transform", default="identity", choices=FLOW_TRANSFORMS,
                         help="Transform applied to RAFT pixel-flow before spherical evaluation.")
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
@@ -140,19 +151,43 @@ def main() -> None:
     basis_east, basis_north = tangent_basis(points)
     region_masks = build_region_masks(points)
 
+    infer_size = None
+    if args.infer_size:
+        try:
+            h_txt, w_txt = args.infer_size.lower().split("x")
+            infer_size = (int(h_txt), int(w_txt))
+        except ValueError as exc:
+            raise ValueError(f"--infer-size must be HxW, got '{args.infer_size}'") from exc
+        require_divisible_by_8(*infer_size)
+
     model = transforms = None
     weights_name = torchvision_version = None
+    princeton_meta = None
     device = torch.device("cpu")
     if args.predictor == "raft":
         device = get_device(args.device)
-        model, transforms, weights_name, torchvision_version = load_raft_model(
-            args.model, args.weights, device
-        )
-        print(
-            f"raft model={args.model} weights={weights_name} flow_transform={args.flow_transform} "
-            f"device={device} batch_size={args.batch_size} torchvision={torchvision_version}",
-            flush=True,
-        )
+        if args.checkpoint:
+            model, princeton_meta = load_princeton_checkpoint(
+                args.checkpoint, device, small=(args.model == "raft_small")
+            )
+            print(
+                f"princeton raft checkpoint={args.checkpoint} small={princeton_meta['small']} "
+                f"iters={args.iters} infer_size={infer_size or 'shard'} "
+                f"flow_transform={args.flow_transform} device={device} "
+                f"loaded_keys={princeton_meta['loaded_keys']} "
+                f"unexpected_keys={princeton_meta['unexpected_keys']} "
+                f"unexpected_sample={princeton_meta['unexpected_key_sample']}",
+                flush=True,
+            )
+        else:
+            model, transforms, weights_name, torchvision_version = load_raft_model(
+                args.model, args.weights, device
+            )
+            print(
+                f"raft model={args.model} weights={weights_name} flow_transform={args.flow_transform} "
+                f"device={device} batch_size={args.batch_size} torchvision={torchvision_version}",
+                flush=True,
+            )
     print(f"predictor={args.predictor} sources={sources} resolution={args.resolution} "
           f"nodes={points.shape[0]}", flush=True)
 
@@ -171,12 +206,17 @@ def main() -> None:
         u, v = pixel_cache[(height, width)]
 
         if args.predictor == "raft":
-            raft_flow = predict_raft_flow(
-                model, transforms,
-                torch.stack([it["frame1_u8"] for it in items], dim=0),
-                torch.stack([it["frame2_u8"] for it in items], dim=0),
-                device, args.flow_transform,
-            )
+            frames1 = torch.stack([it["frame1_u8"] for it in items], dim=0)
+            frames2 = torch.stack([it["frame2_u8"] for it in items], dim=0)
+            if args.checkpoint:
+                raft_flow = predict_princeton_flow(
+                    model, frames1, frames2, device, args.flow_transform,
+                    args.iters, infer_size,
+                )
+            else:
+                raft_flow = predict_raft_flow(
+                    model, transforms, frames1, frames2, device, args.flow_transform,
+                )
             pred_erp = [raft_flow[i].permute(1, 2, 0).contiguous() for i in range(len(items))]
         elif args.predictor == "oracle":
             pred_erp = [it["flow_erp"] for it in items]
@@ -211,7 +251,8 @@ def main() -> None:
         }
         if args.predictor == "raft":
             height, width = flow_erp.shape[:2]
-            require_divisible_by_8(height, width)
+            if infer_size is None:
+                require_divisible_by_8(height, width)
             item["frame1_u8"] = torch.from_numpy(
                 np.ascontiguousarray(record["frame1"])).permute(2, 0, 1).contiguous()
             item["frame2_u8"] = torch.from_numpy(
@@ -243,11 +284,15 @@ def main() -> None:
         "args": vars(args),
         "sources": sources,
         "model": None if args.predictor != "raft" else {
+            "arch": "princeton" if args.checkpoint else "torchvision",
             "name": args.model,
             "requested_weights": args.weights,
             "weights_enum": weights_name,
             "flow_transform": args.flow_transform,
             "torchvision": torchvision_version,
+            "iters": args.iters if args.checkpoint else None,
+            "infer_size": list(infer_size) if (args.checkpoint and infer_size) else None,
+            "princeton": princeton_meta,
         },
         "metrics": metrics,
     }
