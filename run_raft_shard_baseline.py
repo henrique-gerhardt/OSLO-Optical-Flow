@@ -59,6 +59,10 @@ from spherical_flow.metrics import (
     target_sample_from_maps,
 )
 from spherical_flow.princeton_raft import load_princeton_checkpoint
+from spherical_flow.panoflow_adapter import (
+    load_panoflow_checkpoint,
+    predict_panoflow_cfe_flow,
+)
 from spherical_flow.raft_adapter import (
     FLOW_TRANSFORMS,
     erp_flow_to_tangent,
@@ -105,6 +109,12 @@ def parse_args() -> argparse.Namespace:
                              "--model picks large/small, --weights is ignored.")
     parser.add_argument("--iters", type=int, default=32,
                         help="Refinement iterations for the princeton path (SLOF evals used 64).")
+    parser.add_argument("--panoflow-checkpoint", default="",
+                        help="Path to a PanoFlow(CSFlow) checkpoint. When set, the vendored "
+                             "PanoFlow(CSFlow) net runs under CFE at native shard resolution "
+                             "(its own eval protocol); --checkpoint/--model/--infer-size ignored.")
+    parser.add_argument("--panoflow-eval-iters", type=int, default=12,
+                        help="GRU eval iterations for the PanoFlow path (repo default 12).")
     parser.add_argument("--infer-size", default="",
                         help="Optional HxW (e.g. 320x640) to run princeton inference at; flow is "
                              "resampled+rescaled back to shard resolution. Empty = shard resolution.")
@@ -163,10 +173,24 @@ def main() -> None:
     model = transforms = None
     weights_name = torchvision_version = None
     princeton_meta = None
+    panoflow_meta = None
     device = torch.device("cpu")
     if args.predictor == "raft":
         device = get_device(args.device)
-        if args.checkpoint:
+        if args.panoflow_checkpoint:
+            model, panoflow_meta = load_panoflow_checkpoint(
+                args.panoflow_checkpoint, device, eval_iters=args.panoflow_eval_iters
+            )
+            print(
+                f"panoflow(csflow) checkpoint={args.panoflow_checkpoint} "
+                f"eval_iters={panoflow_meta['eval_iters']} resolution=native+CFE "
+                f"flow_transform={args.flow_transform} device={device} "
+                f"loaded_keys={panoflow_meta['loaded_keys']} "
+                f"unexpected_keys={panoflow_meta['unexpected_keys']} "
+                f"unexpected_sample={panoflow_meta['unexpected_key_sample']}",
+                flush=True,
+            )
+        elif args.checkpoint:
             model, princeton_meta = load_princeton_checkpoint(
                 args.checkpoint, device, small=(args.model == "raft_small")
             )
@@ -208,7 +232,11 @@ def main() -> None:
         if args.predictor == "raft":
             frames1 = torch.stack([it["frame1_u8"] for it in items], dim=0)
             frames2 = torch.stack([it["frame2_u8"] for it in items], dim=0)
-            if args.checkpoint:
+            if args.panoflow_checkpoint:
+                raft_flow = predict_panoflow_cfe_flow(
+                    model, frames1, frames2, device, args.flow_transform,
+                )
+            elif args.checkpoint:
                 raft_flow = predict_princeton_flow(
                     model, frames1, frames2, device, args.flow_transform,
                     args.iters, infer_size,
@@ -251,7 +279,7 @@ def main() -> None:
         }
         if args.predictor == "raft":
             height, width = flow_erp.shape[:2]
-            if infer_size is None:
+            if infer_size is None and not args.panoflow_checkpoint:
                 require_divisible_by_8(height, width)
             item["frame1_u8"] = torch.from_numpy(
                 np.ascontiguousarray(record["frame1"])).permute(2, 0, 1).contiguous()
@@ -284,7 +312,11 @@ def main() -> None:
         "args": vars(args),
         "sources": sources,
         "model": None if args.predictor != "raft" else {
-            "arch": "princeton" if args.checkpoint else "torchvision",
+            "arch": (
+                "panoflow_csflow" if args.panoflow_checkpoint
+                else "princeton" if args.checkpoint
+                else "torchvision"
+            ),
             "name": args.model,
             "requested_weights": args.weights,
             "weights_enum": weights_name,
@@ -293,6 +325,7 @@ def main() -> None:
             "iters": args.iters if args.checkpoint else None,
             "infer_size": list(infer_size) if (args.checkpoint and infer_size) else None,
             "princeton": princeton_meta,
+            "panoflow": panoflow_meta,
         },
         "metrics": metrics,
     }
