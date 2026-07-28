@@ -130,10 +130,33 @@ docker compose -f docker-compose.oslo_raft.yml run --rm oslo-raft \
 done
 ```
 
-**Decisão recomendada:** manter `acos` como métrica de report (consistência com
-todas as linhas publicadas) e **declarar o piso na seção de método**, usando A1.2
-como evidência de que os actives não são afetados. Trocar a métrica só se A1.2
-mostrar mudança material.
+### DECISÃO DA MÉTRICA — FECHADA 2026-07-28: `haversine`
+
+A1.2 rodou (OSLO EMA em flow360:test, 2567 pares, mesma config, só a métrica muda):
+
+| | `acos` (publicado) | `haversine` | Δ |
+| --- | --- | --- | --- |
+| act₀.₂₅ | −4,9 | −4,92 | **−0,02** |
+| act₀.₅ | −4,0 | −4,04 | **−0,04** |
+| act₁.₀ | −5,7 | −5,70 | **0,00** |
+| global | −14,0 | −15,12 | −1,12 |
+| polos | −24,8 | −26,89 | −2,09 |
+| zero global | 0,4368° | 0,4314° | −1,2% |
+
+Critério pré-registrado ("actives mudam < 1 ponto") **atendido com folga de 25×**
+⇒ a conclusão de universalidade é invariante à métrica. Mas global e polos
+deslocam 1–2 pontos, e o baseline zero estava inflado em 1,2%.
+
+**Recomendação anterior revertida.** O argumento "manter `acos` por consistência
+com as linhas publicadas" não se sustenta: **nós rodamos todas as 11 linhas**, não
+há número externo com que ser consistente. Sob `acos` global e polos estão errados
+sem contrapartida; `haversine` é exato e não tem trade-off. ⇒ **toda a tabela sai
+em `haversine`**, e o piso do harness (~2e-6°) entra na seção de método como
+verificação, não como ressalva.
+
+**Consequência de planejamento: A1 e A4 fundem-se.** Como toda linha precisa ser
+re-rodada de qualquer forma, rode `--geodesic-metric haversine` **e**
+`--motion-bands-deg` na mesma passada. Ver §2.A4.
 
 ### A2 — o gap val→test é composição ou falha de generalização?
 
@@ -248,59 +271,46 @@ colunas `active_X` existentes são caudas *cumulativas* e por isso misturam regi
 (`active_0.25` num conjunto de grande movimento é dominado pelos pares de 70 px,
 não pelos de 0,25°). Bandas são o instrumento correto para localizar o cruzamento.
 
-Rode a tabela inteira nos dois datasets. Métodos publicados usam
-`run_raft_shard_baseline.py`:
+**Não re-digite os flags.** Cada linha da tabela tem um protocolo próprio (SLOF
+roda a `--iters 64 --infer-size 320x640`, a publicada deles; PanoFlow roda em
+resolução nativa com CFE; RAFT-large em nativa) e misturá-los silenciosamente
+quebra a comparabilidade sem gerar nenhum erro. Use `rerun_from_json.py`, que
+relê os `args` gravados no JSON de cada run, aplica os overrides e re-emite o
+comando pelo parser real do script que o produziu:
 
 ```
-# zero e frozen RAFT-large
-for S in flow360:test flowscape:test; do
-for P in zero raft; do
+# 1) confira o que vai rodar (não executa nada)
 SHARDS_HOST=../sfprep/shards OUTPUT_DIR=./outputs \
 docker compose -f docker-compose.oslo_raft.yml run --rm oslo-raft \
-  python run_raft_shard_baseline.py \
-    --shards /data/shards --sources $S --resolution 6 \
-    --predictor $P --device cuda \
-    --motion-bands-deg 0,0.0625,0.125,0.25,0.5,1,2,4,8,16,32,inf \
-    --output-dir /outputs/a4_$(echo $S | tr ':' '_')_$P
-done; done
+  python rerun_from_json.py \
+    /outputs/universality_slof_raft_test \
+    /outputs/universality_slof_raftfinetune_test \
+    /outputs/universality_slof_singlerotation_test \
+    /outputs/universality_slof_switchrotation_test \
+    /outputs/universality_slof_doublerotation_test \
+    /outputs/universality_panoflow_test \
+    /outputs/<ZERO_flow360_test> /outputs/<RAFT_flow360_test> \
+    /outputs/<ZERO_flowscape_test> /outputs/<RAFT_flowscape_test> \
+    /outputs/<PANOFLOW_flowscape_test> /outputs/<OSLO_flowscape_test> \
+    --set geodesic_metric=haversine \
+    --set motion_bands_deg=0,0.0625,0.125,0.25,0.5,1,2,4,8,16,32,inf \
+    --output-suffix _hav
 
-# PanoFlow(CSFlow) + CFE
-for S in flow360:test flowscape:test; do
-SHARDS_HOST=../sfprep/shards OUTPUT_DIR=./outputs \
-docker compose -f docker-compose.oslo_raft.yml run --rm oslo-raft \
-  python run_raft_shard_baseline.py \
-    --shards /data/shards --sources $S --resolution 6 --device cuda \
-    --panoflow-checkpoint /outputs/ckpts/PanoFlow\(CSFlow\)-wo-CFE.pth \
-    --panoflow-eval-iters 12 \
-    --motion-bands-deg 0,0.0625,0.125,0.25,0.5,1,2,4,8,16,32,inf \
-    --output-dir /outputs/a4_$(echo $S | tr ':' '_')_panoflow
-done
-
-# SLOF singlerotation (a linha in-domain load-bearing)
-SHARDS_HOST=../sfprep/shards OUTPUT_DIR=./outputs \
-docker compose -f docker-compose.oslo_raft.yml run --rm oslo-raft \
-  python run_raft_shard_baseline.py \
-    --shards /data/shards --sources flow360:test --resolution 6 --device cuda \
-    --checkpoint /outputs/ckpts/<SLOF_SINGLEROTATION>.pth \
-    --motion-bands-deg 0,0.0625,0.125,0.25,0.5,1,2,4,8,16,32,inf \
-    --output-dir /outputs/a4_flow360_test_slof_single
+# 2) execute (mesma linha + --run)
+... --output-suffix _hav --run
 ```
 
-OSLO usa `run_oslo_raft.py` (os runs do A2 já cobrem flow360; falta flowscape):
+Os nomes acima seguem a convenção registrada em §4 de `UNIVERSALITY_TABLE.md`
+(`universality_slof_<ck>_test`); confirme com
+`docker compose ... run --rm oslo-raft ls -1 /outputs` e substitua os
+`<PLACEHOLDER>`. Se algum `--set` não existir no script daquele run, a ferramenta
+aborta o lote inteiro com erro claro em vez de rodar meia tabela.
 
-```
-SHARDS_HOST=../sfprep/shards OUTPUT_DIR=./outputs \
-docker compose -f docker-compose.oslo_raft.yml run --rm oslo-raft \
-  python run_oslo_raft.py \
-    --grid healpix --retina --retina-resolution 7 --resolution 6 \
-    --estimation-resolution 4 --device cuda --amp \
-    --pyramid-cache /outputs/pyramid_cache \
-    --eval-only --init-checkpoint /outputs/P1proper_ema6k/oslo_raft_ema.pt \
-    --val-sources flowscape:test \
-    --motion-bands-deg 0,0.0625,0.125,0.25,0.5,1,2,4,8,16,32,inf \
-    --output-dir /outputs/a4_flowscape_test_oslo
-```
+Para o comando de arquivo (que sobrevive a mudanças futuras de default), passe
+`--explicit`.
 
+**A linha do OSLO em flow360:test já está feita** — é o próprio run do A1.2,
+com `haversine` + bandas. Restam 12.
 **Figura resultante.** Eixo x = `band_*_zero_geo_deg` (deslocamento GT médio da
 banda). Eixo y = `band_*_improvement_pct`. Uma linha por método, pontos dos dois
 datasets no mesmo eixo. O cruzamento de y = 0 é o número novo.
@@ -587,6 +597,45 @@ controle `--predictor zero` (que é 0% por definição e só serviu de sanity ch
 Não é 0,028° (métrica antiga) nem 0,0007° (contaminado pelo `logmap` antigo):
 é **~2e-6°**, cinco ordens de grandeza abaixo do sinal do flow360. A métrica
 deixou de ser fator limitante em qualquer regime.
+
+---
+
+## 5.3 A1.2 — a primeira curva de resposta ao deslocamento (OSLO, flow360:test)
+
+O run do A1.2 já traz bandas, então é também a primeira linha do A4. OSLO EMA
+final, 2567 pares, `haversine`:
+
+| banda | ocupação | zero | OSLO | melhoria |
+| --- | --- | --- | --- | --- |
+| [0; 0,0625) | 32,8% | 0,0167° | 0,1117° | **−570,3%** |
+| [0,0625; 0,125) | 15,8% | 0,0926° | 0,1366° | −47,5% |
+| [0,125; 0,25) | 16,9% | 0,1798° | 0,2297° | −27,8% |
+| [0,25; 0,5) | 16,6% | 0,3569° | 0,3915° | −9,7% |
+| **[0,5; 1,0)** | **12,2%** | 0,7026° | 0,6989° | **+0,53%** |
+| [1; 2) | 3,5% | 1,2783° | 1,3737° | −7,5% |
+| [2; 4) | 1,0% | 2,8380° | 3,0836° | −8,7% |
+| [4; 8) | 0,7% | 5,6302° | 6,0986° | −8,3% |
+| [8; 16) | 0,3% | 10,666° | 11,597° | −8,7% |
+| [16; 32) | 0,11% | 21,953° | 22,471° | −2,4% |
+| [32; ∞) | 0,11% | 59,460° | 60,057° | −1,0% |
+
+**O cruzamento não é um limiar, é uma janela.** O OSLO só supera o zero em
+`[0,5; 1,0°)`, e volta a perder acima disso. Isso é mais informativo do que a
+hipótese original (limiar monotônico) e a tabela agregada escondia por completo.
+
+Duas leituras que a curva entrega:
+
+1. **O colapso abaixo de 0,25° é quantificado pela primeira vez** — −570% na banda
+   mais baixa, que é 33% da esfera. É exatamente a calibração estática, e é o alvo
+   declarado do gate do B1: a métrica pela qual o gate deve ser julgado passa a ser
+   *esta banda*, não só o global agregado.
+2. **O platô de −8% entre 1° e 16° é plano demais para ser falha de resolução.**
+   Erro de grade cresceria com o deslocamento; erro relativo constante aponta viés
+   sistemático de escala. Registrado como observação, **não medido** — não
+   interpretar sem uma medição dedicada.
+
+Se as demais linhas mostrarem janelas em posições diferentes, a figura fica mais
+forte que o "todos cruzam no mesmo ponto" que eu havia antecipado.
 
 ---
 
