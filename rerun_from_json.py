@@ -69,11 +69,22 @@ def build_command(script: str, saved: Dict, overrides: Dict[str, str],
     finally:
         sys.argv = argv_backup
 
+    # Validate overrides against the PARSER, not against the saved args: the whole
+    # point is to set flags that did not exist when the run was made (a JSON from
+    # before --geodesic-metric was added has no such key, and adding it is the use
+    # case). Conversely, drop saved keys the parser no longer accepts, so replaying
+    # a run from before a rename does not emit a dead flag.
     merged = dict(saved)
-    for key, value in overrides.items():
-        if key not in merged:
-            raise KeyError(f"{script} has no arg '{key}' (got: {sorted(merged)[:6]}...)")
-        merged[key] = value
+    if defaults:
+        for key in overrides:
+            if key not in defaults:
+                raise KeyError(
+                    f"{script} has no arg '{key}'. Valid: {', '.join(sorted(defaults))}")
+        for key in list(merged):
+            if key not in defaults:
+                print(f"# note: dropping '{key}' — {script} no longer accepts it", flush=True)
+                del merged[key]
+    merged.update(overrides)
     if output_suffix and "output_dir" in merged:
         merged["output_dir"] = merged["output_dir"].rstrip("/") + output_suffix
 

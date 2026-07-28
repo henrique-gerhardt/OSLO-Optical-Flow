@@ -288,10 +288,11 @@ docker compose -f docker-compose.oslo_raft.yml run --rm oslo-raft \
     /outputs/universality_slof_singlerotation_test \
     /outputs/universality_slof_switchrotation_test \
     /outputs/universality_slof_doublerotation_test \
-    /outputs/universality_panoflow_test \
-    /outputs/<ZERO_flow360_test> /outputs/<RAFT_flow360_test> \
-    /outputs/<ZERO_flowscape_test> /outputs/<RAFT_flowscape_test> \
-    /outputs/<PANOFLOW_flowscape_test> /outputs/<OSLO_flowscape_test> \
+    /outputs/universality_panoflow_csflow_test \
+    /outputs/universality_raftlarge_flow360_test \
+    /outputs/largemotion_panoflow_flowscape_test \
+    /outputs/largemotion_raftlarge_flowscape_test \
+    /outputs/largemotion_oslo_flowscape_test \
     --set geodesic_metric=haversine \
     --set motion_bands_deg=0,0.0625,0.125,0.25,0.5,1,2,4,8,16,32,inf \
     --output-suffix _hav
@@ -300,17 +301,24 @@ docker compose -f docker-compose.oslo_raft.yml run --rm oslo-raft \
 ... --output-suffix _hav --run
 ```
 
-Os nomes acima seguem a convenção registrada em §4 de `UNIVERSALITY_TABLE.md`
-(`universality_slof_<ck>_test`); confirme com
-`docker compose ... run --rm oslo-raft ls -1 /outputs` e substitua os
-`<PLACEHOLDER>`. Se algum `--set` não existir no script daquele run, a ferramenta
-aborta o lote inteiro com erro claro em vez de rodar meia tabela.
+Os nomes acima são os diretórios reais em `/outputs` na box (confirmados
+2026-07-28). São **10 linhas**; a 11ª — OSLO em flow360:test — já está feita, é o
+próprio run do A1.2, com `haversine` + bandas.
+
+O **baseline zero não precisa de run próprio**: `compute_maps` o calcula dentro de
+toda avaliação (`global_zero_geo_deg`, `band_*_zero_geo_deg`), então cada linha já
+carrega o seu. Uma linha `--predictor zero` dedicada serve só de controle — e
+depois do conserto do `logmap` ela lê melhoria exatamente 0 sob `haversine`, o que
+a torna um *check* barato de que a métrica está sã.
+
+**Comportamento com JSONs anteriores aos flags novos.** Os overrides são validados
+contra o **parser do script**, não contra os `args` gravados — justamente porque o
+caso de uso é ligar um flag que não existia quando o run foi feito. Chaves salvas
+que o parser não aceita mais são descartadas com aviso. Um `--set` de chave
+genuinamente inexistente ainda aborta o lote inteiro, em vez de rodar meia tabela.
 
 Para o comando de arquivo (que sobrevive a mudanças futuras de default), passe
 `--explicit`.
-
-**A linha do OSLO em flow360:test já está feita** — é o próprio run do A1.2,
-com `haversine` + bandas. Restam 12.
 **Figura resultante.** Eixo x = `band_*_zero_geo_deg` (deslocamento GT médio da
 banda). Eixo y = `band_*_improvement_pct`. Uma linha por método, pontos dos dois
 datasets no mesmo eixo. O cruzamento de y = 0 é o número novo.
