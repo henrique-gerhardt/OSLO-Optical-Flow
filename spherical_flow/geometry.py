@@ -223,8 +223,39 @@ def logmap(
     )
 
 
+_GEODESIC_MODE = "acos"
+
+
+def set_geodesic_mode(mode: str) -> None:
+    """Select the great-circle formula used by :func:`geodesic_distance`.
+
+    ``acos`` is the historical form every number in this project was measured
+    with. It carries a hard float32 resolution floor of
+    ``sqrt(2 * eps_f32) = 0.02798 deg``: ``acos`` is stationary at ``dot = 1``, so
+    the ulp on the dot product maps to a finite angle no matter how small the true
+    displacement is. Verified: two IDENTICAL unit vectors score a nonzero angle
+    (mean 0.0073 deg, max 0.0442 deg over 200k pairs).
+
+    ``haversine`` (``2 * asin(|a - b| / 2)``) is mathematically identical over the
+    full [0, pi] range and has no stationary point at 0, so it reads exact zero.
+
+    This is a switch rather than a replacement so the floor's effect on the
+    existing rows can be MEASURED (run both, diff the JSON) instead of assumed
+    negligible. Actives (>= 0.25 deg) are ~9x above the floor and should be
+    unaffected; sub-floor claims (e.g. B' "0.046 deg") are ~61% floor and must be
+    re-measured here before being quoted.
+    """
+    global _GEODESIC_MODE
+    if mode not in ("acos", "haversine"):
+        raise ValueError(f"unknown geodesic mode: {mode!r} (want 'acos' or 'haversine')")
+    _GEODESIC_MODE = mode
+
+
 def geodesic_distance(a: torch.Tensor, b: torch.Tensor, eps: float = 1e-7) -> torch.Tensor:
     """Great-circle distance in radians between unit vectors."""
+    if _GEODESIC_MODE == "haversine":
+        # Chord -> angle. clamp only guards |a-b| slightly over 2 from fp error.
+        return 2.0 * torch.asin((0.5 * (a - b).norm(dim=-1)).clamp(max=1.0))
     dot = (a * b).sum(dim=-1).clamp(-1.0 + eps, 1.0 - eps)
     return torch.acos(dot)
 

@@ -21,6 +21,19 @@ P2A has no dependencies and its output (the grid floor) is itself a design input
 P2C (decides whether supervision moves to r7 or a learned upsampler is needed). P2B
 and P2C-implementation can proceed in parallel with P2A; P2C-training needs both.
 
+## Current plan (supersedes the table above for scheduling)
+
+| plan | deliverable | est. cost |
+| --- | --- | --- |
+| [Universality table](UNIVERSALITY_TABLE.md) | published 360° methods vs zero-flow, one harness — **COMPLETE** | done |
+| [Roadmap — seminário de andamento](ROADMAP_SEMINARIO.md) | what to run *before writing* (A1–A4) vs what to *propose* (B1–B4) | ~8–11 h GPU for the blocking set |
+
+The P2A/P2B/P2C framing above is historical: P2A concluded, P2B shipped chairs360,
+P2C's P1 campaign closed 2026-07-24 with Gate R2 approached-not-met. The grid
+hypothesis it was built around was later **refuted by measurement** (OSLO sits
+2.2–4.9× above its own r4 floor), so resolution is not the lever. Read
+`ROADMAP_SEMINARIO.md` for what is actually next.
+
 ## Why this is the right attack (one paragraph)
 
 The triangle isolated the wall exactly: the *same* checkpoint scores +80.6% (0.046°

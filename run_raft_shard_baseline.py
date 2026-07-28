@@ -49,11 +49,13 @@ from spherical_flow import (
     points_to_equirectangular_pixels,
     tangent_basis,
 )
+from spherical_flow.geometry import set_geodesic_mode
 from spherical_flow.metrics import (
     accumulate_maps,
     build_region_masks,
     compute_maps,
     finalize_metrics,
+    parse_bands,
     parse_thresholds,
     print_metrics,
     target_sample_from_maps,
@@ -124,6 +126,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--max-pairs", type=int, default=None)
     parser.add_argument("--active-thresholds-deg", default="0.25,0.5,1.0")
+    parser.add_argument("--motion-bands-deg", default="",
+                        help="A4: comma-separated edges for DISJOINT motion bands, e.g. "
+                             "'0,0.125,0.25,0.5,1,2,4,8,16,inf'. Unlike the cumulative active_X "
+                             "tails, bands locate the displacement at which a method starts "
+                             "beating the zero baseline. Empty = off (default).")
+    parser.add_argument("--geodesic-metric", default="acos", choices=["acos", "haversine"],
+                        help="Great-circle formula. 'acos' reproduces every existing number and "
+                             "has a 0.028 deg float32 floor; 'haversine' is exact at zero.")
     parser.add_argument("--output-dir", default="/outputs/raft_shard_baseline")
     return parser.parse_args()
 
@@ -157,6 +167,8 @@ def main() -> None:
 
     sources = parse_sources(args.sources)
     active_thresholds = parse_thresholds(args.active_thresholds_deg)
+    motion_bands = parse_bands(args.motion_bands_deg)
+    set_geodesic_mode(args.geodesic_metric)
     points = healpix_unit_vectors(args.resolution)
     basis_east, basis_north = tangent_basis(points)
     region_masks = build_region_masks(points)
@@ -263,7 +275,8 @@ def main() -> None:
         }
         maps = compute_maps(pred_flow, target_batch, points, basis_east, basis_north)
         target_chunks.append(target_sample_from_maps(maps, None))
-        accumulate_maps(maps, region_masks, active_thresholds, totals, counts, active_counts)
+        accumulate_maps(maps, region_masks, active_thresholds, totals, counts, active_counts,
+                        motion_bands=motion_bands)
 
     pending: List[dict] = []
     for record in tqdm(iter_source_records(Path(args.shards), sources), desc="pairs", unit="pair"):
@@ -305,7 +318,7 @@ def main() -> None:
     metrics = finalize_metrics(totals, counts, active_counts, target_chunks)
     metrics["elapsed_s"] = time.time() - start_time
     metrics["pairs"] = seen
-    print_metrics(f"{args.predictor}_validation", metrics)
+    print_metrics(f"{args.predictor}_validation", metrics, motion_bands)
     print(f"pairs={seen} elapsed_s={metrics['elapsed_s']:.1f}", flush=True)
 
     result = {

@@ -304,6 +304,7 @@ class ShardFlowDataset(IterableDataset):
         synth_photo_noise_std: float = 0.0,
         synth_edge_corrupt_delta: float = 0.0,
         real_resample_prob: float = 0.0,
+        real_resample_flow_scale: float = 1.0,
     ) -> None:
         if points.ndim != 2 or points.size(-1) != 3:
             raise ValueError("points must have shape [N, 3]")
@@ -352,6 +353,13 @@ class ShardFlowDataset(IterableDataset):
         # the REAL GT endpoints — appearance perfectly clean, motion structure real.
         # GT/valid are bit-identical to the untouched record's.
         self.real_resample_prob = float(real_resample_prob)
+        # A3 (magnitude x structure): multiply the real GT field before resampling, so
+        # the field's STRUCTURE (support, sparsity, bimodality) is held fixed while its
+        # MAGNITUDE is swept. Separates "the wall is sub-pixel motion" (a magnitude
+        # claim, which lower FPS would fix) from "the wall is the field's structure"
+        # (which no temporal subsampling fixes). GT and frame 2 both derive from the
+        # scaled field, so exact photometric constancy is preserved at every scale.
+        self.real_resample_flow_scale = float(real_resample_flow_scale)
 
         self._iter_shard, self._list_shards = _import_sfprep()
         self._shards: List[Path] = []
@@ -459,6 +467,10 @@ class ShardFlowDataset(IterableDataset):
         structure + measured-shape nuisance, GT untouched.
         """
         frame1_erp, _frame2, flow_erp, valid_erp = _record_tensors(record)
+        if self.real_resample_flow_scale != 1.0:
+            # Single scaling point: GT (below) and frame 2 (further down) both read
+            # `flow_erp`, so they stay exactly consistent at any scale.
+            flow_erp = flow_erp * self.real_resample_flow_scale
         sample = sample_pair_to_nodes(
             frame1_erp, frame1_erp, flow_erp, valid_erp,
             self.points, self.basis_east, self.basis_north,

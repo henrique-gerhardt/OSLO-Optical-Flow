@@ -52,6 +52,7 @@ from tqdm import tqdm
 from spherical_flow.geometry import (
     healpix_unit_vectors,
     parallel_transport,
+    set_geodesic_mode,
     tangent_basis,
 )
 from spherical_flow.healpix_pyramid import build_healpix_pyramid, load_pyramid, save_pyramid
@@ -60,6 +61,7 @@ from spherical_flow.metrics import (
     build_region_masks,
     compute_maps,
     finalize_metrics,
+    parse_bands,
     parse_thresholds,
     print_metrics,
     target_sample_from_maps,
@@ -91,6 +93,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pyramid-cache", default="")
     parser.add_argument("--max-pairs", type=int, default=None)
     parser.add_argument("--active-thresholds-deg", default="0.25,0.5,1.0")
+    parser.add_argument("--motion-bands-deg", default="",
+                        help="Disjoint motion bands (see run_raft_shard_baseline.py). "
+                             "Empty = off.")
+    parser.add_argument("--geodesic-metric", default="acos", choices=["acos", "haversine"],
+                        help="Great-circle formula; 'haversine' removes the 0.028 deg "
+                             "float32 floor that the r6 identity check exposed.")
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
     parser.add_argument("--output-dir", default="/outputs/grid_floor")
     return parser.parse_args()
@@ -179,6 +187,8 @@ def main() -> None:
 
     sources = parse_sources(args.sources)
     active_thresholds = parse_thresholds(args.active_thresholds_deg)
+    motion_bands = parse_bands(args.motion_bands_deg)
+    set_geodesic_mode(args.geodesic_metric)
     est_resolutions = [int(t) for t in args.estimation_resolutions.split(",") if t.strip()]
 
     fine_points = healpix_unit_vectors(args.resolution)
@@ -258,7 +268,7 @@ def main() -> None:
                 totals, counts, active_counts, chunks = acc[mode]
                 chunks.append(target_sample_from_maps(maps, None))
                 accumulate_maps(maps, region_masks, active_thresholds,
-                                totals, counts, active_counts)
+                                totals, counts, active_counts, motion_bands=motion_bands)
 
             seen += 1
             if args.max_pairs is not None and seen >= args.max_pairs:
@@ -279,7 +289,7 @@ def main() -> None:
             totals, counts, active_counts, chunks = acc[mode]
             metrics = finalize_metrics(totals, counts, active_counts, chunks)
             entry["floors"][mode] = metrics
-            print_metrics(f"grid_floor_r{r_est}_{mode}", metrics)
+            print_metrics(f"grid_floor_r{r_est}_{mode}", metrics, motion_bands)
         results[f"r{r_est}"] = entry
 
     print("\n================ GRID FLOOR SUMMARY ================", flush=True)

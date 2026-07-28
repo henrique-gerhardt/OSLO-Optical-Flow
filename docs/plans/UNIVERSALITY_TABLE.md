@@ -545,6 +545,53 @@ while the standard stable form `2*asin(|a-b|/2)` gives **exactly 0**.
 | **B′ "0.046° = 0.13 ERP px"** | 0.046° | **61%** | **contaminated — do not print without re-measuring** |
 | P2A "node route +0.004 px median" | — | > 100% | below the floor; not a real measurement |
 
+**Correction (2026-07-28) — the "floor as %" column above is a linear-ratio
+heuristic, not a measurement, and it is wrong.** The floor does not add linearly.
+Measured contamination at controlled true angles (40k pairs each, pair built by
+rotating `a` toward an orthonormal `t` so the haversine form is ground truth by
+construction; run in Docker, see `docs/plans/ROADMAP_SEMINARIO.md` §5):
+
+| true angle | `acos` reading | bias | rms |
+| --- | --- | --- | --- |
+| 0.010° | 0.02809° | +180.87% | 181.10% |
+| 0.028° | 0.03095° | +10.55% | 19.68% |
+| 0.050° | 0.04818° | −3.63% | 11.53% |
+| 0.100° | 0.10085° | +0.85% | 2.71% |
+| **0.250°** | 0.25023° | **+0.09%** | **0.42%** |
+| 0.500° | 0.50007° | +0.01% | 0.10% |
+| 1.000° | 0.99995° | −0.01% | 0.03% |
+| ≥ 3° | exact | 0.00% | 0.00% |
+
+So the actives conclusion above is now confirmed *by measurement* (+0.09% bias at
+the 0.25° threshold), but the B′ "61%" figure should not be quoted: the true
+contamination depends on the error *distribution*, not on a single angle — a
+distribution with mass near zero is inflated far more than the fixed-angle row
+suggests (identical vectors read 0.028° from a true 0). **Re-measure with
+`--geodesic-metric haversine` before printing any sub-0.1° number** (roadmap A1.3).
+
+Both formulas are now selectable at run time via `--geodesic-metric {acos,haversine}`
+on `run_oslo_raft.py`, `run_raft_shard_baseline.py` and `run_grid_floor_probe.py`
+(default `acos`, so every existing number is reproduced bit-for-bit).
+
+**Consequence for the doublerotation row.** Measured end-to-end on real
+flow360:test (40 pairs, both metrics): `--predictor zero` — which is *by
+construction* identical to the baseline and must therefore score exactly 0 —
+scores **+0.12% global** under `acos` and exactly 0.0000 under `haversine`. The
+SLOF doublerotation row's **+0.03 global is inside that artefact**: its positive
+sign there is not distinguishable from the metric's own numerical bias. Its
+act₀.₅ (+0.12) is ~30× the corresponding artefact (+0.0036) and so is real,
+though still negligible. The defensible sentence is therefore: *the only
+non-negative row is a trivial zero-predictor, and even its global positive is a
+metric artefact.* To be confirmed at full scale by roadmap A1.2 — the effect is a
+bias, not zero-mean noise, so it should not shrink with more pairs, but that must
+be verified rather than assumed.
+
+Band occupancy on flow360:test also localises the floor precisely: the
+`[0, 0.0625°)` band holds **44.5%** of all nodes and is inflated **+60.6%**
+(0.0208° → 0.0334°), while every band at or above 0.0625° agrees to within 1.6%
+and every band at or above 0.25° to within 0.06%. That is why the global metric
+moves (0.2482 → 0.2537) while the actives columns do not.
+
 The mechanism is a *clamp from below on per-node error*, not additive noise: nodes
 whose true error exceeds ~0.05° are measured correctly, while every node below
 0.028° reports 0.028°. On flow360 that inflates both the zero baseline and the

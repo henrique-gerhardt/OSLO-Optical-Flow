@@ -30,6 +30,32 @@ def parse_thresholds(text: str) -> list[float]:
     return [float(value.strip()) for value in text.split(",") if value.strip()]
 
 
+def parse_bands(text: str) -> list[tuple[float, float]]:
+    """Parse ``"0,0.25,0.5,inf"`` into consecutive half-open [lo, hi) motion bands.
+
+    Bands complement the ``active_X`` thresholds, which are *cumulative tails*
+    (``zero_geo_deg >= X``) and therefore mix regimes: ``active_0.25`` on a
+    large-motion set is dominated by the 70 px pairs, not by the 0.25 deg ones.
+    Disjoint bands are the instrument for locating the displacement at which a
+    method starts beating the zero baseline (the "crossing point").
+    """
+    if not text.strip():
+        return []
+    edges = [float(value.strip()) for value in text.split(",") if value.strip()]
+    if len(edges) < 2:
+        raise ValueError("motion bands need at least two edges, e.g. '0,0.25,inf'")
+    if any(hi <= lo for lo, hi in zip(edges, edges[1:])):
+        raise ValueError(f"motion band edges must be strictly increasing: {edges}")
+    return list(zip(edges, edges[1:]))
+
+
+def band_key(lo: float, hi: float) -> str:
+    def fmt(value: float) -> str:
+        return "inf" if value == float("inf") else str(value).replace(".", "_")
+
+    return f"band_{fmt(lo)}_{fmt(hi)}"
+
+
 def build_region_masks(points: torch.Tensor, seam_width_deg: float = 15.0) -> Dict[str, torch.Tensor]:
     # Boundary decisions in float64 with an include-the-boundary tolerance: HEALPix
     # grids place node columns exactly ON region boundaries (44 nodes at the r6 seam
@@ -124,6 +150,7 @@ def summarize_maps(
     maps: Dict[str, torch.Tensor],
     region_masks: Dict[str, torch.Tensor],
     active_thresholds: list[float],
+    motion_bands: list[tuple[float, float]] = (),
 ) -> Dict[str, float]:
     out: Dict[str, float] = {}
     valid = maps["valid"]
@@ -141,6 +168,15 @@ def summarize_maps(
         mask = valid & (maps["zero_geo_deg"] >= threshold)
         count = int(mask.sum().item())
         prefix = active_key(threshold) + "_"
+        out[prefix + "count"] = float(count)
+        out[prefix + "frac"] = float(count) / max(float(valid.sum().item()), 1.0)
+        if count > 0:
+            out[prefix + "geo_deg"] = float(masked_mean(maps["geo_deg"], mask).detach().cpu())
+            out[prefix + "zero_geo_deg"] = float(masked_mean(maps["zero_geo_deg"], mask).detach().cpu())
+    for lo, hi in motion_bands:
+        mask = valid & (maps["zero_geo_deg"] >= lo) & (maps["zero_geo_deg"] < hi)
+        count = int(mask.sum().item())
+        prefix = band_key(lo, hi) + "_"
         out[prefix + "count"] = float(count)
         out[prefix + "frac"] = float(count) / max(float(valid.sum().item()), 1.0)
         if count > 0:
@@ -167,6 +203,7 @@ def accumulate_maps(
     totals: Dict[str, float],
     counts: Dict[str, float],
     active_counts: Dict[str, float],
+    motion_bands: list[tuple[float, float]] = (),
 ) -> None:
     valid = maps["valid"]
     for region_name, region_mask in region_masks.items():
@@ -179,9 +216,12 @@ def accumulate_maps(
             totals[key] = totals.get(key, 0.0) + float((maps[metric_name] * mask).sum().detach().cpu())
             counts[key] = counts.get(key, 0.0) + count
 
-    for threshold in active_thresholds:
-        prefix = active_key(threshold)
-        mask = valid & (maps["zero_geo_deg"] >= threshold)
+    selections = [(active_key(t), valid & (maps["zero_geo_deg"] >= t)) for t in active_thresholds]
+    selections += [
+        (band_key(lo, hi), valid & (maps["zero_geo_deg"] >= lo) & (maps["zero_geo_deg"] < hi))
+        for lo, hi in motion_bands
+    ]
+    for prefix, mask in selections:
         count = float(mask.sum().item())
         active_counts[prefix] = active_counts.get(prefix, 0.0) + count
         if count == 0.0:
@@ -215,7 +255,11 @@ def finalize_metrics(
     return add_improvement_metrics(metrics)
 
 
-def print_metrics(prefix: str, metrics: Dict[str, float]) -> None:
+def print_metrics(
+    prefix: str,
+    metrics: Dict[str, float],
+    motion_bands: list[tuple[float, float]] = (),
+) -> None:
     keys = [
         "global_geo_deg",
         "global_zero_geo_deg",
@@ -244,5 +288,10 @@ def print_metrics(prefix: str, metrics: Dict[str, float]) -> None:
         "active_1_0_zero_geo_deg",
         "active_1_0_improvement_pct",
     ]
+    # Bands are emitted in edge order (not sorted), so the log line reads as a curve.
+    for lo, hi in motion_bands:
+        band = band_key(lo, hi)
+        keys += [f"{band}_frac", f"{band}_zero_geo_deg", f"{band}_geo_deg",
+                 f"{band}_improvement_pct"]
     items = [f"{key}={metrics[key]:.4f}" for key in keys if key in metrics]
     print(f"{prefix} " + " ".join(items), flush=True)

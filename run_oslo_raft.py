@@ -45,12 +45,13 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from spherical_flow.geometry import fibonacci_unit_vectors, tangent_basis
+from spherical_flow.geometry import fibonacci_unit_vectors, set_geodesic_mode, tangent_basis
 from spherical_flow.metrics import (
     accumulate_maps,
     build_region_masks,
     compute_maps,
     finalize_metrics,
+    parse_bands,
     parse_thresholds,
     print_metrics,
     summarize_maps,
@@ -202,6 +203,11 @@ def parse_args() -> argparse.Namespace:
                         "GT untouched).")
     p.add_argument("--val-real-resample-prob", type=float, default=0.0,
                    help="Same knob for the val stream (the P0d probe uses 1.0).")
+    p.add_argument("--real-resample-flow-scale", type=float, default=1.0,
+                   help="A3: multiply the real GT field by this factor before resampling "
+                        "(both streams). Sweeps MAGNITUDE with field STRUCTURE held fixed — "
+                        "the measurement that separates 'sub-pixel motion' (which lower FPS "
+                        "would fix) from 'the field's structure' (which it would not).")
     p.add_argument("--synth-edge-corrupt-delta", type=float, default=0.0,
                    help="Edge-modulated structured corruption of the synth frame-2 raster, "
                         "target mean |delta| in 1/255 units (P0c: the measured real-nuisance "
@@ -212,6 +218,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-train-pairs", type=int, default=None, help="Cap train pairs/epoch (debug/overfit).")
     p.add_argument("--max-val-pairs", type=int, default=None)
     p.add_argument("--active-thresholds-deg", default="0.25,0.5,1.0")
+    p.add_argument("--motion-bands-deg", default="",
+                   help="A4: comma-separated edges for DISJOINT motion bands, e.g. "
+                        "'0,0.125,0.25,0.5,1,2,4,8,16,inf'. Unlike the cumulative "
+                        "active_X tails, bands locate the displacement at which a method "
+                        "starts beating the zero baseline. Empty = off (default).")
+    p.add_argument("--geodesic-metric", default="acos", choices=["acos", "haversine"],
+                   help="Great-circle formula. 'acos' reproduces every existing number and "
+                        "has a 0.028 deg float32 floor; 'haversine' is exact at zero. Run "
+                        "both to MEASURE the floor's effect before quoting sub-floor claims.")
     # runtime
     p.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
     p.add_argument("--amp", action="store_true")
@@ -307,7 +322,8 @@ def move_batch(batch: dict, device: torch.device) -> dict:
 
 
 @torch.no_grad()
-def evaluate(model, loader, geom, sup_level, region_masks, active_thresholds, device, eval_iters, max_pairs):
+def evaluate(model, loader, geom, sup_level, region_masks, active_thresholds, device, eval_iters,
+             max_pairs, motion_bands=()):
     # geom is what the model consumes (a SphereLevel single-res, or a SpherePyramid multi-res);
     # sup_level is the grid the loss/metrics live on (the level itself, or the pyramid's fine level).
     model.eval()
@@ -322,7 +338,8 @@ def evaluate(model, loader, geom, sup_level, region_masks, active_thresholds, de
         pred = model(batch["frame1"], batch["frame2"], geom, iters=eval_iters)[-1]
         maps = compute_maps(pred, batch, points, sup_level.basis_east, sup_level.basis_north)
         target_chunks.append(target_sample_from_maps(maps, None))
-        accumulate_maps(maps, region_masks, active_thresholds, totals, counts, active_counts)
+        accumulate_maps(maps, region_masks, active_thresholds, totals, counts, active_counts,
+                        motion_bands=motion_bands)
         seen += batch["frame1"].size(0)
         if max_pairs is not None and seen >= max_pairs:
             break
@@ -352,6 +369,8 @@ def main() -> None:
     device = get_device(args.device)
     os.makedirs(args.output_dir, exist_ok=True)
     active_thresholds = parse_thresholds(args.active_thresholds_deg)
+    motion_bands = parse_bands(args.motion_bands_deg)
+    set_geodesic_mode(args.geodesic_metric)
     train_sources = parse_sources(args.train_sources)
     val_sources = parse_sources(args.val_sources)
 
@@ -519,6 +538,7 @@ def main() -> None:
         synth_photo_noise_std=args.synth_photo_noise_std,
         synth_edge_corrupt_delta=args.synth_edge_corrupt_delta,
         real_resample_prob=args.real_resample_prob,
+        real_resample_flow_scale=args.real_resample_flow_scale,
     )
     val_ds = ShardFlowDataset(
         args.shards, dataset_points, val_sources, shuffle_shards=False, shuffle_buffer=0, seed=args.seed,
@@ -529,6 +549,7 @@ def main() -> None:
         synth_photo_noise_std=args.synth_photo_noise_std,
         synth_edge_corrupt_delta=args.synth_edge_corrupt_delta,
         real_resample_prob=args.val_real_resample_prob,
+        real_resample_flow_scale=args.real_resample_flow_scale,
     )
     pin = device.type == "cuda"
     train_loader = DataLoader(
@@ -570,7 +591,7 @@ def main() -> None:
         backup = {k: v.detach().clone() for k, v in model.state_dict().items()}
         model.load_state_dict({k: s.to(backup[k].dtype) for k, s in state.items()})
         m = evaluate(model, val_loader, geom, sup_level, region_masks, active_thresholds,
-                     device, args.eval_iters, args.max_val_pairs)
+                     device, args.eval_iters, args.max_val_pairs, motion_bands)
         model.load_state_dict(backup)
         return m
 
@@ -632,7 +653,7 @@ def main() -> None:
         if step == 1 or step == total_steps or step % args.log_every == 0:
             with torch.no_grad():
                 maps = compute_maps(preds[-1], batch, sup_level.points, sup_level.basis_east, sup_level.basis_north)
-                tm = summarize_maps(maps, region_masks, active_thresholds)
+                tm = summarize_maps(maps, region_masks, active_thresholds, motion_bands)
             lr_now = opt.param_groups[0]["lr"]
             aux_txt = ""
             if aux_w > 0.0:
@@ -643,20 +664,20 @@ def main() -> None:
 
         if args.eval_every and step % args.eval_every == 0 and step != total_steps:
             metrics = evaluate(model, val_loader, geom, sup_level, region_masks, active_thresholds,
-                               device, args.eval_iters, args.max_val_pairs)
-            print_metrics(f"val@{step}", metrics)
+                               device, args.eval_iters, args.max_val_pairs, motion_bands)
+            print_metrics(f"val@{step}", metrics, motion_bands)
             if ema_state is not None:
-                print_metrics(f"val_ema@{step}", evaluate_state(ema_state))
+                print_metrics(f"val_ema@{step}", evaluate_state(ema_state), motion_bands)
             model.train()
 
     metrics = evaluate(model, val_loader, geom, sup_level, region_masks, active_thresholds,
-                       device, args.eval_iters, args.max_val_pairs)
+                       device, args.eval_iters, args.max_val_pairs, motion_bands)
     metrics["elapsed_s"] = time.time() - start
-    print_metrics("validation", metrics)
+    print_metrics("validation", metrics, motion_bands)
     metrics_ema = None
     if ema_state is not None:
         metrics_ema = evaluate_state(ema_state)
-        print_metrics("validation_ema", metrics_ema)
+        print_metrics("validation_ema", metrics_ema, motion_bands)
     print(f"elapsed_s={metrics['elapsed_s']:.1f}", flush=True)
 
     meta = {
