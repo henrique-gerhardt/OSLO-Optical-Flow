@@ -511,6 +511,85 @@ Scripts: `scratchpad/validate_roadmap.py` → `ROADMAP_LEVERS_VALIDATION_PASSED`
 
 ---
 
+## 5.2 A1.1 EXECUTADO na box (2026-07-28) — e o que ele revelou
+
+**Resultado direto.** Identity check (`--estimation-resolutions 6`), flow360:test,
+20 pares:
+
+| | `acos` | `haversine` | ganho |
+| --- | --- | --- | --- |
+| identity global | 0,0280° | 0,00066° | 42× |
+| identity actives (≥ 0,25°) | 0,0280° (travado) | 0,0000021° | ~13.000× |
+| como % do zero (0,1814°) | 15,4% | 0,36% | — |
+
+O piso do `arccos` **na métrica** acabou. Prova: sob `acos` os actives não podiam
+ler abaixo de 0,028° por construção; agora leem 2,1e-6°.
+
+**As bandas localizaram o resíduo restante em uma única faixa.** `pwc`:
+
+| banda | ocupação | erro |
+| --- | --- | --- |
+| **[0; 0,0625)** | **50,3%** | **0,0013025°** |
+| todas as demais (0,0625 → ∞) | 49,7% | ~0,0000021° |
+
+`0,5029 × 0,0013025 = 0,000655` = exatamente o global 0,000656 ⇒ a banda mais
+baixa é **100%** do resíduo. Sinal decisivo: essa banda tem o *menor*
+`tangent_epe_rad` de todas (2,5e-11) e o *maior* erro geodésico — ou seja, o fluxo
+tangente está exato e a perda está na **conversão**.
+
+### Causa-raiz: `logmap` usava o mesmo `arccos`, dentro da construção do GT
+
+```python
+# geometry.py:207-208 (ANTES)
+dot = (base * endpoints).sum(-1, keepdim=True).clamp(-1.0 + eps, 1.0 - eps)  # eps=1e-8
+theta = torch.acos(dot)
+tangent_3d = endpoints - dot * base     # cancelamento catastrófico p/ theta pequeno
+```
+
+Dois defeitos: (a) `acos` tem a mesma resolução de `sqrt(2·eps_f32)`; (b) o clamp em
+`1 − 1e-8` impunha um **piso duro de `acos(1 − 1e-8) = 0,0081°` em qualquer
+magnitude de fluxo GT**. Além disso `endpoints − dot·base` é diferença de vetores
+quase iguais O(1) — perde ~4 dígitos em float32.
+
+Corrigido com a forma de corda mais a projeção a partir de `delta = e − p`
+(identidade: `delta − (delta·p)p = sin θ · u`, exato). Medido:
+
+| ângulo real | erro antigo | erro novo | ganho |
+| --- | --- | --- | --- |
+| 0,001° | 6,81e-4° | 1,74e-6° | 392× |
+| 0,010° | 6,85e-3° | 1,24e-6° | 5.544× |
+| 0,023° | 7,06e-3° | 1,80e-6° | 3.929× |
+| 0,0625° → 90° | ~2e-6° | ~2e-6° | 1× (sem regressão) |
+
+O erro novo é **plano** em 0,001–90° (~1e-6°), assinatura de estar no piso de
+representação do float32 e não num piso algorítmico.
+
+### Achado colateral: o preditor `zero` nunca foi exatamente zero
+
+`--predictor zero` gera fluxo ERP nulo que passa por `erp_flow_to_tangent` →
+`logmap`. Com o código antigo, `logmap(p, p)` retornava **0,0081°** numa direção
+numericamente arbitrária, em vez de 0. Verificado após o conserto:
+`logmap(p, p) → max |flow| = 0,000e+00`.
+
+**O que isso NÃO muda.** O baseline zero de toda alegação publicada não vem do
+preditor: `compute_maps` monta `zero_endpoint = points.expand` diretamente
+(`metrics.py:90`), sem passar por `logmap`. E a loss de treino usa
+`sequence_geodesic_loss(preds, batch["endpoint"], …)` — endpoint exato. Escopo
+verificado por varredura: dentro de `spherical_flow/`, o único consumidor do
+`flow` derivado é `metrics.py:89` (`tangent_epe_rad`, métrica secundária).
+
+⇒ **Nenhum número headline e nenhum treino foi afetado.** O que estava
+contaminado: `tangent_epe_rad`, o alvo de reconstrução da probe, e a linha de
+controle `--predictor zero` (que é 0% por definição e só serviu de sanity check).
+
+### Piso de medição do harness — valor a declarar na tese
+
+Não é 0,028° (métrica antiga) nem 0,0007° (contaminado pelo `logmap` antigo):
+é **~2e-6°**, cinco ordens de grandeza abaixo do sinal do flow360. A métrica
+deixou de ser fator limitante em qualquer regime.
+
+---
+
 ## 6. Esqueleto do artigo
 
 | seção | conteúdo | balde |

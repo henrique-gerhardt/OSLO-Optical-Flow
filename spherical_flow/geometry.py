@@ -204,9 +204,17 @@ def logmap(
     if endpoints.ndim == 2:
         endpoints = endpoints.unsqueeze(0)
     base = points.unsqueeze(0)
-    dot = (base * endpoints).sum(dim=-1, keepdim=True).clamp(-1.0 + eps, 1.0 - eps)
-    theta = torch.acos(dot)
-    tangent_3d = endpoints - dot * base
+    # Small-angle-stable form. The previous `acos(clamp(dot, 1 - 1e-8))` floored every
+    # GT flow magnitude at `acos(1 - 1e-8) = 0.0081 deg` and, worse, inherited acos's
+    # float32 resolution limit of `sqrt(2 * eps_f32) = 0.028 deg` — measured as a 5.6%
+    # magnitude error on the [0, 0.0625 deg) band, which is 50% of flow360 nodes.
+    # Two changes: (a) theta from the CHORD (no stationary point at 0), and (b) the
+    # perpendicular component from `delta = e - p` rather than `e - dot*p`, which for
+    # small theta is a difference of near-equal O(1) vectors and cancels catastrophically.
+    # Identity: delta = (cos t - 1) p + sin t u  =>  delta - (delta.p) p = sin t u exactly.
+    delta = endpoints - base
+    theta = 2.0 * torch.asin((0.5 * delta.norm(dim=-1, keepdim=True)).clamp(max=1.0))
+    tangent_3d = delta - (delta * base).sum(dim=-1, keepdim=True) * base
     tangent_3d = tangent_3d * (theta / torch.sin(theta).clamp_min(eps))
     tangent_3d = torch.where(theta < eps, torch.zeros_like(tangent_3d), tangent_3d)
 

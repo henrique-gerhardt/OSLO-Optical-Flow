@@ -592,6 +592,40 @@ Band occupancy on flow360:test also localises the floor precisely: the
 and every band at or above 0.25° to within 0.06%. That is why the global metric
 moves (0.2482 → 0.2537) while the actives columns do not.
 
+**Second `acos` site — `logmap`, inside GT construction (found + fixed
+2026-07-28).** Running the identity check under `haversine` on the box left a
+0.00066° residual, and the bands showed it was **100% in the `[0, 0.0625°)` band**
+(50.3% of nodes, 0.0013°; every other band 2.1e-6°), with that band carrying the
+*lowest* tangent EPE of all — i.e. the tangent flow was exact and the loss was in
+the conversion. Root cause was `geometry.py:207-208`:
+
+```python
+dot = (base * endpoints).sum(-1, keepdim=True).clamp(-1.0 + eps, 1.0 - eps)  # eps=1e-8
+theta = torch.acos(dot)
+tangent_3d = endpoints - dot * base     # catastrophic cancellation at small theta
+```
+
+The `clamp(1 - 1e-8)` put a **hard 0.0081° floor on every GT flow magnitude**, and
+`endpoints - dot*base` is a difference of near-equal O(1) vectors. Replaced by the
+chord form plus a projection built from `delta = e - p` (identity
+`delta - (delta·p)p = sin θ · u`): round-trip error improves 392×–5544× below
+0.03° and is now flat at ~1e-6° from 0.001° to 90°, with no change above 0.0625°.
+
+**Scope — verified, not assumed.** The published zero baseline never went through
+`logmap` (`metrics.py:90` builds `zero_endpoint` from the node points directly),
+and training uses `sequence_geodesic_loss(preds, batch["endpoint"], …)`. A repo
+sweep shows the only consumer of the derived `batch["flow"]` inside
+`spherical_flow/` is `metrics.py:89` (`tangent_epe_rad`, a secondary column).
+**No headline number and no training run is affected.** What was contaminated:
+`tangent_epe_rad`, the grid-floor probe's reconstruction target, and the
+`--predictor zero` control row — which produced ERP zeros that `logmap` turned
+into a spurious 0.0081° displacement instead of exact zero (now verified
+`logmap(p, p) → max |flow| = 0.000e+00`).
+
+**Harness measurement floor to declare in the thesis: ~2e-6°** — not 0.028° (old
+metric), not 0.00066° (old `logmap`). Five orders of magnitude below the flow360
+signal; the metric is no longer a limiting factor in any regime.
+
 The mechanism is a *clamp from below on per-node error*, not additive noise: nodes
 whose true error exceeds ~0.05° are measured correctly, while every node below
 0.028° reports 0.028°. On flow360 that inflates both the zero baseline and the
