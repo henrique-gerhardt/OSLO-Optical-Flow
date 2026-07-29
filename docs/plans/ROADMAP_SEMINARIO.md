@@ -111,24 +111,82 @@ Critério: `active_*_improvement_pct` deve mudar **< 1 ponto** (previsão medida
 inteira precisa ser reemitida em `haversine`.
 
 **A1.3 — a alegação contaminada.** A afirmação B′ "0,046° = 0,13 px ERP" precisa
-ser re-medida antes de ir para a tese. Localize o checkpoint B′ (`ls /outputs`) e
-rode a perna *resampled* nas duas métricas:
+ser re-medida antes de ir para a tese. Runs e checkpoint localizados por medição
+(2026-07-29): o checkpoint é `/outputs/oslo_raft_retina_stageBprime/oslo_raft.pt` e
+a run é `oslo_raft_retina_stageBprime_probe_smallrot` (rotação **0,1–0,5°**, não
+0,1–2° como este bloco dizia antes — retipar os flags teria produzido outro
+número; use `rerun_from_json.py`).
+
+> **⚠ CORREÇÃO DE ENQUADRAMENTO — o "triângulo decisivo" confunde dois eixos.**
+> O vértice de +80,6% roda com `val_synth_rot_prob = 1.0`, ou seja **rotação
+> coerente sintética**, e sua baseline zero é 0,2359° contra 0,2105° do vértice de
+> frame 2 real — GT diferente. A magnitude estava casada; a **estrutura não**. O par
+> troca aparência *e* campo ao mesmo tempo, então "a parede é a aparência" **não se
+> deduz dele**. O P0d rodou depois o quadrado de 4 células no mesmo checkpoint
+> (`probe_smallrot` +80,6 / `P0d_realresample` −72,5 / `stageBprime` −32,2) e mediu
+> troca de campo −153 pts vs troca de aparência −36 pts; o A3 replicou em cinco
+> magnitudes com a aparência idêntica. **No artigo, o triângulo é um passo
+> sugestivo superado — o centro é o quadrado do P0d mais a varredura do A3.**
+
+As quatro runs abaixo são `--eval-only` e podem ser replicadas direto. **Atenção:**
+`oslo_raft_retina_stageBprime` é a run de *treino* do B′ (o −32,15 saiu da validação
+de fim de treino), então replicar seus args dispararia 10k passos — a perna
+`real + real` tem que ser escrita à mão como avaliação pura.
 
 ```
-for M in acos haversine; do
+SHARDS_HOST=../sfprep/shards OUTPUT_DIR=./outputs \
+docker compose -f docker-compose.oslo_raft.yml run --rm oslo-raft \
+  python rerun_from_json.py \
+    /outputs/oslo_raft_retina_stageBprime_probe_smallrot \
+    /outputs/P0d_realresample /outputs/P0d_realresample_A /outputs/P0d_realresample_B \
+    --set geodesic_metric=haversine \
+    --set motion_bands_deg=0,0.0625,0.125,0.25,0.5,1,2,4,8,16,32,inf \
+    --output-suffix _hav --run
+
 SHARDS_HOST=../sfprep/shards OUTPUT_DIR=./outputs \
 docker compose -f docker-compose.oslo_raft.yml run --rm oslo-raft \
   python run_oslo_raft.py \
-    --grid healpix --retina --retina-resolution 7 --resolution 6 \
-    --estimation-resolution 4 --device cuda --amp \
-    --pyramid-cache /outputs/pyramid_cache \
-    --eval-only --init-checkpoint /outputs/<CKPT_B_LINHA>/oslo_raft.pt \
-    --val-sources flow360:val --val-synth-rot-prob 1.0 \
-    --synth-rot-min-deg 0.1 --synth-rot-max-deg 2 \
-    --geodesic-metric $M \
-    --output-dir /outputs/a1_bprime_$M
-done
+    --shards /data/shards --train-sources flow360:train --val-sources flow360:val \
+    --grid healpix --resolution 6 --retina --pyramid-cache /outputs/pyramid_cache \
+    --eval-only --init-checkpoint /outputs/oslo_raft_retina_stageBprime/oslo_raft.pt \
+    --num-workers 6 --device cuda --amp \
+    --geodesic-metric haversine \
+    --motion-bands-deg 0,0.0625,0.125,0.25,0.5,1,2,4,8,16,32,inf \
+    --output-dir /outputs/a1_bprime_realeval_hav
 ```
+
+**Limitação do `rerun_from_json.py` a corrigir depois:** `--set` passa strings, e um
+arg `store_true` vira `--eval-only True`, que o argparse rejeita. Por isso a perna
+de treino foi escrita à mão em vez de forçada com `--set eval_only=True`.
+
+**A1.3 CONCLUÍDO 2026-07-29 — publicar `0,044° = 0,12 px ERP, +81,5%`.** Resultados
+completos em `UNIVERSALITY_TABLE.md` §12. Três pontos:
+
+1. **A alegação sobrevive em magnitude.** 0,0457° → **0,04357°** (`acos` lia 4,7%
+   **alto**, direção oposta à que a tabela de ângulo controlado sugeria); +80,63 →
+   **+81,54**. Em ERP 512×1024 (0,352°/px eq., confirmado em
+   `docs/OSLO_RAFT_RETINA_PLAN.md:38`): 0,130 → **0,124 px**.
+2. **O piso do `acos` estava inflando o baseline trivial em 4,2% no `flow360:val`** —
+   a banda `[0, 0,0625°)` tem **42,8% dos nós** a 0,01026°, *abaixo* do piso de
+   0,02798°. Como os erros dos modelos (0,28–0,46°) estão 10–16× acima do piso, eles
+   não se movem: os −5 a −10 pts de deslocamento são **100% denominador**. Ou seja,
+   a métrica antiga **favorecia todo método** avaliado contra esse baseline,
+   inclusive o nosso.
+3. **O quadrado do P0d não muda de conclusão** — troca de estrutura −161,6 pts vs
+   troca de aparência +42,1 pts, razão **3,84×** (era 3,80× sob `acos`).
+
+**Controle: passou, mas a faixa que registrei estava errada.** Eu previ −32 a −34 e
+saiu −37,97. A faixa foi dimensionada pelo `flow360:test` (inflação de 1,2%), e o
+`val` infla 4,2% por ter muito mais massa quase-estática — a mesma diferença de
+composição que o A2 mediu. O controle que de fato importa é o **erro bruto**:
+`global_geo_deg = 0,278230` contra 0,2782 gravado no fim do treino do B′ sob `acos`,
+idêntico em quatro dígitos ⇒ o checkpoint salvo **é** o estado final.
+
+**Lição metodológica a repetir no artigo:** o viés do `acos` **oscila de sinal** ao
+longo do suporte (+181% em 0,01°, +10,6% em 0,028°, −3,6% em 0,05°, +0,85% em 0,1°),
+então uma *distribuição* de erros que atravesse essa faixa não tem correção legível
+na tabela de ângulo único. Duas vezes seguidas a estimativa errou. **Medir, nunca
+estimar.**
 
 ### DECISÃO DA MÉTRICA — FECHADA 2026-07-28: `haversine`
 
@@ -173,20 +231,24 @@ limitação.
 
 Isto não exige checkpoint novo nem código novo além do A4: são dois runs.
 
+A perna `flow360:test` **já está feita** (é o run do A1.2). Falta só `val`:
+
 ```
-for S in flow360:val flow360:test; do
 SHARDS_HOST=../sfprep/shards OUTPUT_DIR=./outputs \
 docker compose -f docker-compose.oslo_raft.yml run --rm oslo-raft \
   python run_oslo_raft.py \
-    --grid healpix --retina --retina-resolution 7 --resolution 6 \
-    --estimation-resolution 4 --device cuda --amp \
-    --pyramid-cache /outputs/pyramid_cache \
+    --shards /data/shards --grid healpix --retina --resolution 6 \
+    --device cuda --amp --pyramid-cache /outputs/pyramid_cache \
     --eval-only --init-checkpoint /outputs/P1proper_ema6k/oslo_raft_ema.pt \
-    --val-sources $S \
+    --val-sources flow360:val \
+    --geodesic-metric haversine \
     --motion-bands-deg 0,0.0625,0.125,0.25,0.5,1,2,4,8,16,32,inf \
-    --output-dir /outputs/a2_$(echo $S | tr ':' '_')
-done
+    --output-dir /outputs/a2_flow360_val_hav
 ```
+
+Leitura: compare `band_*_improvement_pct` deste run contra os do A1.2
+(`/outputs/a1_oslo_test_haversine`). Bandas iguais ⇒ **composição** (o test tem
+mais massa nas faixas ruins); bandas divergentes ⇒ **falha de generalização**.
 
 **Nota de escopo declarada.** O checkpoint final EMA foi selecionado por
 *schedule* (último passo), não por pico de val — então para esse número
@@ -209,49 +271,79 @@ a estrutura **fixa** — algo que subamostragem temporal não consegue fazer de
 forma controlada, e sem precisar compor GT sobre k frames (que acumula erro e
 quebra em oclusão).
 
-Perna 1 — **estrutura real**, magnitude varrida:
+**Desenho refinado após o §9.** As bandas do §9 já mostraram inversão de sinal com
+magnitude casada, mas com renderizador e conteúdo diferentes entre os datasets. O
+A3 fecha isso: **mesmo dataset, mesmo renderizador, mesmo conteúdo**, variando só
+magnitude com a estrutura real fixa. Ambas as pernas rodam **com bandas**, para
+comparação banda a banda e não só agregada. Em `flow360:test`, o mesmo split do §9.
+
+Perna 1 — **estrutura real**, magnitude varrida (k × campo GT real, constância
+fotométrica exata):
 
 ```
 for K in 1 2 5 10 20; do
 SHARDS_HOST=../sfprep/shards OUTPUT_DIR=./outputs \
 docker compose -f docker-compose.oslo_raft.yml run --rm oslo-raft \
   python run_oslo_raft.py \
-    --grid healpix --retina --retina-resolution 7 --resolution 6 \
-    --estimation-resolution 4 --device cuda --amp \
-    --pyramid-cache /outputs/pyramid_cache \
+    --shards /data/shards --grid healpix --retina --resolution 6 \
+    --device cuda --amp --pyramid-cache /outputs/pyramid_cache \
     --eval-only --init-checkpoint /outputs/P1proper_ema6k/oslo_raft_ema.pt \
-    --val-sources flow360:val \
+    --val-sources flow360:test \
     --val-real-resample-prob 1.0 --real-resample-flow-scale $K \
+    --geodesic-metric haversine \
     --motion-bands-deg 0,0.0625,0.125,0.25,0.5,1,2,4,8,16,32,inf \
     --output-dir /outputs/a3_real_k$K
 done
 ```
 
-Perna 2 — **estrutura coerente** (rotação), mesmas magnitudes, como controle:
+Perna 2 — **estrutura coerente** (rotação exata), mesmas magnitudes, como controle.
+Para uma rotação de ângulo `d`, o deslocamento em um nó a ψ do eixo é `d·sen ψ`, e
+a mediana sobre a esfera é **`0,866·d`** (mediana de |cos ψ| = ½ ⇒ √0,75), *não*
+`d` — a mediana de sen ψ não é sen da mediana de ψ. Medido: p50 = 0,866·`d` com
+quatro dígitos em todos os cinco degraus. Os ângulos abaixo, portanto, ficam ~13%
+**abaixo** dos p50 da perna 1, o que torna o pareamento conservador (ver §11.5 da
+UNIVERSALITY_TABLE):
 
 ```
-for D in 0.13 0.26 0.65 1.3 2.6; do
+for D in 0.13 0.26 0.66 1.32 2.64; do
 SHARDS_HOST=../sfprep/shards OUTPUT_DIR=./outputs \
 docker compose -f docker-compose.oslo_raft.yml run --rm oslo-raft \
   python run_oslo_raft.py \
-    --grid healpix --retina --retina-resolution 7 --resolution 6 \
-    --estimation-resolution 4 --device cuda --amp \
-    --pyramid-cache /outputs/pyramid_cache \
+    --shards /data/shards --grid healpix --retina --resolution 6 \
+    --device cuda --amp --pyramid-cache /outputs/pyramid_cache \
     --eval-only --init-checkpoint /outputs/P1proper_ema6k/oslo_raft_ema.pt \
-    --val-sources flow360:val \
+    --val-sources flow360:test \
     --val-synth-rot-prob 1.0 --synth-rot-min-deg $D --synth-rot-max-deg $D \
+    --geodesic-metric haversine \
     --motion-bands-deg 0,0.0625,0.125,0.25,0.5,1,2,4,8,16,32,inf \
     --output-dir /outputs/a3_rot_d$D
 done
 ```
 
+Ambas as pernas ficam **sem ruído** (sem `--synth-edge-corrupt-delta`, sem jitter),
+de modo que a única variável entre elas é a estrutura do campo.
+
 **Leitura.** Plote as duas pernas contra o `target_geo_deg_p50` **medido** (não
-contra `k` ou `d` nominais — a rotação tem deslocamento dependente da latitude).
+contra `k`/`d` nominais). Predição registrada antes de rodar: a perna real fica
+plana ou negativa em toda a varredura; a perna de rotação sobe com a magnitude.
 
 | resultado | conclusão |
 | --- | --- |
-| curvas **convergem** em magnitude alta | estrutura só importa no sub-pixel ⇒ baixar o baseline temporal é recomendação prática legítima |
-| curvas **permanecem separadas** | estrutura é eixo independente da magnitude ⇒ a crítica ao regime vale em cheio |
+| pernas **convergem** em magnitude alta | estrutura só importa no sub-pixel ⇒ baixar o baseline temporal é recomendação prática legítima |
+| pernas **permanecem separadas** | estrutura é eixo independente da magnitude ⇒ a crítica ao regime vale em cheio, agora com renderizador e conteúdo controlados |
+
+**A3 CONCLUÍDO 2026-07-29 — segunda linha, com folga.** As pernas **divergem**: a
+real cai monotonicamente −32,08 → −70,40 enquanto a de rotação sobe +1,72 → +84,13,
+com o vão crescendo 34 → 155 pontos ao longo da varredura. A predição registrada
+valeu em todos os cinco degraus. Como `synth_rotation_record` e
+`_real_resample_record` chamam o **mesmo** `bilinear_sample_erp`, as duas pernas
+compartilham exatamente o tratamento de aparência ⇒ a única variável entre elas é
+a estrutura do campo. A objeção "é só FPS" está preemptada com dataset,
+renderizador, conteúdo, modelo, métrica e aparência todos fixos. Resultados,
+ordenação de três vias e ressalvas em `UNIVERSALITY_TABLE.md` §11.4–§11.7.
+Achado não planejado (§11.6): movimento **vaza espacialmente** para nós estáticos
+— erro na banda `[0, 0,0625°)` cresce 2,4× enquanto o deslocamento verdadeiro lá
+fica constante — medição direta da falha que o B1 pretende remover.
 
 **Ressalvas a declarar no artigo.** (a) Escalar um campo por `k` não é o que `k`
 frames reais produzem — trajetória não-linear e oclusão nova não aparecem; é uma
@@ -651,7 +743,7 @@ forte que o "todos cruzam no mesmo ponto" que eu havia antecipado.
 
 | seção | conteúdo | balde |
 | --- | --- | --- |
-| Problema | fluxo óptico 360° é avaliado num regime; o benchmark de vídeo real está em outro | — |
+| Problema | fluxo óptico 360° é avaliado num regime; o benchmark de taxa de quadros nativa está em outro | — |
 | Resultados obtidos | tabela de universalidade, contraste de regime, decomposição P0, OSLO | C |
 | Rigor metodológico | vazamento de split, piso da métrica, exoneração da grade | A1 + C9/C10 |
 | Caracterização | curva de resposta ao deslocamento, magnitude × estrutura | A3, A4 |
@@ -663,7 +755,7 @@ forte que o "todos cruzam no mesmo ponto" que eu havia antecipado.
 reais estão em outro regime" — vídeo 360 de drone ou veículo a 30 fps tem
 deslocamento substancial. Escreva:
 
-> O único benchmark 360° de vídeo real com GT (FLOW360) instancia um regime onde
+> O único benchmark 360° com GT em taxa de quadros nativa (FLOW360) instancia um regime onde
 > o baseline trivial é imbatível, e nenhum trabalho publicado reporta esse
 > baseline.
 

@@ -1,7 +1,7 @@
-# Universality table: published 360° methods vs zero-flow on the real-video leg
+# Universality table: published 360° methods vs zero-flow on the sub-pixel leg
 
 Workstream opened 2026-07-24 (see `docs/THESIS_REGIME_ARGUMENT.md` §5 for why this
-table is load-bearing: the claim "the real-video regime is unsolved by anyone"
+table is load-bearing: the claim "the sub-pixel regime is unsolved by anyone"
 currently rests on one perspective-model data point, frozen RAFT-large −20.5%).
 
 Rows planned: frozen RAFT-large (DONE, P2A), SLOF (in-domain home method of
@@ -152,17 +152,16 @@ predictor — global −10.1, not zero-parity, it moves flow — and loses to ze
 every actives bucket (act₀.₅ −4.7), landing in the same negative band as SLOF
 singlerotation (−3.2) and OSLO (−4.0).** A method whose entire design point is
 360° cyclic flow estimation for the wrap-around setting still cannot beat doing
-nothing on the real-video actives. Three architectures, three labs (Princeton-
+nothing on the sub-pixel actives. Three architectures, three labs (Princeton-
 lineage SLOF, cross-strip-correlation PanoFlow, native-spherical OSLO): all
 negative.
 
 **Domain status of the PanoFlow row — PINNED 2026-07-25 (naming collision
 resolved).** PanoFlow's README calls *their own CARLA-rendered dataset*
 "**FlowScape (Flow360)**" (8 city maps × 4 weathers, 1024×512, 6400 frames);
-their `--validation Flow360` flag points at **that**, not at SLOF's real-video
-FLOW360. Two different datasets, confusingly similar names:
+their `--validation Flow360` flag points at **that**, not at SLOF's FLOW360. Two different datasets, confusingly similar names:
 - sfprep `flowscape` = PanoFlow's FlowScape/Flow360 (CARLA, large motion)
-- sfprep `flow360`  = SLOF's FLOW360 (real video, sub-pixel)
+- sfprep `flow360`  = SLOF's FLOW360 (naturalistic RENDERED video, sub-pixel)
 
 Their public `PanoFlow(CSFlow)-wo-CFE.pth` is trained with `--dataset Flow360`
 = FlowScape ⇒ **the row above is OUT-OF-DOMAIN zero-shot**, in the same class as
@@ -194,7 +193,7 @@ poles −56→−24.8 (more movers = smaller static penalty).
 
 On clean, leakage-free, cross-pool flow360:test, **nobody beats zero-flow on
 actives — not SLOF (the in-domain home method, even with a train-set advantage
-on val), not OSLO.** The "real-video regime is unsolved by anyone" claim holds
+on val), not OSLO.** The "sub-pixel regime is unsolved by anyone" claim holds
 symmetrically and is now backed by the field's own SOTA-lineage method rather
 than one perspective-model data point. Three things this table buys the thesis:
 
@@ -290,7 +289,7 @@ the weakest point in the thesis and this section closes it.
   split via a weather variant. So flowscape:test is unseen by PanoFlow (their
   held-out) and by OSLO (our training used the `:train` carve).
 - Motion is genuinely large: p90 70–93 px — the regime where OSLO's correlation
-  actually resolves, unlike the sub-pixel real-video leg.
+  actually resolves, unlike the sub-pixel leg.
 
 ### RESULTS 2026-07-25 — OSLO LOSES DECISIVELY. Pre-registered branch 2 applies.
 
@@ -378,7 +377,7 @@ specialist's own benchmark**. What survives, stated precisely:
 **THE REGIME-CONTRAST FIGURE — three checkpoints, unchanged weights, same
 harness, same geodesic metric, only the dataset changes:**
 
-| checkpoint | flowscape:test (large motion) | flow360:test (real video) | swing |
+| checkpoint | flowscape:test (large motion) | flow360:test (sub-pixel) | swing |
 | --- | --- | --- | --- |
 | | global / act₀.₅ | global / act₀.₅ | global |
 | PanoFlow(CSFlow)+CFE | **+92.6% / +93.0%** | **−10.1% / −4.7%** | **103 pts** |
@@ -643,3 +642,446 @@ return 2.0 * torch.asin((a - b).norm(dim=-1).clamp(max=2.0) / 2.0)
 with everything already run), state the 0.028° floor explicitly in the methods
 chapter as the measurement resolution, and re-measure only the B′ sub-floor claim
 before it appears in the thesis.
+
+## 9. HAVERSINE RE-RUN + BAND DECOMPOSITION (2026-07-28) — the regime effect, with magnitude controlled
+
+All 11 rows re-run under the exact metric (`--geodesic-metric haversine`, after the
+`logmap` fix) with disjoint motion bands. Same checkpoints, same protocols
+(SLOF at `--iters 64 --infer-size 320x640`, PanoFlow native+CFE, RAFT-large
+native), replayed from each run's stored `args` via `rerun_from_json.py` so no
+flag could drift.
+
+### 9.1 flow360:test — the sole non-negative row was a metric artefact
+
+Zero baseline 0.4314° (was 0.4368 under `acos` — inflated 1.2%), p50 0.1321°.
+
+| row | global | act₀.₂₅ | act₀.₅ | act₁.₀ | poles |
+| --- | --- | --- | --- | --- | --- |
+| SLOF raft (scratch) | −220.97 | −59.66 | −25.85 | −7.11 | −133.26 |
+| SLOF raftfinetune | −10.38 | −6.19 | −5.26 | −4.19 | −12.81 |
+| SLOF singlerotation | −9.46 | −2.25 | −3.24 | −6.05 | −18.86 |
+| SLOF switchrotation | −21.66 | −11.07 | −9.04 | −6.92 | −29.80 |
+| SLOF doublerotation | **−0.57** | **−0.10** | +0.03 | +0.33 | −1.16 |
+| PanoFlow(CSFlow)+CFE | −11.32 | −5.79 | −4.75 | −4.16 | −13.78 |
+| frozen RAFT-large | −15.98 | −7.97 | −7.59 | −7.46 | −23.85 |
+| **OSLO EMA final** | −15.12 | −4.92 | −4.04 | −5.70 | −26.89 |
+
+**The predicted sign flip happened.** doublerotation's global went **+0.03 →
+−0.57** and its act₀.₂₅ **+0.02 → −0.10**: §8b predicted exactly this, having
+measured a spurious +0.12% global that `acos` grants an identity predictor. Under
+the exact metric **every row is negative on global and on act₀.₂₅**; doublerotation
+retains only +0.03 act₀.₅ / +0.33 act₁.₀, which is the trivial zero-predictor
+inheriting the baseline.
+
+The claim hardens accordingly: *on clean cross-pool flow360:test, under a
+numerically exact metric, no published method beats zero-flow globally or on the
+actives — and the one apparent exception was an artefact of the metric.*
+
+### 9.2 flowscape:test — unchanged, as expected
+
+Zero 3.4024°, p50 2.467°. Large motion is far above any floor, so `haversine`
+reproduces the `acos` numbers (+92.6 / +74.4 / +66.0):
+
+| row | global | act₀.₅ | poles | equator | seam |
+| --- | --- | --- | --- | --- | --- |
+| PanoFlow(CSFlow)+CFE | +92.62 | +92.97 | +95.33 | +85.54 | +63.86 |
+| frozen RAFT-large | +74.36 | +74.61 | +54.74 | +80.50 | +49.65 |
+| OSLO EMA final | +65.97 | +67.04 | +60.98 | +59.70 | +39.89 |
+
+### 9.3 THE RESULT — same method, same displacement, opposite sign
+
+Bands put both datasets on one displacement axis, so magnitude is **controlled**
+rather than aggregated away. Improvement % at matched GT displacement,
+flowscape:test / flow360:test:
+
+| band | PanoFlow | frozen RAFT-large | OSLO |
+| --- | --- | --- | --- |
+| [0,25; 0,5) | +71.5 / **−11.4** | +64.2 / **−10.0** | +2.5 / −9.7 |
+| [0,5; 1) | +84.2 / **−6.4** | +78.4 / **−8.0** | +35.7 / **+0.5** |
+| [1; 2) | +91.4 / **−6.9** | +87.1 / **−8.9** | +56.5 / −7.5 |
+| [2; 4) | +95.2 / **−7.3** | +88.5 / **−11.6** | +73.8 / −8.7 |
+| [4; 8) | +97.5 / **−8.5** | +79.7 / **−11.4** | +76.0 / −8.3 |
+| [8; 16) | +96.7 / **−3.2** | +60.3 / **−10.0** | +61.4 / −8.7 |
+
+**Swings of 80–105 points at identical displacement.** The original regime-contrast
+figure (§7, 103/89/80 pts) compared *aggregates* over datasets whose magnitude
+distributions differ, so "it is just the motion magnitude" remained an available
+objection. It is no longer available: PanoFlow at 0.5–1° scores **+84.2%** on
+flowscape and **−6.4%** on flow360. Magnitude is held fixed; the sign still flips.
+
+**Why band-matching is not full context-matching — and why that is the point.** A
+node displaced 0.7° on flowscape sits in a scene whose median is 2.47°: its
+neighbours move too, a coherent ego-motion field. The same 0.7° node on flow360
+sits in a scene whose median is 0.13°: it is a sparse mover on a static sphere.
+Band-matching equalises the node's *own* displacement and deliberately leaves the
+*neighbourhood* free — which is exactly the field-structure hypothesis P0d
+measured (−153 pts structure vs −36 appearance). This is the same conclusion
+reached by a second, independent route.
+
+**PROVENANCE CORRECTION 2026-07-28 — both datasets are RENDERED.** An earlier
+draft of this section called flow360 "real video" and offered the real-vs-synthetic
+appearance gap as the remaining confound. That is wrong, and the repo already said
+so: `docs/THESIS_REGIME_ARGUMENT.md` §1 records FLOW360 (Bhandari et al., ECCV
+2022) as **naturalistic *rendered* video**, and §2 spells out what it therefore
+lacks — "no rolling shutter, stitching seams, or sensor noise". The adapter
+confirms it structurally: `sfprep/adapters/flow360.py` reads dense per-frame GT
+(`fflows/NNNN.npy`, `bflows/NNNN.npy`), which no captured 360° footage can supply.
+
+Consequences, in order of importance:
+
+1. **The band-matched result gets STRONGER.** Both legs are renderer output, so
+   the sign flip at matched displacement cannot be charged to a real-vs-synthetic
+   appearance gap. What still differs is renderer, scene content, and — the
+   variable of interest — the **motion-field structure**.
+2. **The residual confound is narrower but real:** different renderers and
+   different scene content (CARLA driving vs naturalistic interiors/exteriors).
+   A3 still earns its keep, because it holds *dataset, renderer and content fixed*
+   and varies only magnitude with real structure. Sharpened prediction: the
+   real-structure leg stays flat/negative across scales while the rotation leg
+   climbs.
+3. **The regime must not be named "real-video".** The distinguishing property is
+   *consecutive frames at native frame rate ⇒ sub-pixel displacement over most of
+   the sphere*, not provenance. Renamed throughout to the **sub-pixel regime**.
+   The claim that captured video also lives in this regime is a **frame-rate
+   argument, not a measurement** — sound geometry (at 30–60 fps anything not both
+   fast and close moves sub-pixel), but it must be labelled as inference. We have
+   measured no captured footage, and `THESIS_REGIME_ARGUMENT.md` §2 notes real
+   capture would be *harsher* than FLOW360, not easier.
+
+### 9.4 Crossing points
+
+Nobody crosses zero on flow360 except in a narrow window, and only the two
+in-domain-ish rows manage it at all:
+
+- **SLOF singlerotation**: positive in [0,25; 2) — +3.1 / +4.5 / +1.5, its best region.
+- **OSLO**: positive only in [0,5; 1) — +0.53.
+- **PanoFlow and frozen RAFT-large**: never cross zero at any band.
+
+On flowscape all three cross early (PanoFlow between 0.03° and 0.10°, RAFT-large
+~0.10–0.19°, OSLO ~0.19–0.37°) and stay positive to 32°.
+
+⇒ **The crossing is a window in the sub-pixel regime and a threshold in the
+large-motion regime.** That asymmetry is itself the finding; the original expectation
+("all methods cross at roughly the same displacement") is refuted.
+
+**Flag on the top band.** `[32, ∞)` on flowscape has zero-baseline **115.7°** —
+beyond 90°, i.e. degenerate/wrap GT — at 0.08% of nodes, and every method scores
+≈0 there. Treat that band as unusable rather than as a result.
+
+## 10. A2 (2026-07-28) — the val→test gap is BOTH composition and generalization, ~42/58
+
+Same checkpoint (`P1proper_ema6k`), same metric (`haversine`), same bands, only the
+split changes. flow360:val: zero global 0.2017°, p50 0.0976°, act₀.₅ **+4.17**,
+global −21.21. flow360:test: zero 0.4314°, p50 0.1321°, act₀.₅ **−4.04**, global −15.12.
+
+### 10.1 Per-band, at matched displacement
+
+| band | val frac | val | test frac | test | Δ (val − test) |
+| --- | --- | --- | --- | --- | --- |
+| [0; 0,0625) | 42.8% | −1018.1 | 32.8% | −570.3 | *not comparable* |
+| [0,0625; 0,125) | 12.7% | −14.3 | 15.8% | −47.5 | +33.2 |
+| [0,125; 0,25) | 20.4% | −4.2 | 16.9% | −27.8 | +23.6 |
+| [0,25; 0,5) | 11.7% | **+1.8** | 16.6% | −9.7 | +11.5 |
+| [0,5; 1) | 10.7% | **+6.3** | 12.2% | **+0.5** | +5.8 |
+| [1; 2) | 1.5% | −1.3 | 3.5% | −7.5 | +6.2 |
+| [2; 4) | 0.10% | −6.7 | 1.0% | −8.7 | +1.9 |
+| [4; 8) | 0.03% | −3.0 | 0.7% | −8.3 | +5.3 |
+| [8; 16) | 0.02% | +1.6 | 0.3% | −8.7 | +10.3 |
+
+**The per-band curves are not the same** — val beats test in every comparable band
+by 2–33 points. So the gap is **not pure composition**: at the same GT
+displacement the model is genuinely better on the pool it was trained near.
+
+Validity of the matching, checked rather than assumed: the within-band mean of the
+zero baseline agrees to **0.6%** in the dominant `[0,5; 1)` band, and to 2.7–9.6%
+in the sparse higher bands. The lowest band is **excluded** — val's mean there is
+0.0103° vs test's 0.0167° (62% apart), so its −1018 vs −570 is not a like-for-like
+comparison.
+
+### 10.2 Quantifying the split
+
+Counterfactual: apply val's *per-band* improvements to test's *band composition*
+for the act₀.₅ pool (recomposition verified against the JSON: 1.790183 vs
+1.7901829).
+
+| | act₀.₅ |
+| --- | --- |
+| val, actual | **+4.17** |
+| counterfactual (val skill, test mix) | **+0.76** |
+| test, actual | **−4.04** |
+
+⇒ of the 8.21-point gap, **3.41 pts (42%) is composition** (test carries far more
+mass above 1°, where nothing works: 5.8% of nodes vs val's 1.7%) and **4.80 pts
+(58%) is generalization** (same-pool advantage at matched displacement).
+
+First-order caveat: the counterfactual assumes per-band skill transfers, which is
+the very thing under test; and the higher bands' within-band means differ by up to
+10%. Treat 42/58 as an estimate with a few points of slack, not a precise split.
+
+### 10.3 What must be written
+
+The `+4.5% act₀.₅` headline cannot be reported as "held-out val" and left there.
+The honest sentence is:
+
+> Our best consolidated result, +4.5% act₀.₅, is measured on a validation split
+> carved from the same sequence pool as training. On the disjoint official test
+> pool the same checkpoint scores −4.0%. Decomposing by displacement band, ~42% of
+> that swing is composition — the test pool carries 3.4× the mass above 1°, where
+> no method beats zero — and ~58% is a genuine same-pool generalization advantage.
+
+Note also that OSLO's positive window is **wider and higher on val** ([0,25; 1),
+peaking +6.3) than on test ([0,5; 1), +0.5): the crossing window itself shifts with
+the pool, which is worth one sentence in the limitations section.
+
+## 11. A3 real leg (2026-07-28) — magnitude swept with real structure held fixed
+
+Same checkpoint (`P1proper_ema6k`), same split (flow360:test), same content, same
+renderer. `--val-real-resample-prob 1.0` replaces frame 2 by frame 1 resampled at
+the GT endpoints (**photometrically perfect**), and `--real-resample-flow-scale k`
+multiplies the real GT field. Only magnitude varies; the field's structure —
+support, sparsity, bimodality — is invariant by construction.
+
+| k | measured p50 | global | act₀.₅ | poles | equator |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 0.132° | −32.08 | −32.64 | −36.10 | −28.49 |
+| 2 | 0.264° | −42.99 | −42.54 | −37.84 | −43.41 |
+| 5 | 0.657° | −58.95 | −57.07 | −46.24 | −63.97 |
+| 10 | 1.307° | −65.44 | −62.57 | −53.34 | −69.65 |
+| 20 | 2.587° | **−70.40** | **−67.27** | −57.68 | −73.38 |
+
+**Registered prediction was "flat or negative". The result is stronger: monotone
+degradation**, −32% → −70% across a 20× magnitude sweep. More magnitude does not
+rescue the real field; it makes things worse.
+
+### 11.1 The decisive pair
+
+| | p50 | structure | appearance | global |
+| --- | --- | --- | --- | --- |
+| flowscape:test | 2.467° | coherent ego-motion | real render | **+65.97** |
+| a3_real_k20 | 2.587° | real (sparse movers) | **perfect (resampled)** | **−70.40** |
+
+Same model, matched median displacement, **136 points apart** — and the *failing*
+leg is the one holding the photometric advantage. Magnitude is not the variable.
+Structure is.
+
+### 11.2 The appearance sign flip REPLICATES
+
+Compare k=1 against the ordinary test row (identical GT, identical model; the only
+difference is whether frame 2 is the real next frame or a perfect resampling):
+
+| frame 2 | global |
+| --- | --- |
+| real | **−15.12** |
+| perfect resampling | **−32.08** |
+
+**Making appearance perfect made the model 17 points worse.** This reproduces
+P0d's sign flip (real+real −32.2 vs real+clean −72.5, a 40-point gap) on a
+different checkpoint and a different split. Mechanism as diagnosed there: real
+inter-frame change damps the correlation's confidence, and on a mostly-static
+sphere a damped prediction is closer to zero, hence better. Clean appearance lets
+the model commit confidently to the wrong field.
+
+### 11.3 Checks run before drawing the conclusion
+
+- **Not the ERP latitude clamp.** `bilinear_sample_erp` clamps latitude, so a
+  resampling artefact would hit the poles hardest. It does not: poles degrade
+  −36 → −58 (22 pts) while the equator degrades −28 → −73 (45 pts). The clamp is
+  not driving the trend.
+- **Do NOT read the band curve across k.** At scale k, band `[a, b)` contains
+  nodes whose *original* displacement was `[a/k, b/k)` — k=1's `[0.5, 1°)` are
+  genuine movers, k=20's are near-static nodes scaled up. The node population
+  changes with k, so cross-k band comparisons are confounded. Only the aggregate
+  columns above are used.
+- **Degenerate mass grows with k**, as expected from an idealised scaling: the
+  `[32, ∞)` fraction rises 0.0011 → 0.0178 and the lowest band's mean falls to
+  0.0011°. Both are reported, neither is load-bearing.
+
+### 11.4 The rotation leg — the within-dataset control (2026-07-29)
+
+`--val-synth-rot-prob 1.0 --synth-rot-{min,max}-deg d`, same checkpoint, same
+split, same frames. `synth_rotation_record` builds frame 2 with the **same**
+`bilinear_sample_erp` call the real-resample leg uses — so both legs have exactly
+the same appearance treatment (perfect brightness constancy, resampled frame 2).
+Content, renderer, model, metric and appearance are all held fixed. **The only
+thing that differs between the two legs is the structure of the motion field.**
+
+| d | measured p50 | global | act₀.₅ | poles | equator |
+| --- | --- | --- | --- | --- | --- |
+| 0.13° | 0.113° | +1.72 | — | −6.49 | +2.68 |
+| 0.26° | 0.225° | +11.25 | — | +8.37 | +11.31 |
+| 0.66° | 0.572° | +43.10 | +47.08 | +24.55 | +50.19 |
+| 1.32° | 1.143° | +62.16 | +62.80 | +36.08 | +71.78 |
+| 2.64° | 2.286° | **+84.13** | **+84.26** | +63.19 | +90.34 |
+
+Sanity check on the harness: measured p50 is `0.866·d` at every rung, to four
+digits. That is exactly the median of `sin φ` over a uniform sphere (`median|cos φ| =
+0.5 ⇒ √0.75 = 0.866`), i.e. the rotation is being applied as specified.
+
+### 11.5 THE RESULT — the two curves diverge, and the gap grows with magnitude
+
+| p50 | real field | rotation field | gap |
+| --- | --- | --- | --- |
+| ~0.12° | −32.08 | +1.72 | **34 pts** |
+| ~0.25° | −42.99 | +11.25 | **54 pts** |
+| ~0.6° | −58.95 | +43.10 | **102 pts** |
+| ~1.2° | −65.44 | +62.16 | **128 pts** |
+| ~2.4° | −70.40 | **+84.13** | **155 pts** |
+
+The registered prediction ("the rotation leg climbs while the real leg falls")
+holds at every rung, and the divergence is monotone: 34 → 155 points. Note the
+pairing is **conservative** — the rotation p50 runs ~13% *below* the real p50 at
+each rung, and the rotation leg improves with magnitude, so matching exactly would
+widen the gap further.
+
+This is the cleanest isolation of the field-structure hypothesis in the project.
+Everything the §11.1 cross-dataset pair left open — different renderer, different
+content, different scene statistics — is closed here, because both legs are the
+same 126M nodes of flow360:test differing only in which vector field frame 1 is
+warped by. P0d measured the same thing once (a 4-cell square on one checkpoint);
+this measures it at five magnitudes on a different checkpoint and a different
+split, and adds the magnitude axis P0d did not have.
+
+Three-way ordering at matched displacement (~2.3–2.6°):
+
+| leg | structure | appearance | global |
+| --- | --- | --- | --- |
+| a3_rot_d2.64 | coherent rotation | perfect resample | **+84.13** |
+| flowscape:test | coherent ego-motion + parallax | real render | **+65.97** |
+| a3_real_k20 | real (sparse movers) | perfect resample | **−70.40** |
+
+The two *coherent* legs land 18 points apart across different datasets, different
+content and different appearance treatments. The real-field leg is 136–155 points
+from both. Structure dominates every other variable measured.
+
+### 11.6 A second, unplanned finding: motion bleeds into static nodes
+
+Every rotation run is **negative in the `[0, 0.0625°)` band**, and gets worse as
+the scene moves more:
+
+| d | scene mean motion | near-static band: true | predicted error | band improvement |
+| --- | --- | --- | --- | --- |
+| 0.13° | 0.102° | 0.0422° | 0.0473° | −12.1 |
+| 0.66° | 0.518° | 0.0417° | 0.0479° | −14.9 |
+| 1.32° | 1.037° | 0.0417° | 0.0536° | −28.5 |
+| 2.64° | 2.073° | 0.0416° | 0.1137° | **−173.1** |
+
+The true displacement at those nodes is constant (~0.042°, they sit near the
+rotation axis) while the model's error there grows **2.4×** as the surrounding
+sphere speeds up 20×. So motion leaks spatially from moving neighbours into static
+nodes — the GRU aggregates over the neighbourhood and the near-axis nodes inherit
+it. The leak is real but bounded: if the model simply predicted the ambient
+rotation everywhere, the error there would be ~2.07° at d=2.64, not 0.11° (~5% of
+ambient).
+
+This matters for **B1 (the static/motion gate)**: it is a direct, magnitude-resolved
+measurement of the failure the gate is designed to remove, obtained in a regime
+where the model is otherwise working at +84%. The same failure mode that costs a
+few points here is the *dominant* term on real flow360 pairs, where near-static
+nodes are the majority rather than 0.03% of the sphere.
+
+### 11.7 Caveats carried forward
+
+- **Asymmetric warp artefacts.** A global rotation is a smooth, invertible warp;
+  the real-field warp is discontinuous at motion boundaries, so the real leg's
+  frame 2 carries disocclusion artefacts the rotation leg does not, and those grow
+  with k. Part of that is genuinely field structure (occlusion boundaries *are*
+  structure), part is synthesis artefact — this bounds how much of the *growth*
+  from 34 → 155 pts is attributable to structure alone. It does not touch the
+  qualitative result: at k=1, the least artefact-prone rung and the real
+  magnitudes, the sign is already opposite (−32.08 vs +1.72).
+- **Polar behaviour under pure rotation.** Poles trail the equator by 26/36/27
+  points at d = 0.66/1.32/2.64, and the absolute polar/equatorial error ratio
+  climbs 1.5× → 2.3× → 3.8×. This does not contradict the §7 head-to-head (that is
+  a *relative* claim: OSLO is 2.3–2.4× flatter than RAFT on the same data, twice
+  replicated), but "OSLO is uniform in absolute terms" is not supported at large
+  coherent motion. ERP source rasters are heavily oversampled near the poles, so
+  part of this may be resampling rather than the model. Not diagnosed.
+
+## 12. A1.3 (2026-07-29) — the B′ claim re-measured, and the acos floor was flattering every model
+
+Five evals on `flow360:val` under `haversine` + bands. The headline claim moves a
+little; the P0d decomposition moves a lot, and in a direction that matters.
+
+| cell | ckpt | `acos` | `haversine` | Δ |
+| --- | --- | --- | --- | --- |
+| rot + clean (`probe_smallrot`) | B′ | +80.63 | **+81.54** | +0.91 |
+| real + real (`stageBprime`) | B′ | −32.15 | **−37.97** | −5.82 |
+| real + clean (`P0d_realresample`) | B′ | −72.51 | **−80.03** | −7.52 |
+| real + clean | A | −118.0 | **−127.69** | −9.69 |
+| real + clean | B | −57.61 | **−64.14** | −6.53 |
+
+### 12.1 Why these move 5–10 pts when flow360:test moved 1.1
+
+Entirely the **denominator**. On `flow360:val` the zero baseline reads 0.2105°
+under `acos` and **0.20167°** under `haversine` — inflated **4.2%**. The reason is
+visible in the bands: `[0, 0.0625°)` holds **42.8% of all nodes** at a true
+displacement of **0.01026°**, which is *below* the `acos` floor of 0.02798°. Nearly
+half the split sat under the floor, so the baseline every model is scored against
+was systematically too large.
+
+The models' own errors (0.28–0.46°) are 10–16× the floor and barely move. That
+asymmetry — contaminated numerator, clean denominator, or here the reverse — is
+exactly what made the percentage uncorrectable on paper.
+
+**Proof it is the baseline and not the checkpoint:** `a1_bprime_realeval_hav`
+returns `global_geo_deg = 0.278230`, against **0.2782** recorded at the end of B′
+training under `acos`. Identical to four significant figures. The checkpoint
+reproduces exactly; **100% of the −5.82 pt move is the denominator.**
+
+The registered control band ("−32 to −34") was **wrong**, and instructively so: it
+was sized from flow360:**test**, where the baseline is inflated only 1.2%. `val`
+has far more near-static mass — the same composition difference A2 measured
+(val's lowest band 0.0103° vs test's 0.0167°, 62% apart). The control that
+actually mattered — the raw predicted error — passed to four digits.
+
+### 12.2 The headline claim, re-measured
+
+| | `acos` | `haversine` |
+| --- | --- | --- |
+| residual | 0.0457° | **0.04357°** |
+| improvement | +80.63% | **+81.54%** |
+| ERP px (512×1024, 0.352°/px eq.) | 0.130 px | **0.124 px** |
+
+**Publish 0.044° = 0.12 ERP px, +81.5%.** The claim survives in magnitude — B′ does
+resolve a coherent sub-pixel field to about an eighth of an ERP pixel.
+
+Note the direction: `acos` read **4.7% high** here, while the controlled-angle
+table predicted ~3.6% *low* at 0.05°. Second time a distribution-level bias failed
+to follow the single-angle table — the bias oscillates in sign across the support
+(+181% @0.01°, +10.6% @0.028°, −3.6% @0.05°, +0.85% @0.1°), so an error
+*distribution* spanning that range averages to something unreadable off the table.
+**Never estimate this correction; measure it.**
+
+### 12.3 The P0d square under one exact metric — conclusion holds, both effects bigger
+
+| swap | from → to | Δ |
+| --- | --- | --- |
+| **motion structure** | rot+clean +81.54 → real+clean −80.03 | **−161.6 pts** |
+| **appearance** | real+clean −80.03 → real+real −37.97 | **+42.1 pts** |
+
+Ratio **3.84×** (it was 3.80× under `acos`). The field dominates appearance ~4:1,
+and the appearance effect keeps its counter-intuitive **positive** sign: degrading
+frame 2 to the real one *helps* by 42 points. Checkpoint ordering on real+clean is
+also preserved — A −127.69, B −64.14, B′ −80.03, with B′ worse than B.
+
+So the metric correction changes no conclusion in §11 or P0d. It makes the
+negative results **more** negative, which is the honest direction: the old floor
+was inflating the trivial baseline and therefore flattering every method scored
+against it, ours included.
+
+### 12.4 The static-calibration number, now uncontaminated
+
+From `a1_bprime_realeval_hav`, band `[0, 0.0625°)` on real pairs:
+
+| | value | in ERP px |
+| --- | --- | --- |
+| share of sphere | **42.8%** | — |
+| true displacement | 0.01026° | 0.029 px |
+| model error | 0.15135° | 0.43 px |
+| improvement | **−1375%** | — |
+
+**On 43% of the sphere the scene moves 0.03 of a pixel and the model asserts 15×
+that.** Under `acos` this was hidden — the baseline read at the floor rather than
+at 0.010°, so the ratio was compressed. This is the cleanest statement of the
+static-calibration failure in the project, it is the same failure A3 §11.6 caught
+leaking spatially under pure rotation, and it is the direct target of **B1**.
