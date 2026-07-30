@@ -778,3 +778,142 @@ A1 + A4 + A2 + A3 já entregam uma boa dissertação: rigor metodológico mais u
 contribuição mensurável que o campo não tem. B1 é o que separa "boa" de "forte", e
 o custo é baixo o bastante para valer a aposta mesmo com risco de colapso do gate.
 B2 só se sobrar tempo — melhora um número, não muda a natureza da contribuição.
+
+## 8. Plano de continuidade (2026-07-29) — o que defender, o que cortar, o que medir
+
+Aberto para responder a uma pergunta concreta: **convencer a banca de que o
+projeto merece continuidade.** Referência de estilo dada pelo usuário: PriOr-Flow
+(ICCV 2025), que enuncia um problema estreito, propõe um mecanismo que o ataca
+diretamente, e mede o ganho no eixo que alega.
+
+### 8.0 CORREÇÃO — o argumento do "handicap de resolução de 10×" é FALSO
+
+Registrado porque eu o apresentei ao usuário como o argumento de continuidade mais
+forte do projeto, e o §8 da `UNIVERSALITY_TABLE.md` já o havia refutado em
+2026-07-26. **Não repetir.**
+
+- Comparar o *output por pixel* da PanoFlow (0,35°) com a *grade de estimação* do
+  OSLO (3,66°) é comparar coisas diferentes. O OSLO faz convex-upsample até r6 e
+  **ambos são medidos em r6**. Decode grid contra decode grid: OSLO 3.072 células
+  vs PanoFlow 8.192 = **1,63× linear**.
+- O OSLO **já tem** upsampling convexo aprendido (`oslo_raft_retina.py:415`, com
+  transporte paralelo). Não falta o mecanismo.
+- O piso da grade foi **medido**: flow360 oracle @r4 = 0,0293°, @r5 = 0,0289°,
+  contra erros de 0,28–0,46°. Duas ordens abaixo ⇒ **a grade não é o gargalo no
+  regime sub-pixel**, e o r4/r5/r6 ladder do Ato I *tinha* que empatar.
+
+Consequência: a hipótese restante para a distância até a PanoFlow (4,6× global) é
+**capacidade + receita de treino**, não a representação. Isso reordena o plano.
+
+Duas correções já aplicadas ao artigo (`OSLO-Optical-Flow-progress-report`):
+o parágrafo que afirmava "uma ordem de grandeza" de resolução, e a ameaça à
+validade que atribuía o negativo sub-pixel à grade. Ambas estavam erradas.
+
+### 8.1 Enquadramento honesto que substitui o argumento errado
+
+Do §8 da UNIVERSALITY_TABLE, e melhor do que qualquer coisa que eu tinha
+formulado: a ERP superamostra os polos por 1/cos(lat), então a densidade
+*angular* de decodificação de um método baseado em raster é, nos polos, muito
+acima da sua média — coerente com os polos serem a região mais forte da PanoFlow
+(0,377°, +95,3%). A HEALPix é uniforme por construção e não recebe esse ganho.
+
+⇒ **Amostragem de área igual é propriedade de EQUIDADE, não de maximização de
+acurácia.** Ela garante erro uniforme sobre a esfera; a ERP compra acurácia polar
+gastando densidade ali. Essa é a afirmação que sobrevive a arguição.
+
+### 8.2 Inventário: o que já se defende
+
+| Ativo | Status | Ressalva que a banca acha sozinha |
+| --- | --- | --- |
+| Polos + uniformidade vs RAFT-large | replicado (replica360 + flowscape), 1,56M vs 5,3M params | perde no global nos dois |
+| Stage A replica360 **+88,4%** from scratch | ablação de corr → paridade com zero ⇒ casamento genuíno | domínio interno |
+| Protocolo (baseline trivial, geodésica exata, regiões, bandas) | contribuição metodológica independente do modelo vencer | não é arquitetura |
+| Piso do `acos` inflava o baseline em 4,2% | achado de nível de campo | pequeno em absoluto |
+| Contraste de regime, 80–105 pts em deslocamento casado | 3 arquiteturas, 3 laboratórios | — |
+| Isolamento estrutura × magnitude (A3) | aparência idêntica entre pernas, vão 34→155 pts | artefato de warp nas bordas |
+
+### 8.3 O que CORTAR da proposta de modelo
+
+| Item | Motivo |
+| --- | --- |
+| Cabeça diferencial (LK, `--differential`) | fechada: pior que fluxo nulo, LK anticorrelacionado com movimento. Um parágrafo de controle negativo na tese, zero no artigo |
+| Linha do "prior de aparência" (+2,9%) | arquitetura pré-retina, superada pelos +88,4%. História, não proposta |
+| chairs360 como *contribuição* | treino from-scratch só com ele FALHOU em bootstrapar. Usar como ingrediente de dados |
+| 4 das 5 linhas do SLOF na tabela | cinco checkpoints do mesmo método parece enchimento; a linha −221% é ckpt quebrado |
+| EMA | ferramenta de variância, detalhe de treino |
+
+**Remover OU justificar:** `aux_match_weight = 0.5` (casamento auxiliar por
+stencil) está ligado em toda run do projeto e **não há registro de ablação**. É
+componente do modelo sem medição de suporte. Ou ablaciona, ou não destaca.
+
+### 8.4 O que MEDIR, em ordem de valor por custo
+
+**A1 — controle causal de amostragem (o que falta).** Hoje comparamos OSLO
+(esférico) vs RAFT (ERP), o que **confunde arquitetura com representação**. A
+afirmação "a geometria compra precisão polar" é, rigorosamente, correlação entre
+dois modelos diferentes. Controle limpo: a *nossa* arquitetura com nós em grade
+**equiangular lat-lon**, mesma contagem de nós.
+
+> **Nota de implementação:** `--grid` aceita `fibonacci|healpix`, e Fibonacci
+> **não serve** como controle — também é aproximadamente uniforme. HEALPix vs
+> Fibonacci testa robustez à família de grade (vale ter), não a hipótese de área
+> igual. O controle equiangular exige código novo: conjunto de pontos lat-lon +
+> hierarquia pai/filho para o upsampler (fácil: subdivisão 2× em lat e lon). A
+> vizinhança provavelmente reusa o caminho kNN genérico que o Fibonacci já usa.
+
+**A2 — piso da grade — CONCLUÍDO 2026-07-29, ver `UNIVERSALITY_TABLE.md` §13.**
+Oráculo @r4 = **0,0616°** em flowscape ⇒ ramo "skip r5" da regra pré-registrada,
+com folga de 16×. A grade explica **~5% do erro** nos dois regimes, e o piso r4
+fica *abaixo* do erro da PanoFlow ⇒ a grade não é o que nos separa dela. **r5 sai
+do cronograma; a GPU vai para A4 (capacidade/receita).** Dois achados novos: o
+piso da costura é 11–12× o global (28% do erro de costura do OSLO — ressalva a
+declarar), e o *upsampler treinado do OSLO nunca foi medido*, ficando num
+intervalo de 6× que vale até 26% do erro em flowscape ⇒ virou o experimento mais
+barato de alto valor, **à frente do controle equiangular**. Texto original da
+atividade abaixo, para registro. Regra de decisão declarada de antemão:
+
+| oracle @r4 | leitura | ação |
+| --- | --- | --- |
+| ≳ 1,0° | OSLO (1,158°) está NO seu teto de grade | r5 é a correção |
+| ≲ 0,4° | grade não é o gargalo | vai para receita de treino; poupa a GPU |
+
+Rodar junto o flow360 **sob haversine**: os valores 0,0293/0,0289 foram medidos
+sob `acos`, cujo piso é 0,028° ⇒ eram essencialmente todo artefato de métrica
+(§8b já dizia "unmeasurable — it is essentially all floor"). Precisam de novo
+número antes de entrar na tese.
+
+**A3 — PriOr-Flow no nosso protocolo.** Duas razões, a segunda é a boa: é a
+comparação que a banca pede pelo nome; e ela ataca **o mesmo problema** (distorção
+polar) sendo SOTA ICCV 2025, então se também perder para fluxo nulo no
+flow360:test, a afirmação de regime ganha a linha mais forte possível.
+
+**A4 — capacidade e receita.** Passa a ser a hipótese *líder* para o gap PanoFlow
+depois de 8.0. Lote 2 é a deficiência provável; accum-8 já falhou (2026-07-24) ⇒
+precisa de lote genuíno, não acumulação.
+
+**A5 — porta estático/movimento.** Atende ao modo de falha medido (42,8% da esfera
+a 0,0103° e o modelo afirma 15× isso). Argumento de banca: com a porta fechada o
+modelo recupera **exatamente** o baseline, logo o contém por construção.
+
+### 8.5 A pergunta difícil, com resposta preparada
+
+*"A PanoFlow te bate 4,6× no seu próprio benchmark in-domain. Por que continuar?"*
+
+Resposta em três partes: a PanoFlow tem ~3× os parâmetros e pipeline de treino
+completo no FlowScape; a pergunta de pesquisa não é liderar leaderboard, é **se
+estimação esférica é viável**; e depois de 8.0 a diferença está atribuída a
+capacidade/treino, não à representação — o que A4 testa.
+
+**O que NÃO alegar:** que somos os melhores nos polos no campo. A PanoFlow ganha
+polos (0,377° vs 3,147°) e uniformidade (1,44× vs 4,33×) contra nós. O ganho polar
+é relativo a uma arquitetura de perspectiva, e só.
+
+### 8.6 Critério de falsificação, declarado antes
+
+Se **A1** mostrar que o ganho polar **sobrevive** à troca para amostragem
+equiangular, então a área igual não é a causa, e a contribuição arquitetural
+precisa ser reformulada. Nesse caso restam, medidos e replicados, o protocolo de
+avaliação e a caracterização de regime.
+
+Se **A2** der oracle @r4 ≲ 0,4° em FlowScape, o refinamento de grade sai do
+cronograma inteiro e a GPU vai para A4.

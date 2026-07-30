@@ -469,11 +469,18 @@ class OSLORAFTRetina(nn.Module):
         iters: int = 8,
         flow_init: Optional[torch.Tensor] = None,
         return_features: bool = False,
+        return_upsample_weights: bool = False,
     ) -> List[torch.Tensor]:
         """frames ``[B, N_retina, 3]`` -> per-iteration flow predictions ``[B, N_sup, 2]``.
 
         ``return_features=True`` additionally returns the normalized est-grid feature
         pair ``(f1, f2)`` for :func:`stencil_match_loss`.
+
+        ``return_upsample_weights=True`` additionally returns the LAST iteration's
+        convex upsample weights ``[B, N_est, D, K]``. The grid-floor probe needs them to
+        score the *trained* upsampler against the ``pwc``/``uniform``/``oracle`` bounds:
+        those bracket the weight family, and this is where the learned head actually
+        sits. Both flags default False, so every existing call is unchanged.
         """
         est = pyramid.estimation_level
         retina = pyramid.retina_level
@@ -517,6 +524,10 @@ class OSLORAFTRetina(nn.Module):
                 h, delta, weights = self._update_step(h, flow, f1, f2_levels, context, pyramid)
             flow = flow + self.flow_scale * delta
             predictions.append(convex_upsample(flow, weights, pyramid))
+        if return_features and return_upsample_weights:
+            return predictions, (f1, f2_levels[0]), weights
+        if return_upsample_weights:
+            return predictions, weights
         if return_features:
             return predictions, (f1, f2_levels[0])
         return predictions

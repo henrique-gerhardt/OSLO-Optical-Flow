@@ -21,6 +21,13 @@ Three reconstructions bracket the achievable floor:
 * ``uniform`` equal weights over the 1-hop neighborhood — a smooth, untrained upsampler.
 * ``oracle``  the best convex weights per descendant, solved by projected gradient on the
               simplex — no learned upsampler of this family can beat it. THE decisive bound.
+* ``learned`` the model's OWN trained ``UpsampleWeightHead`` weights (needs
+              ``--init-checkpoint``). ``pwc`` and ``oracle`` bracket the weight family;
+              this says where the trained head actually sits inside that bracket, which
+              is the only part of the interval that is actionable. Because the head is
+              conditioned on the GRU hidden state, the model runs a real forward pass on
+              the pair and the last iteration's weights are then applied to the PERFECT
+              coarse field — isolating the upsampler from the estimator.
 
 Decision rule (pre-registered in §7):
   oracle floor >~ 1.0 deg  => OSLO (1.158°) is AT its grid ceiling; r5 is the fix.
@@ -73,7 +80,7 @@ from spherical_flow.shard_dataset import (
 from run_raft_shard_baseline import iter_source_records, parse_sources
 
 
-MODES = ("pwc", "uniform", "oracle")
+BASE_MODES = ("pwc", "uniform", "oracle")
 
 
 def parse_args() -> argparse.Namespace:
@@ -99,6 +106,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--geodesic-metric", default="acos", choices=["acos", "haversine"],
                         help="Great-circle formula; 'haversine' removes the 0.028 deg "
                              "float32 floor that the r6 identity check exposed.")
+    # --- learned mode: must reproduce the checkpoint's geometry and shapes exactly ---
+    parser.add_argument("--init-checkpoint", default="",
+                        help="OSLO-RAFT-R checkpoint. Enables the 'learned' mode, which "
+                             "scores the model's own trained upsample weights.")
+    parser.add_argument("--retina-resolution", type=int, default=7)
+    parser.add_argument("--lookup-neighbors", type=int, default=24)
+    parser.add_argument("--corr-pool-levels", type=int, default=3)
+    parser.add_argument("--hidden-channels", type=int, default=96)
+    parser.add_argument("--context-dim", type=int, default=64)
+    parser.add_argument("--flow-scale", type=float, default=0.5)
+    parser.add_argument("--lookup-rings", type=int, default=2)
+    parser.add_argument("--lookup-ring-points", type=int, default=8)
+    parser.add_argument("--feature-channels", default="")
+    parser.add_argument("--eval-iters", type=int, default=12)
+    parser.add_argument("--amp", action="store_true",
+                        help="Autocast the learned-mode forward pass, as in run_oslo_raft.py. "
+                             "The floor arithmetic itself stays fp32.")
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
     parser.add_argument("--output-dir", default="/outputs/grid_floor")
     return parser.parse_args()
@@ -179,6 +203,67 @@ def scatter_to_fine(flow_grouped: torch.Tensor, pyramid) -> torch.Tensor:
     return out
 
 
+def build_retina_model(args, r_est: int, device: torch.device):
+    """Retina pyramid + checkpoint-loaded model, or ``(None, None)`` if incompatible.
+
+    The upsample head's output width is ``D * K``, fixed at construction from the
+    pyramid, so a checkpoint trained at one estimation resolution cannot be loaded at
+    another. ``strict=True`` catches that; we report it and drop the learned mode for
+    this resolution instead of aborting the whole probe.
+    """
+    from spherical_flow.healpix_pyramid import build_healpix_pyramid, load_pyramid, save_pyramid
+    from spherical_flow.oslo_raft_retina import OSLORAFTRetina
+
+    cache_path = None
+    if args.pyramid_cache:
+        # Same filename convention as run_oslo_raft.py so the trained config's cache hits.
+        name = (f"pyramid_ret{args.retina_resolution}_sup{args.resolution}"
+                f"_est{r_est}_cp{args.corr_pool_levels}"
+                f"_cn{args.conv_neighbors}_ln{args.lookup_neighbors}.pt")
+        cache_path = Path(args.pyramid_cache) / name
+
+    pyramid = None
+    if cache_path is not None and cache_path.exists():
+        try:
+            pyramid = load_pyramid(cache_path)
+            print(f"pyramid cache hit: {cache_path}", flush=True)
+        except Exception as exc:
+            print(f"pyramid cache unusable ({exc}); rebuilding", flush=True)
+    if pyramid is None:
+        pyramid = build_healpix_pyramid(
+            fine_resolution=args.resolution,
+            estimation_resolution=r_est,
+            corr_pool_levels=args.corr_pool_levels,
+            conv_neighbors=args.conv_neighbors,
+            lookup_neighbors=args.lookup_neighbors,
+            retina_resolution=args.retina_resolution,
+        )
+        if cache_path is not None:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            save_pyramid(pyramid, cache_path)
+    pyramid = pyramid.to(device)
+
+    feature_channels = tuple(
+        int(t) for t in args.feature_channels.split(",") if t.strip()
+    ) or None
+    model = OSLORAFTRetina(
+        pyramid, hidden_channels=args.hidden_channels, context_dim=args.context_dim,
+        flow_scale=args.flow_scale, feature_channels=feature_channels,
+        context_channels=feature_channels,
+        lookup_rings=args.lookup_rings, lookup_ring_points=args.lookup_ring_points,
+    ).to(device)
+    payload = torch.load(args.init_checkpoint, map_location="cpu", weights_only=False)
+    try:
+        model.load_state_dict(payload.get("model", payload), strict=True)
+    except RuntimeError as exc:
+        print(f"! learned mode OFF at r{r_est}: checkpoint does not fit this geometry "
+              f"(estimation resolution mismatch is the usual cause).\n  {exc}", flush=True)
+        return None, None
+    model.eval()
+    print(f"loaded checkpoint for learned mode: {args.init_checkpoint}", flush=True)
+    return pyramid, model
+
+
 def main() -> None:
     args = parse_args()
     output_dir = Path(args.output_dir)
@@ -201,20 +286,33 @@ def main() -> None:
     results: Dict[str, dict] = {}
 
     for r_est in est_resolutions:
-        cache = Path(args.pyramid_cache) / f"pyr_r{r_est}_r{args.resolution}.pt" \
-            if args.pyramid_cache else None
-        if cache is not None and cache.exists():
-            pyramid = load_pyramid(cache)
-        else:
-            pyramid = build_healpix_pyramid(
-                estimation_resolution=r_est,
-                fine_resolution=args.resolution,
-                conv_neighbors=args.conv_neighbors,
-            )
-            if cache is not None:
-                cache.parent.mkdir(parents=True, exist_ok=True)
-                save_pyramid(pyramid, cache)
-        pyramid = pyramid.to(device)
+        model = None
+        if args.init_checkpoint:
+            # One pyramid for both jobs: the learned weights were trained against this
+            # exact est->fine geometry, so reusing it removes any chance of mismatch.
+            pyramid, model = build_retina_model(args, r_est, device)
+        if model is None:
+            cache = Path(args.pyramid_cache) / f"pyr_r{r_est}_r{args.resolution}.pt" \
+                if args.pyramid_cache else None
+            if cache is not None and cache.exists():
+                pyramid = load_pyramid(cache)
+            else:
+                pyramid = build_healpix_pyramid(
+                    estimation_resolution=r_est,
+                    fine_resolution=args.resolution,
+                    conv_neighbors=args.conv_neighbors,
+                )
+                if cache is not None:
+                    cache.parent.mkdir(parents=True, exist_ok=True)
+                    save_pyramid(pyramid, cache)
+            pyramid = pyramid.to(device)
+
+        modes = BASE_MODES + (("learned",) if model is not None else ())
+        retina_pts = retina_e = retina_n = None
+        if model is not None:
+            retina_pts = pyramid.retina_level.points.cpu()
+            retina_e = pyramid.retina_level.basis_east.cpu()
+            retina_n = pyramid.retina_level.basis_north.cpu()
 
         est_points = pyramid.estimation_level.points.cpu()
         est_east = pyramid.estimation_level.basis_east.cpu()
@@ -225,7 +323,7 @@ def main() -> None:
               f"K={pyramid.upsample_neighbors.shape[1]} D={pyramid.descendant_index.shape[1]}",
               flush=True)
 
-        acc = {m: ({}, {}, {}, []) for m in MODES}
+        acc = {m: ({}, {}, {}, []) for m in modes}
         seen = 0
         start = time.time()
 
@@ -261,8 +359,27 @@ def main() -> None:
                 "uniform": contrib.mean(dim=3),
                 "oracle": solve_oracle_combo(contrib, target_grouped, args.oracle_iters),
             }
+            if model is not None:
+                # The head is conditioned on the GRU hidden state, so the weights only
+                # exist after a real forward pass on this pair. Run it, take the last
+                # iteration's weights, and apply them to the PERFECT coarse field. Summing
+                # the 2-D contributions is identical to convex_upsample's 3-D pooling
+                # followed by projection, because that projection is linear.
+                ret = sample_pair_to_nodes(
+                    frame1, frame2, flow_erp, valid_erp, retina_pts, retina_e, retina_n
+                )
+                amp_on = args.amp and device.type == "cuda"
+                with torch.no_grad(), torch.autocast("cuda", enabled=amp_on):
+                    _preds, w = model(
+                        ret["frame1"].unsqueeze(0).to(device),
+                        ret["frame2"].unsqueeze(0).to(device),
+                        pyramid, iters=args.eval_iters, return_upsample_weights=True,
+                    )
+                # Back to fp32 before the floor arithmetic: the numbers being measured are
+                # ~0.02-0.4 deg and must not inherit half-precision noise.
+                recon["learned"] = (w.float().unsqueeze(-1) * contrib).sum(dim=3)
 
-            for mode in MODES:
+            for mode in modes:
                 pred = scatter_to_fine(recon[mode], pyramid).cpu()
                 maps = compute_maps(pred, target_batch, fine_points, fine_east, fine_north)
                 totals, counts, active_counts, chunks = acc[mode]
@@ -283,9 +400,10 @@ def main() -> None:
             "mean_spacing_deg": spacing_deg,
             "pairs": seen,
             "elapsed_s": time.time() - start,
+            "modes": list(modes),
             "floors": {},
         }
-        for mode in MODES:
+        for mode in modes:
             totals, counts, active_counts, chunks = acc[mode]
             metrics = finalize_metrics(totals, counts, active_counts, chunks)
             entry["floors"][mode] = metrics
@@ -293,13 +411,18 @@ def main() -> None:
         results[f"r{r_est}"] = entry
 
     print("\n================ GRID FLOOR SUMMARY ================", flush=True)
-    print(f"{'est grid':<10} {'spacing':>9} {'pwc':>10} {'uniform':>10} {'oracle':>10}", flush=True)
+    print(f"{'est grid':<10} {'spacing':>9} {'pwc':>10} {'uniform':>10} {'oracle':>10} "
+          f"{'learned':>10} {'headroom':>9}", flush=True)
     for key, entry in results.items():
         f = entry["floors"]
+        learned = f.get("learned", {}).get("global_geo_deg")
+        # How much of the pwc..oracle interval the trained head still leaves on the table.
+        head = f"{learned - f['oracle']['global_geo_deg']:>8.4f}°" if learned else f"{'--':>9}"
         print(f"{key:<10} {entry['mean_spacing_deg']:>8.3f}° "
               f"{f['pwc']['global_geo_deg']:>9.4f}° "
               f"{f['uniform']['global_geo_deg']:>9.4f}° "
-              f"{f['oracle']['global_geo_deg']:>9.4f}°", flush=True)
+              f"{f['oracle']['global_geo_deg']:>9.4f}° "
+              f"{(f'{learned:.4f}°' if learned else '--'):>10} {head}", flush=True)
     print("Decision rule (§7): oracle >~1.0° => grid IS the ceiling (r5 is the fix); "
           "oracle <~0.4° => grid is NOT the bottleneck (skip r5).", flush=True)
 

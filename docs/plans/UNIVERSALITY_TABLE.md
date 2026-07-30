@@ -1085,3 +1085,98 @@ that.** Under `acos` this was hidden — the baseline read at the floor rather t
 at 0.010°, so the ratio was compressed. This is the cleanest statement of the
 static-calibration failure in the project, it is the same failure A3 §11.6 caught
 leaking spatially under pure rotation, and it is the direct target of **B1**.
+
+## 13. Grid-floor probe RESULT (2026-07-29) — the grid is NOT the bottleneck, in either regime
+
+The §8 probe finally ran, on **full test sets** under **haversine** (§8's own
+pre-registered decision run, never executed until now).
+
+| source | pairs | est | spacing | pwc | uniform | **oracle** |
+| --- | --- | --- | --- | --- | --- | --- |
+| flowscape:test | 1386 | r4 | 3.665° | 0.3657° | 0.4624° | **0.0616°** |
+| flowscape:test | 1386 | r5 | 1.832° | 0.1853° | 0.2870° | **0.0431°** |
+| flow360:test | 2567 | r4 | 3.665° | 0.0773° | 0.1142° | **0.0254°** |
+| flow360:test | 2567 | r5 | 1.832° | 0.0505° | 0.0757° | **0.0219°** |
+
+**VERDICT — the pre-registered rule fires on the "skip r5" branch, by 16×.** The
+rule was: oracle @r4 ≳ 1.0° ⇒ grid IS the ceiling; ≲ 0.4° ⇒ grid is NOT the
+bottleneck. Measured **0.0616°** on flowscape. Machinery consistent (pwc < uniform
+< … and oracle far below both, as §8 predicted).
+
+**The grid explains ~5% of OSLO's error in BOTH regimes**, which is the headline:
+
+| | OSLO real error | oracle floor @r4 | floor / error |
+| --- | --- | --- | --- |
+| flowscape:test | 1.158° | 0.0616° | **5.3%** |
+| flow360:test | 0.497° | 0.0254° | **5.1%** |
+
+**The number that closes the argument:** the r4 floor (0.0616°) is *below*
+PanoFlow's error (0.251°). OSLO's own estimation grid would support **4× better**
+accuracy than OSLO achieves ⇒ the grid is not what separates the two methods.
+Remaining hypothesis for the 4.6× gap = **capacity + training recipe** (batch 2).
+
+Metric note: flow360's old `acos` oracle was 0.0293° vs **0.0254°** under
+haversine — 13% inflated, consistent with §8b's warning that it was sitting on the
+0.028° floor. The number is now a real measurement (harness floor ~2e-6°).
+
+### 13.1 NEW FINDING — the seam floor is 11–12× the global floor
+
+| source | seam oracle @r4 | global oracle @r4 | ratio |
+| --- | --- | --- | --- |
+| flowscape:test | 0.7273° | 0.0616° | **11.8×** |
+| flow360:test | 0.2725° | 0.0254° | **10.7×** |
+
+On flowscape the seam floor is **28% of OSLO's seam error** (2.636°, from the
++39.89% seam row of §9.2) ⇒ **the seam column of every published row carries a
+large reconstruction floor and must be read with that caveat.** Likely cause is
+wrap discontinuity in the source ERP GT rather than the grid (cf. the degenerate
+`[32,∞)` band already flagged in §9.3), but this is **not diagnosed**. Poles show
+no clean story: flowscape poles floor 0.0823° is *above* its global floor while
+flow360 poles 0.0182° is *below* — do not build a claim on it.
+
+### 13.2 The gap this opens: where does OSLO's ACTUAL upsampler sit?
+
+The probe bounds the *family*: one-hot (`pwc`) at 0.3657° and the best possible
+convex combination (`oracle`) at 0.0616° on flowscape. **OSLO's own trained
+`UpsampleWeightHead` was not measured** — it sits somewhere in that 6× interval.
+
+That interval is worth up to **0.30° on flowscape, i.e. 26% of OSLO's error** — a
+larger prize than anything grid refinement offered, and cheaper. Requires a fourth
+probe mode that loads a checkpoint and applies the *learned* weights instead of
+pwc/uniform/oracle. Small addition to `run_grid_floor_probe.py`; needs
+`--init-checkpoint` plumbing.
+
+**Action:** this becomes the cheapest high-value experiment in §8.4 of
+`ROADMAP_SEMINARIO.md`, ahead of the equiangular control (which needs a new grid
+builder).
+
+### 13.3 `learned` mode IMPLEMENTED + Docker-validated 2026-07-30
+
+Two files changed. `OSLORAFTRetina.forward` gains `return_upsample_weights=False`,
+returning the last iteration's weights `[B, N_est, D, K]`. `run_grid_floor_probe.py`
+gains a fourth mode plus `--init-checkpoint`, the model-config flags (defaults set to
+the trained config: retina 7 / cp 3 / ln 24 / hidden 96 / ctx 64 / flow-scale 0.5 /
+rings 2x8 / eval-iters 12) and `--amp`.
+
+**Design point.** The head is conditioned on the GRU hidden state, so the weights do
+not exist without a real forward pass. The probe therefore runs the model on the true
+pair, takes the last iteration's weights, and applies them to the **perfect** coarse
+field. That isolates the upsampler from the estimator: same weights the model would
+use, but handed a flawless input. When `--init-checkpoint` is given the probe builds
+the **retina** pyramid (same cache filename as `run_oslo_raft.py`, so
+`pyramid_ret7_sup6_est4_cp3_cn8_ln24.pt` hits) and uses it for the contributions too,
+removing any chance of geometry mismatch between the weights and the transport.
+
+**Validated in Docker (5 properties):**
+
+| check | result |
+| --- | --- |
+| `(w * contrib).sum(K)` reproduces `convex_upsample` | max dev **7.5e-9** (fp32 noise) — also verified for the `pwc` and `uniform` weight sets |
+| `return_upsample_weights=True` does not perturb predictions | **bit-identical** |
+| weights shape / simplex | `[1, N_est, D, K]`, sum over K = 1 (max dev 1.8e-7) |
+| base columns unchanged by adding the mode | pwc/uniform/oracle **identical** with and without |
+| untrained head end-to-end | lands **exactly on `uniform`** (0.1196°) — correct, since small init ⇒ near-uniform softmax; confirms the plumbing, not just the shapes |
+| checkpoint/geometry mismatch | prints `learned mode OFF at rN`, drops to 3 modes, **exit 0** (so probing r4 and r5 with an r4 checkpoint will not crash) |
+
+The equivalence check is the load-bearing one: without it the learned column could be
+measuring something the model never emits.
