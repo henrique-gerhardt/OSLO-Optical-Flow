@@ -223,6 +223,11 @@ def parse_args() -> argparse.Namespace:
                         "'0,0.125,0.25,0.5,1,2,4,8,16,inf'. Unlike the cumulative "
                         "active_X tails, bands locate the displacement at which a method "
                         "starts beating the zero baseline. Empty = off (default).")
+    p.add_argument("--upsample-weights", default="learned",
+                   choices=["learned", "pwc", "uniform"],
+                   help="Bypass the trained upsample head with a fixed rule (--retina "
+                        "only). See UNIVERSALITY_TABLE.md 13.4: the trained head lost to "
+                        "one-hot on a perfect coarse field; this tests it end to end.")
     p.add_argument("--geodesic-metric", default="acos", choices=["acos", "haversine"],
                    help="Great-circle formula. 'acos' reproduces every existing number and "
                         "has a 0.028 deg float32 floor; 'haversine' is exact at zero. Run "
@@ -489,6 +494,12 @@ def main() -> None:
             flow_scale=args.flow_scale,
         ).to(device)
         print(f"grid={args.grid} nodes={level.num_nodes} device={device} git={git_hash()[:9]}", flush=True)
+
+    if args.upsample_weights != "learned":
+        if not args.retina:
+            raise SystemExit("--upsample-weights requires --retina")
+        model.upsample_override = args.upsample_weights
+        print(f"upsample override: {args.upsample_weights} (trained head bypassed)", flush=True)
 
     if args.init_checkpoint:
         payload = torch.load(args.init_checkpoint, map_location="cpu", weights_only=False)

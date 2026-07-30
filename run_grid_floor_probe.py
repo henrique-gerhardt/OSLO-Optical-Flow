@@ -324,6 +324,7 @@ def main() -> None:
               flush=True)
 
         acc = {m: ({}, {}, {}, []) for m in modes}
+        learned_stats = {"max_w": 0.0, "entropy": 0.0, "n": 0}
         seen = 0
         start = time.time()
 
@@ -378,6 +379,15 @@ def main() -> None:
                 # Back to fp32 before the floor arithmetic: the numbers being measured are
                 # ~0.02-0.4 deg and must not inherit half-precision noise.
                 recon["learned"] = (w.float().unsqueeze(-1) * contrib).sum(dim=3)
+                # Concentration diagnostic: a near-uniform softmax has max weight ~1/K and
+                # entropy ~log K. It separates "the head did not learn" from "the head
+                # learned something that hurts", which the error column alone cannot.
+                wf = w.float()
+                learned_stats["max_w"] += float(wf.max(dim=-1).values.mean())
+                learned_stats["entropy"] += float(
+                    -(wf * wf.clamp_min(1e-12).log()).sum(dim=-1).mean()
+                )
+                learned_stats["n"] += 1
 
             for mode in modes:
                 pred = scatter_to_fine(recon[mode], pyramid).cpu()
@@ -403,6 +413,20 @@ def main() -> None:
             "modes": list(modes),
             "floors": {},
         }
+        if learned_stats["n"]:
+            k = pyramid.upsample_neighbors.shape[1]
+            entry["learned_weights"] = {
+                "mean_max_weight": learned_stats["max_w"] / learned_stats["n"],
+                "mean_entropy": learned_stats["entropy"] / learned_stats["n"],
+                "uniform_max_weight": 1.0 / k,
+                "uniform_entropy": float(np.log(k)),
+            }
+            lw = entry["learned_weights"]
+            print(f"learned weights: mean max {lw['mean_max_weight']:.4f} "
+                  f"(uniform {lw['uniform_max_weight']:.4f}), mean entropy "
+                  f"{lw['mean_entropy']:.4f} (uniform {lw['uniform_entropy']:.4f})",
+                  flush=True)
+
         for mode in modes:
             totals, counts, active_counts, chunks = acc[mode]
             metrics = finalize_metrics(totals, counts, active_counts, chunks)

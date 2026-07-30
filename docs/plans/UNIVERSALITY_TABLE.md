@@ -1180,3 +1180,55 @@ removing any chance of geometry mismatch between the weights and the transport.
 
 The equivalence check is the load-bearing one: without it the learned column could be
 measuring something the model never emits.
+
+### 13.4 RESULT (2026-07-30) — the trained upsampler is WORSE than one-hot, on both datasets
+
+Full test sets, r4 estimation, EMA final checkpoint, haversine.
+
+| mode | flowscape global | vs oracle | flow360 global | vs oracle |
+| --- | --- | --- | --- | --- |
+| `oracle` | 0.0616° | — | 0.0254° | — |
+| `pwc` | 0.3657° | 5.9× | 0.0773° | 3.0× |
+| `uniform` | 0.4624° | 7.5× | 0.1142° | 4.5× |
+| **`learned`** | **0.5099°** | **8.3×** | **0.1236°** | **4.9×** |
+
+**The trained head loses to one-hot by 39% (flowscape) and 60% (flow360)**, and loses
+to plain uniform averaging by 10% and 8%. It captures none of the available gain.
+
+**Diagnosis — the head barely discriminates.** On both datasets `learned` sits within
+8–10% of `uniform`, and the local validation showed an *untrained* head lands exactly
+on `uniform` (small init ⇒ near-uniform softmax). So the trained head behaves close to
+an initialized one: it spreads weight over the neighborhood, which blurs the field,
+which is why it loses even to taking the center node alone. Likely cause is gradient
+pressure — the model's error (1.158° / 0.497°) is 3–6× the `pwc` floor, so the
+upsampling term was never the binding term in the loss.
+
+**Scale of the opportunity, stated carefully.** On flowscape the learned
+reconstruction is 0.5099°, i.e. 44% of OSLO's 1.158°, and **2.0× PanoFlow's entire
+error (0.251°)** — with the current head, no estimator improvement can reach PanoFlow.
+
+**⚠ NOT a strict decomposition.** At the seam `learned` reads 3.875° while OSLO's
+actual seam error is 2.636° — the measured value *exceeds* the model's error, so this
+column is **not a lower bound** on model error. It measures upsampler fidelity given
+perfect input. Where the true GT carries wrap discontinuities, faithfully
+reconstructing it is worse than the smooth field the model emits. The defensible claim
+is narrower: **the upsampler discards information the grid demonstrably carries**,
+since the oracle recovers it with weights from the same convex family.
+
+**Alternative explanation not yet excluded:** co-adaptation. The head was trained
+jointly against the estimator's *imperfect* coarse field and may be compensating a
+systematic bias that becomes distortion on a perfect field.
+
+### 13.5 Two measurements that separate the explanations
+
+1. **Weight entropy / max-weight.** Near-uniform softmax ⇒ mean max weight ≈ 1/K =
+   0.11. Concentrated ⇒ higher. Separates "did not learn" from "learned something
+   strange". One diagnostic added to the probe.
+2. **End-to-end one-hot swap (decisive).** Evaluate the model normally but replace the
+   learned weights with `pwc` inside `convex_upsample`. Model **improves** ⇒ the head is
+   actively hurting and the fix is trivial. Model **degrades** ⇒ co-adaptation is real
+   and the perfect-input probe does not see the work the head is doing.
+
+Given `pwc` beats `learned` by 39% on perfect input, (2) is expected to improve — but
+it is the only test that settles it, because it is the only one run on the field the
+head was actually trained against.

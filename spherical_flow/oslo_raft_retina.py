@@ -308,6 +308,21 @@ def stencil_match_loss(
 # --------------------------------------------------------------------------- #
 # The model (§6)
 # --------------------------------------------------------------------------- #
+def override_upsample_weights(weights: torch.Tensor, mode: str) -> torch.Tensor:
+    """Replace predicted convex weights by a fixed rule, preserving shape/device/dtype.
+
+    ``pwc`` puts all mass on the center node (``upsample_neighbors[:, 0]``), which is the
+    piecewise-constant upsampler; ``uniform`` spreads it over the 1-hop neighborhood.
+    """
+    if mode == "pwc":
+        out = torch.zeros_like(weights)
+        out[..., 0] = 1.0
+        return out
+    if mode == "uniform":
+        return torch.full_like(weights, 1.0 / weights.size(-1))
+    raise ValueError(f"unknown upsample override: {mode!r} (want 'pwc' or 'uniform')")
+
+
 class OSLORAFTRetina(nn.Module):
     """Retina-decoupled OSLO-RAFT: ingest at r_ret, estimate at r_est, supervise at r_sup.
 
@@ -411,6 +426,13 @@ class OSLORAFTRetina(nn.Module):
         self.flow_conv1 = SDPAConv(hidden_channels, hidden_channels, kernel_size=kernel_size, node_dim=1)
         self.flow_conv2 = SDPAConv(hidden_channels, 2, kernel_size=kernel_size, node_dim=1)
         self._zero_init(self.flow_conv2)
+
+        # Set to "pwc" or "uniform" to bypass the trained head at inference. The probe
+        # (docs/plans/UNIVERSALITY_TABLE.md §13.4) measured the trained weights losing to
+        # one-hot on a perfect coarse field; this is how that is tested end to end, on the
+        # model's own field, which is the only place co-adaptation could show up. Not a
+        # parameter, so it never touches the state dict.
+        self.upsample_override: Optional[str] = None
 
         self.upsample_head = UpsampleWeightHead(
             hidden_channels,
@@ -522,6 +544,8 @@ class OSLORAFTRetina(nn.Module):
                 )
             else:
                 h, delta, weights = self._update_step(h, flow, f1, f2_levels, context, pyramid)
+            if self.upsample_override is not None:
+                weights = override_upsample_weights(weights, self.upsample_override)
             flow = flow + self.flow_scale * delta
             predictions.append(convex_upsample(flow, weights, pyramid))
         if return_features and return_upsample_weights:
