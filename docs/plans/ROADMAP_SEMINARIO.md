@@ -861,6 +861,38 @@ dois modelos diferentes. Controle limpo: a *nossa* arquitetura com nós em grade
 > hierarquia pai/filho para o upsampler (fácil: subdivisão 2× em lat e lon). A
 > vizinhança provavelmente reusa o caminho kNN genérico que o Fibonacci já usa.
 
+**A1 — CONTROLE EQUIANGULAR: CÓDIGO PRONTO + VALIDADO 2026-07-30, mas com DUAS
+DECISÕES DE DESENHO ABERTAS.**
+
+`spherical_flow/equiangular_pyramid.py` + `--grid equiangular`. Nível `l` tem
+`n_lat = 2^(l+1)`, `n_lon = 3·2^(l+1)` ⇒ **12·4^l nós, contagem idêntica à HEALPix em
+todo nível** (l4 = 32×96 = 3072, l6 = 128×384, l7 = 256×768). Ordenação Morton por
+bloco de longitude faz os filhos de `i` serem exatamente `4i..4i+3`, então
+`nested_*`, `pool_features` e `convex_upsample` são reusados sem alteração. Grafo de
+vizinhança topológico O(N) (não precisa do kNN O(N²)). Caminho HEALPix intocado.
+
+Validado em Docker (7 propriedades): contagens casam; nós unitários e distintos;
+aninhamento contíguo com centroide a ≤0,18° do pai; **razão de espaçamento
+equador/polos 6,74× (equiangular) vs 1,20× (HEALPix)** ⇒ o controle de fato reproduz
+o adensamento polar da ERP; grafo com exatamente as 2 linhas polares inválidas; modelo
+roda ponta a ponta; **parâmetros idênticos (194.968 = 194.968)**.
+
+**DECISÃO 1 — comparabilidade da métrica.** O smoke mostrou baselines zero
+*diferentes* entre grades (0,139 vs 0,111 em config mínima), porque as duas amostram
+pontos diferentes e a distribuição de deslocamento por nó muda. **Graus absolutos não
+são comparáveis entre grades.** Opções: (a) ler só `improvement_pct` por região, cada
+um contra o zero da própria grade — normaliza a dificuldade, sem código novo,
+recomendado; (b) readout em grade comum (reamostrar a predição equiangular para
+HEALPix r6 antes de pontuar) — correto por construção, custa um transporte cross-grid.
+Ressalva a declarar em (a): as populações de nós diferem, então só as melhorias
+normalizadas se comparam.
+
+**DECISÃO 2 — protocolo de treino.** O checkpoint publicado é HEALPix e veio de uma
+campanha longa (Stage A → mix 20k → EMA). Reproduzir isso no equiangular é caro e
+desnecessário. O controle justo é **par casado from-scratch**: mesma receita curta nas
+duas grades (Stage-A-like em replica360, ~2k passos, onde o controle from-scratch já
+deu +80,9%). Compara-se o par, não o equiangular contra a campanha.
+
 **A2 — piso da grade — CONCLUÍDO 2026-07-29, ver `UNIVERSALITY_TABLE.md` §13.**
 Oráculo @r4 = **0,0616°** em flowscape ⇒ ramo "skip r5" da regra pré-registrada,
 com folga de 16×. A grade explica **~5% do erro** nos dois regimes, e o piso r4

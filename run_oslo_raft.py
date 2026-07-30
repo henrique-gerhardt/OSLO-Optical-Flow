@@ -83,7 +83,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--val-sources", default="flow360:val")
     p.add_argument("--output-dir", default="outputs/oslo_raft")
     # geometry
-    p.add_argument("--grid", default="fibonacci", choices=["fibonacci", "healpix"])
+    p.add_argument("--grid", default="fibonacci",
+                   choices=["fibonacci", "healpix", "equiangular"],
+                   help="'equiangular' is the A1 causal control: same node counts and the\n                         same architecture on an ERP-like pole-dense lat-lon grid.")
     p.add_argument("--resolution", type=int, default=4,
                    help="HEALPix order (grid=healpix); the FINE/supervision order when --multi-res.")
     p.add_argument("--nodes", type=int, default=3072, help="Fibonacci node count (grid=fibonacci).")
@@ -283,10 +285,17 @@ def load_or_build_pyramid(args: argparse.Namespace):
     reads a stale pyramid; a corrupt/old-version file is rebuilt, not trusted.
     """
     from spherical_flow.healpix_pyramid import build_healpix_pyramid, load_pyramid, save_pyramid
+    from spherical_flow.equiangular_pyramid import build_equiangular_pyramid
+
+    equiangular = args.grid == "equiangular"
+    build = build_equiangular_pyramid if equiangular else build_healpix_pyramid
 
     cache_path = None
     if args.pyramid_cache:
-        name = (f"pyramid_ret{args.retina_resolution}_sup{args.resolution}"
+        # The healpix name is unchanged so existing caches still hit; the control gets
+        # its own prefix because the geometry differs at identical resolutions.
+        name = (f"pyramid{'_eq' if equiangular else ''}"
+                f"_ret{args.retina_resolution}_sup{args.resolution}"
                 f"_est{args.estimation_resolution}_cp{args.corr_pool_levels}"
                 f"_cn{args.conv_neighbors}_ln{args.lookup_neighbors}.pt")
         cache_path = Path(args.pyramid_cache) / name
@@ -299,7 +308,7 @@ def load_or_build_pyramid(args: argparse.Namespace):
                 print(f"pyramid cache unusable ({exc}); rebuilding", flush=True)
 
     t0 = time.time()
-    pyramid = build_healpix_pyramid(
+    pyramid = build(
         fine_resolution=args.resolution,
         estimation_resolution=args.estimation_resolution,
         corr_pool_levels=args.corr_pool_levels,
@@ -394,8 +403,8 @@ def main() -> None:
     target_points = None
 
     if args.retina:
-        if args.grid != "healpix":
-            raise SystemExit("--retina requires --grid healpix")
+        if args.grid not in ("healpix", "equiangular"):
+            raise SystemExit("--retina requires --grid healpix or --grid equiangular")
         if not (args.estimation_resolution < args.resolution <= args.retina_resolution):
             raise SystemExit(
                 "--retina needs estimation < resolution (supervision) <= retina-resolution, got "
@@ -419,7 +428,7 @@ def main() -> None:
             lookup_rings=args.lookup_rings, lookup_ring_points=args.lookup_ring_points,
             use_checkpoint_encoder=not args.no_encoder_checkpoint,
         ).to(device)
-        print(f"grid=healpix retina={args.retina_resolution} est={args.estimation_resolution} "
+        print(f"grid={args.grid} retina={args.retina_resolution} est={args.estimation_resolution} "
               f"sup={args.resolution} nodes_ret={pyramid.retina_level.num_nodes} "
               f"nodes_est={pyramid.num_estimation_nodes} nodes_sup={pyramid.num_fine_nodes} "
               f"device={device} git={git_hash()[:9]}", flush=True)

@@ -1232,3 +1232,47 @@ systematic bias that becomes distortion on a perfect field.
 Given `pwc` beats `learned` by 39% on perfect input, (2) is expected to improve — but
 it is the only test that settles it, because it is the only one run on the field the
 head was actually trained against.
+
+### 13.6 END-TO-END SWAP (2026-07-30) — §13.4's actionable claim is REFUTED; the head is a denoiser
+
+`--upsample-weights {learned,pwc}` on the EMA checkpoint, haversine, full test sets.
+
+| | `learned` | `pwc` | delta |
+| --- | --- | --- | --- |
+| flowscape global | **1.1578° (+65.97)** | 1.2077° (+64.50) | pwc −1.47 pts |
+| flowscape poles | **3.1471° (+60.98)** | 3.3819° (+58.07) | pwc −2.91 pts |
+| flowscape act₀.₅ | **+67.04** | +65.56 | pwc −1.48 pts |
+| flow360 global | **0.4967° (−15.12)** | 0.5098° (−18.17) | pwc −3.04 pts |
+| flow360 poles | **0.5781° (−26.89)** | 0.6091° (−33.69) | pwc −6.80 pts |
+
+**Swapping to one-hot makes the model WORSE everywhere. Co-adaptation is the answer.**
+
+Control passed: the `learned` leg reproduces the published rows exactly (flowscape
++65.97 / poles 3.147 / act₀.₅ +67.04; flow360 −15.12 / act₀.₅ −4.04 / poles −26.89),
+so the swap machinery does not perturb the baseline.
+
+**Correction to §13.4.** That section called the upsampler "the single largest
+identified component of OSLO's error" (44% on flowscape) and "2.0× PanoFlow's entire
+error … a self-imposed ceiling". **The actionable part is wrong.** The head is not
+hurting: replacing it degrades the model. §13.4's own co-adaptation caveat was the
+correct reading and this settles it.
+
+**What the two measurements together actually say.** On a *perfect* coarse field the
+learned weights lose to one-hot, because smoothing an exact field only blurs it. On the
+*model's* coarse field they win, because that field is noisy and the near-uniform
+softmax is a smoothing operator. So the head did not "fail to learn to interpolate" —
+**it learned to denoise**, which is correct given the estimator feeding it. Entropy
+≈ log K is the signature of a filter, not of an untrained layer.
+
+**Consequence for the plan:** the oracle headroom (0.062° vs 0.510°) is **not reachable
+by changing the upsampler**. It is gated by coarse-field quality. This does not redirect
+§8.0 — it reinforces it: the bottleneck is the estimator (capacity + training recipe).
+A retrained upsampler only pays off *after* the estimator improves, since the current
+head is tuned to the current noise level.
+
+**Side finding — part of the polar advantage is the upsampler, not the sampling.**
+`pwc` costs more at the poles than on average (flowscape +7.5% error at the poles vs
++2.5% at the equator; flow360 +5.4% vs +1.6%). The smoothing is load-bearing for the
+polar/uniformity result, which is the article's headline positive. That is a caveat to
+declare, and another reason the equiangular control (§8.4 A1) matters: it separates
+sampling from architecture, and this smoothing sits on the architecture side.
