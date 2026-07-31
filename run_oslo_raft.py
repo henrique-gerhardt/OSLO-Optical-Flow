@@ -182,6 +182,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--so3-prob", type=float, default=1.0)
     p.add_argument("--so3-max-angle-deg", type=float, default=180.0)
     p.add_argument("--so3-uniform", action="store_true", help="Haar SO(3) angle density.")
+    p.add_argument("--val-so3-prob", type=float, default=0.0,
+                   help="SO(3) rotation on the VAL stream (default 0 = grid axes fixed, which "
+                        "every recorded number uses). Set to 1.0 for the A1 raster-alignment "
+                        "control: the equiangular grid coincides with the shards' own ERP raster "
+                        "at zero rotation, so its nodes resample source pixels near 1:1 while "
+                        "HEALPix nodes always interpolate. Rotating val destroys that alignment "
+                        "for the equiangular leg and leaves the HEALPix leg's sampling geometry "
+                        "unchanged, separating a data-pipeline advantage from a geometric one.")
     # synthetic-rotation motion source (the Stage-A matching bootstrap, plan §8)
     p.add_argument("--synth-rot-prob", type=float, default=0.0,
                    help="Probability a train record's motion is REPLACED by an exact rotation of "
@@ -581,6 +589,8 @@ def main() -> None:
     val_ds = ShardFlowDataset(
         args.shards, dataset_points, val_sources, shuffle_shards=False, shuffle_buffer=0, seed=args.seed,
         target_points=target_points,
+        so3_prob=args.val_so3_prob, so3_max_angle_deg=args.so3_max_angle_deg,
+        so3_uniform=args.so3_uniform,
         synth_rot_prob=args.val_synth_rot_prob,
         synth_rot_min_deg=args.synth_rot_min_deg, synth_rot_max_deg=args.synth_rot_max_deg,
         synth_photo_scale=args.synth_photo_scale,

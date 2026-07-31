@@ -1368,3 +1368,67 @@ Metrics of interest, per-area weighted, each leg against its own zero baseline:
 Falsifiers standing: one seed (project spread is ±14% relative, the observed global gap
 was 21%), one dataset per regime, 2000 steps. The seed-11 pair is blocking before any
 claim leaves this document.
+
+### 14.5 Corrected result (per-area metric, git `d2961ce9b`)
+
+Regression check first: the HEALPix leg re-evaluated from its checkpoint reproduces
+`global_geo_deg = 3.005125431360787` — all sixteen digits of the original run, every band
+identical. The refactor changed nothing that was already recorded.
+
+**replica360:val** (in-domain, p50 ≈ 12°)
+
+| | HEALPix | equiangular |
+|---|---|---|
+| global | 3.005° (+77.80%) | **1.816° (+86.42%)** |
+| poles | 5.654° (+59.49%) | **3.699° (+73.49%)** |
+| equator | 2.390° (+82.00%) | **1.312° (+89.92%)** |
+| seam | 5.251° (+69.09%) | 2.190° (+85.43%) |
+| poles/equator | **2.37×** | 2.82× |
+
+**flow360:test** (zero-shot, p50 ≈ 0.11°). The HEALPix leg is unchanged by construction
+(`node_weights` stays `None` on an equal-area grid), so §14.1's numbers already are the
+per-area numbers.
+
+| | HEALPix | equiangular |
+|---|---|---|
+| global | 0.970° (−185.2%) | **0.909° (−162.3%)** |
+| poles | 1.728° (−373.3%) | **1.448° (−287.3%)** |
+| equator | **0.672° (−112.2%)** | 0.701° (−118.0%) |
+| poles/equator | 2.57× | **2.07×** |
+
+**The §14.4 prediction failed.** The equiangular leg wins global and poles in *both*
+regimes, and on flow360 it wins uniformity too. What survives for HEALPix: uniformity on
+replica360, the equator on flow360, and the sub-4° bands on replica360 — but that last
+advantage totals **0.009°**, negligible against a 1.189° global gap of which 94% sits in
+the two bands above 16°.
+
+Taken at face value this refutes the thesis' central geometric premise: equal-area
+sampling does not buy polar accuracy, and does not reliably buy uniformity either.
+
+### 14.6 Before that stands — the raster-alignment confound
+
+The shards store ERP images and ERP flow, and the equiangular grid **is** the ERP
+geometry. At zero rotation its nodes resample source pixels near 1:1, most tightly at the
+poles where ERP is densest, while HEALPix nodes always fall between ERP pixels and take
+a bilinear blur. That is a data-pipeline advantage, not a geometric one, and it would be
+largest exactly where the measured gaps are largest.
+
+**Control** (`--val-so3-prob`, default 0 so every recorded number is untouched): rotate
+the validation stream. HEALPix keeps its sampling geometry under rotation; the
+equiangular grid loses its alignment with the raster. The rotation draw is seeded
+`seed + epoch*131 + worker_id`, independent of the grid, so both legs see an identical
+rotation sequence on identical records — the pair stays matched.
+
+Pre-registered reading, comparing the two legs *within* the rotated run only (rotated
+numbers are not comparable to the unrotated ones, since the polar mask then holds
+different scene content):
+
+- Equiangular advantage **survives** ⇒ alignment is not the cause; the grid genuinely
+  helps and §14.5 stands as written.
+- Equiangular advantage **vanishes or inverts** ⇒ §14.5 measured the data pipeline, the
+  equal-area claim is rehabilitated, and the correct statement becomes that equal-area
+  sampling costs nothing while removing a dependence on the source raster's own grid.
+
+Still blocking either way: seed 11. The project's seed spread is ±14% relative; the
+replica360 gap here is 40%, comfortably outside it, but flow360's global gap is 6.2% and
+would not survive a seed swing on its own.
