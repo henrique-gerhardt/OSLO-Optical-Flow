@@ -98,6 +98,36 @@ def equiangular_unit_vectors(level: int) -> torch.Tensor:
     ).float()
 
 
+def level_from_num_nodes(num_nodes: int) -> int:
+    """Invert ``12 * 4**level``; raises if ``num_nodes`` is not a valid grid size."""
+    level = int(round(math.log(num_nodes / 12.0, 4.0))) if num_nodes >= 12 else -1
+    if level < 0 or 12 * 4 ** level != num_nodes:
+        raise ValueError(f"{num_nodes} is not 12 * 4**l for any integer l")
+    return level
+
+
+def equiangular_solid_angles(level: int) -> torch.Tensor:
+    """Per-node cell solid angle in nested order, normalized to mean 1.
+
+    Metrics average per node. On an equal-area grid that is already the average per unit
+    solid angle, but here node density goes as ``1 / sin(theta)``, so an unweighted mean
+    over-counts the poles by ~2.5x inside the ``|lat| >= 60`` mask and under-counts the
+    equator. These weights restore the per-area average, which is the only aggregate that
+    means the same thing on both grids.
+
+    Row ``k`` spans colatitude ``[k, k+1] * pi / n_lat``, so its cell subtends
+    ``(2 pi / n_lon) * (cos theta_k - cos theta_{k+1})`` exactly — no small-angle
+    approximation, and the untruncated sum is ``4 pi``.
+    """
+    n_lat, n_lon = grid_shape(level)
+    row_of, _, _ = _ordering(level)
+    edges = torch.arange(n_lat + 1, dtype=torch.float64) * (math.pi / n_lat)
+    cos_edges = torch.cos(edges)
+    row_area = (cos_edges[:-1] - cos_edges[1:]) * (2.0 * math.pi / n_lon)
+    weights = row_area[row_of]
+    return (weights / weights.mean()).float()
+
+
 def equiangular_neighbor_graph(
     level: int, points: Optional[torch.Tensor] = None, dtype: torch.dtype = torch.float32
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:

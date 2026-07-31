@@ -234,6 +234,11 @@ def parse_args() -> argparse.Namespace:
                    help="Great-circle formula. 'acos' reproduces every existing number and "
                         "has a 0.028 deg float32 floor; 'haversine' is exact at zero. Run "
                         "both to MEASURE the floor's effect before quoting sub-floor claims.")
+    p.add_argument("--metric-node-weights", default="area", choices=["area", "uniform"],
+                   help="How metrics average over nodes. 'area' weights each node by its "
+                        "cell solid angle, which is the only aggregate that means the same "
+                        "thing on grids of different node density; it is a no-op on the "
+                        "equal-area HEALPix grid. 'uniform' reproduces pre-fix numbers.")
     # runtime
     p.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
     p.add_argument("--amp", action="store_true")
@@ -337,7 +342,7 @@ def move_batch(batch: dict, device: torch.device) -> dict:
 
 @torch.no_grad()
 def evaluate(model, loader, geom, sup_level, region_masks, active_thresholds, device, eval_iters,
-             max_pairs, motion_bands=()):
+             max_pairs, motion_bands=(), node_weights=None):
     # geom is what the model consumes (a SphereLevel single-res, or a SpherePyramid multi-res);
     # sup_level is the grid the loss/metrics live on (the level itself, or the pyramid's fine level).
     model.eval()
@@ -353,7 +358,7 @@ def evaluate(model, loader, geom, sup_level, region_masks, active_thresholds, de
         maps = compute_maps(pred, batch, points, sup_level.basis_east, sup_level.basis_north)
         target_chunks.append(target_sample_from_maps(maps, None))
         accumulate_maps(maps, region_masks, active_thresholds, totals, counts, active_counts,
-                        motion_bands=motion_bands)
+                        motion_bands=motion_bands, node_weights=node_weights)
         seen += batch["frame1"].size(0)
         if max_pairs is not None and seen >= max_pairs:
             break
@@ -546,6 +551,19 @@ def main() -> None:
 
     region_masks = build_region_masks(sup_level.points)
 
+    # HEALPix nodes already carry equal solid angle, so uniform IS the per-area average
+    # there and node_weights stays None (every recorded number reproduces bit-for-bit).
+    node_weights = None
+    if args.metric_node_weights == "area" and args.grid == "equiangular":
+        from spherical_flow.equiangular_pyramid import (
+            equiangular_solid_angles, level_from_num_nodes,
+        )
+        node_weights = equiangular_solid_angles(
+            level_from_num_nodes(sup_level.num_nodes)).to(device)
+        print(f"metric node weights: area (equiangular), "
+              f"pole/equator weight ratio {float(node_weights.min() / node_weights.max()):.4f}",
+              flush=True)
+
     train_ds = ShardFlowDataset(
         args.shards, dataset_points, train_sources,
         shuffle_shards=True, shuffle_buffer=args.shuffle_buffer, seed=args.seed,
@@ -611,7 +629,8 @@ def main() -> None:
         backup = {k: v.detach().clone() for k, v in model.state_dict().items()}
         model.load_state_dict({k: s.to(backup[k].dtype) for k, s in state.items()})
         m = evaluate(model, val_loader, geom, sup_level, region_masks, active_thresholds,
-                     device, args.eval_iters, args.max_val_pairs, motion_bands)
+                     device, args.eval_iters, args.max_val_pairs, motion_bands,
+                     node_weights=node_weights)
         model.load_state_dict(backup)
         return m
 
@@ -673,7 +692,8 @@ def main() -> None:
         if step == 1 or step == total_steps or step % args.log_every == 0:
             with torch.no_grad():
                 maps = compute_maps(preds[-1], batch, sup_level.points, sup_level.basis_east, sup_level.basis_north)
-                tm = summarize_maps(maps, region_masks, active_thresholds, motion_bands)
+                tm = summarize_maps(maps, region_masks, active_thresholds, motion_bands,
+                                    node_weights=node_weights)
             lr_now = opt.param_groups[0]["lr"]
             aux_txt = ""
             if aux_w > 0.0:
@@ -684,14 +704,16 @@ def main() -> None:
 
         if args.eval_every and step % args.eval_every == 0 and step != total_steps:
             metrics = evaluate(model, val_loader, geom, sup_level, region_masks, active_thresholds,
-                               device, args.eval_iters, args.max_val_pairs, motion_bands)
+                               device, args.eval_iters, args.max_val_pairs, motion_bands,
+                               node_weights=node_weights)
             print_metrics(f"val@{step}", metrics, motion_bands)
             if ema_state is not None:
                 print_metrics(f"val_ema@{step}", evaluate_state(ema_state), motion_bands)
             model.train()
 
     metrics = evaluate(model, val_loader, geom, sup_level, region_masks, active_thresholds,
-                       device, args.eval_iters, args.max_val_pairs, motion_bands)
+                       device, args.eval_iters, args.max_val_pairs, motion_bands,
+                       node_weights=node_weights)
     metrics["elapsed_s"] = time.time() - start
     print_metrics("validation", metrics, motion_bands)
     metrics_ema = None

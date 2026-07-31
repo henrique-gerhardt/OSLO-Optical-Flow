@@ -20,7 +20,7 @@ def weighted_masked_mean(
     mask_f = mask.to(dtype=values.dtype)
     if weights is None:
         weights = torch.ones_like(values)
-    weights = weights.to(dtype=values.dtype) * mask_f
+    weights = weights.to(device=values.device, dtype=values.dtype) * mask_f
     return (values * weights).sum() / weights.sum().clamp_min(1.0)
 
 
@@ -151,37 +151,43 @@ def summarize_maps(
     region_masks: Dict[str, torch.Tensor],
     active_thresholds: list[float],
     motion_bands: list[tuple[float, float]] = (),
+    node_weights: Optional[torch.Tensor] = None,
 ) -> Dict[str, float]:
+    """One-shot twin of :func:`accumulate_maps`; ``node_weights`` has the same meaning."""
     out: Dict[str, float] = {}
     valid = maps["valid"]
+
+    def mass(mask: torch.Tensor) -> float:
+        if node_weights is None:
+            return float(mask.sum().item())
+        w = node_weights.to(device=mask.device, dtype=maps["geo_deg"].dtype)
+        return float((mask.to(dtype=w.dtype) * w).sum().item())
+
+    total = max(mass(valid), 1e-12)
     for region_name, region_mask in region_masks.items():
         mask = valid & region_mask.unsqueeze(0)
-        count = int(mask.sum().item())
-        if count == 0:
+        count = mass(mask)
+        if count == 0.0:
             continue
         prefix = f"{region_name}_"
-        out[prefix + "count"] = float(count)
-        out[prefix + "geo_deg"] = float(masked_mean(maps["geo_deg"], mask).detach().cpu())
-        out[prefix + "zero_geo_deg"] = float(masked_mean(maps["zero_geo_deg"], mask).detach().cpu())
-        out[prefix + "tangent_epe_rad"] = float(masked_mean(maps["tangent_epe_rad"], mask).detach().cpu())
-    for threshold in active_thresholds:
-        mask = valid & (maps["zero_geo_deg"] >= threshold)
-        count = int(mask.sum().item())
-        prefix = active_key(threshold) + "_"
-        out[prefix + "count"] = float(count)
-        out[prefix + "frac"] = float(count) / max(float(valid.sum().item()), 1.0)
-        if count > 0:
-            out[prefix + "geo_deg"] = float(masked_mean(maps["geo_deg"], mask).detach().cpu())
-            out[prefix + "zero_geo_deg"] = float(masked_mean(maps["zero_geo_deg"], mask).detach().cpu())
-    for lo, hi in motion_bands:
-        mask = valid & (maps["zero_geo_deg"] >= lo) & (maps["zero_geo_deg"] < hi)
-        count = int(mask.sum().item())
-        prefix = band_key(lo, hi) + "_"
-        out[prefix + "count"] = float(count)
-        out[prefix + "frac"] = float(count) / max(float(valid.sum().item()), 1.0)
-        if count > 0:
-            out[prefix + "geo_deg"] = float(masked_mean(maps["geo_deg"], mask).detach().cpu())
-            out[prefix + "zero_geo_deg"] = float(masked_mean(maps["zero_geo_deg"], mask).detach().cpu())
+        out[prefix + "count"] = count
+        for name in ("geo_deg", "zero_geo_deg", "tangent_epe_rad"):
+            out[prefix + name] = float(
+                weighted_masked_mean(maps[name], mask, node_weights).detach().cpu())
+    selections = [(active_key(t), valid & (maps["zero_geo_deg"] >= t)) for t in active_thresholds]
+    selections += [
+        (band_key(lo, hi), valid & (maps["zero_geo_deg"] >= lo) & (maps["zero_geo_deg"] < hi))
+        for lo, hi in motion_bands
+    ]
+    for key, mask in selections:
+        count = mass(mask)
+        prefix = key + "_"
+        out[prefix + "count"] = count
+        out[prefix + "frac"] = count / total
+        if count > 0.0:
+            for name in ("geo_deg", "zero_geo_deg"):
+                out[prefix + name] = float(
+                    weighted_masked_mean(maps[name], mask, node_weights).detach().cpu())
     return add_improvement_metrics(out)
 
 
@@ -204,16 +210,32 @@ def accumulate_maps(
     counts: Dict[str, float],
     active_counts: Dict[str, float],
     motion_bands: list[tuple[float, float]] = (),
+    node_weights: Optional[torch.Tensor] = None,
 ) -> None:
+    """Stream masked sums into ``totals``/``counts``.
+
+    ``node_weights`` is a ``[N]`` per-node solid angle normalized to mean 1, which turns
+    every mean and every ``_frac`` into a per-area quantity. Pass it whenever the grid is
+    not equal-area: an unweighted node mean answers "average over this grid's nodes",
+    which is a different question on each grid and is not comparable across them. ``None``
+    keeps the plain node mean, which already equals the per-area mean on HEALPix.
+    """
     valid = maps["valid"]
+
+    def weigh(mask: torch.Tensor) -> torch.Tensor:
+        w = mask.to(dtype=maps["geo_deg"].dtype)
+        if node_weights is None:
+            return w
+        return w * node_weights.to(device=w.device, dtype=w.dtype)
+
     for region_name, region_mask in region_masks.items():
-        mask = valid & region_mask.unsqueeze(0)
-        count = float(mask.sum().item())
+        w = weigh(valid & region_mask.unsqueeze(0))
+        count = float(w.sum().item())
         if count == 0.0:
             continue
         for metric_name in ("geo_deg", "zero_geo_deg", "tangent_epe_rad"):
             key = f"{region_name}_{metric_name}"
-            totals[key] = totals.get(key, 0.0) + float((maps[metric_name] * mask).sum().detach().cpu())
+            totals[key] = totals.get(key, 0.0) + float((maps[metric_name] * w).sum().detach().cpu())
             counts[key] = counts.get(key, 0.0) + count
 
     selections = [(active_key(t), valid & (maps["zero_geo_deg"] >= t)) for t in active_thresholds]
@@ -222,13 +244,14 @@ def accumulate_maps(
         for lo, hi in motion_bands
     ]
     for prefix, mask in selections:
-        count = float(mask.sum().item())
+        w = weigh(mask)
+        count = float(w.sum().item())
         active_counts[prefix] = active_counts.get(prefix, 0.0) + count
         if count == 0.0:
             continue
         for metric_name in ("geo_deg", "zero_geo_deg", "tangent_epe_rad"):
             key = f"{prefix}_{metric_name}"
-            totals[key] = totals.get(key, 0.0) + float((maps[metric_name] * mask).sum().detach().cpu())
+            totals[key] = totals.get(key, 0.0) + float((maps[metric_name] * w).sum().detach().cpu())
             counts[key] = counts.get(key, 0.0) + count
 
 

@@ -1276,3 +1276,95 @@ head is tuned to the current noise level.
 polar/uniformity result, which is the article's headline positive. That is a caveat to
 declare, and another reason the equiangular control (§8.4 A1) matters: it separates
 sampling from architecture, and this smoothing sits on the architecture side.
+
+---
+
+## 14. A1 — equiangular control, round 1 (2026-07-30): the instrument was not grid-invariant
+
+Matched-pair from-scratch training, `replica360:train → replica360:val`, 2000 steps,
+one-cycle, seed 7, haversine, git `5c94e3e52`. Only `--grid` differs. Both legs are
+1,558,768 parameters, retina r7 / supervision r6 / estimation r4.
+
+### 14.1 What the run reported (node-weighted metrics — superseded)
+
+| | HEALPix | equiangular |
+|---|---|---|
+| global | 3.005° (77.80%) | 2.477° (81.72%) |
+| poles | 5.654° (59.49%) | 4.337° (68.97%) |
+| equator | 2.390° (82.00%) | 1.315° (89.90%) |
+| poles/equator | 2.37× | 3.30× |
+
+Read naively this fires the pre-registered "polos comparáveis" branch and refutes
+"equal-area sampling buys polar accuracy". Two things block that reading.
+
+### 14.2 The band decomposition: HEALPix wins nine of eleven bands
+
+Contribution to the global mean, `Σ frac × error`:
+
+| faixa | HEALPix | equiangular | winner |
+|---|---|---|---|
+| 0–0.0625° | −3200% | −3897% | HP |
+| 0.0625–0.125° | −828% | −1290% | HP |
+| 0.125–0.25° | −372% | −602% | HP |
+| 0.25–0.5° | −131% | −226% | HP |
+| 0.5–1° | −11.6% | −58.4% | HP |
+| 1–2° | +41.5% | +17.4% | HP |
+| 2–4° | +70.3% | +57.9% | HP |
+| 4–8° | +82.9% | +77.8% | HP |
+| 8–16° | +88.4% | +85.2% | HP |
+| 16–32° | +82.0% | +86.4% | EQ |
+| 32°+ | +22.6% | +58.4% | EQ |
+
+Bands below 16° give HEALPix **+0.261°**; bands above give equiangular **+0.789°**;
+net +0.528° for equiangular. The **32°+ band alone (3.3% of nodes) is 0.505°, i.e. 96%
+of the net global difference**. The region-level result is that one tail band leaking
+through the aggregate.
+
+### 14.3 The blocking defect: node-weighted means are not comparable across grids
+
+`accumulate_maps` averaged over nodes. That equals the per-area average only on an
+equal-area grid. The `poles` mask (`|lat| ≥ 60°`) covers 13.4% of HEALPix nodes and
+**32.8%** of equiangular nodes, so every aggregate — global, regional, per band —
+asked a different question on each leg.
+
+Direction of the bias: equiangular over-weights the poles, where error is highest, so
+its numbers were **penalised**. Reconstructing the per-area global from the three region
+means flips the flow360 verdict (0.933° vs HEALPix 0.970°) and widens the replica360
+one (1.889° vs 3.005°). The tail-band decomposition in §14.2 carries the same defect.
+
+**Fixed** (`--metric-node-weights {area,uniform}`, default `area`): each node is weighted
+by its exact cell solid angle, `(2π/n_lon)(cos θ_k − cos θ_{k+1})`, normalized to mean 1.
+On HEALPix the weights are uniform and `node_weights` stays `None`, so every recorded
+number reproduces bit-for-bit — the HEALPix re-run is a regression test. Validated: the
+weights sum to 4π; the pole/equator ratio equals the `sin θ` ratio; the mean of `z²` over
+the sphere reads 0.33335 weighted against 0.5 unweighted (truth 1/3); streamed and
+one-shot paths agree; `_frac` becomes an area fraction.
+
+**Residual, not fixable by weighting.** Region masks snap to whole cell rows, so the
+`poles` mask covers 13.0% of the sphere on equiangular against 13.4% on HEALPix (equator
+49.3% vs 50.0%). Region comparisons across grids stay approximate to ~3% relative; the
+global mask has no edge and is exact.
+
+**Methodological note.** This is the third time a component measured out of its operating
+regime produced an actionable-looking claim (§13.4 upsampler; the "10× handicap" in §8.0;
+now this). The pattern: before comparing two configurations, check that the *measurement*
+means the same thing in both.
+
+### 14.4 Pre-registered reading for the corrected re-run
+
+Metrics of interest, per-area weighted, each leg against its own zero baseline:
+
+- **`poles_improvement_pct` and the poles/equator error ratio.** Equiangular collapsing
+  at the poles ⇒ equal-area sampling is the cause of the polar result. Comparable or
+  better ⇒ the architectural claim must be reformulated, and the polar advantage over
+  RAFT belongs to something else (spherical convolution, geodesic loss, tangent-space
+  flow, or the smoothing upsampler of §13.6).
+- **The band table.** If HEALPix still wins the sub-16° bands after weighting, the grid
+  choice is a range/resolution trade rather than an accuracy claim, and equal-area is
+  justified for the regimes the thesis targets.
+- **Uniformity** is the reading most exposed to the mask-snapping residual above; treat
+  a difference under ~5% as noise.
+
+Falsifiers standing: one seed (project spread is ±14% relative, the observed global gap
+was 21%), one dataset per regime, 2000 steps. The seed-11 pair is blocking before any
+claim leaves this document.
