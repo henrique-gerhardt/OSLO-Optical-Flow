@@ -84,7 +84,13 @@ def build_command(script: str, saved: Dict, overrides: Dict[str, str],
             if key not in defaults:
                 print(f"# note: dropping '{key}' — {script} no longer accepts it", flush=True)
                 del merged[key]
-    merged.update(overrides)
+    # --set values arrive as strings; a store_true flag must become a real bool or it
+    # would be emitted as "--eval-only true", which argparse rejects.
+    for key, raw in overrides.items():
+        if isinstance(defaults.get(key), bool):
+            merged[key] = raw.strip().lower() in ("1", "true", "yes", "on")
+        else:
+            merged[key] = raw
     if output_suffix and "output_dir" in merged:
         merged["output_dir"] = merged["output_dir"].rstrip("/") + output_suffix
 
