@@ -1432,3 +1432,79 @@ different scene content):
 Still blocking either way: seed 11. The project's seed spread is ±14% relative; the
 replica360 gap here is 40%, comfortably outside it, but flow360's global gap is 6.2% and
 would not survive a seed swing on its own.
+
+### 14.7 Seed replication — the A1 result is not a seed artefact
+
+replica360:val, per-area, seeds 7 and 11, same recipe, only `--grid` differs.
+
+| | HP s7 | HP s11 | EQ s7 | EQ s11 |
+|---|---|---|---|---|
+| global | 3.005 | 2.648 | **1.816** | **1.848** |
+| poles | 5.654 | 4.923 | **3.699** | **3.608** |
+| equator | 2.390 | 2.114 | **1.312** | **1.371** |
+| poles/equator | **2.37×** | **2.33×** | 2.82× | 2.63× |
+
+The seed ranges do **not overlap in any region**. Worst-case equiangular (1.848°) still
+beats best-case HEALPix (2.648°) by 30% global, 25% at the poles, 35% at the equator.
+Two-seed means: 2.826° vs 1.832°, a 35% error reduction.
+
+The HEALPix uniformity advantage also replicates (2.37/2.33 vs 2.82/2.63, a 14% gap,
+above the ~5% mask-snapping noise threshold declared in §14.4). It is now the only
+property the equal-area grid is measured to buy.
+
+**Side finding: the equiangular leg is far more seed-stable** — global spread 1.8% vs
+HEALPix 12.6%. The project's ±14% seed band was measured on HEALPix and does not
+transfer to the equiangular grid.
+
+§14.6's raster-alignment control remains the open question; the seed falsifier is closed.
+
+### 14.8 A1 CLOSED — equal-area sampling is not the mechanism
+
+Raster-alignment control (`--val-so3-prob 1.0`, seed 7, per-area, matched rotations).
+
+**replica360:val**
+
+| | HEALPix | equiangular | gap |
+|---|---|---|---|
+| global | 2.946° (+78.03%) | **1.966° (+85.34%)** | −33.3% |
+| poles | 5.670° (+59.54%) | **3.564° (+74.57%)** | −37.1% |
+| equator | 2.316° (+82.38%) | **1.588° (+87.92%)** | −31.4% |
+| poles/equator | 2.45× | **2.24×** | |
+
+**flow360:test**
+
+| | HEALPix | equiangular | gap |
+|---|---|---|---|
+| global | 1.082° (−216.0%) | **0.909° (−165.5%)** | −16.0% |
+| poles | 1.550° (−355.8%) | **1.232° (−262.8%)** | −20.6% |
+| equator | 0.955° (−176.4%) | **0.846° (−144.5%)** | −11.4% |
+| poles/equator | 1.62× | **1.46×** | |
+
+**The confound is eliminated, and the evidence runs opposite to its prediction.**
+Destroying the ERP alignment cost the equiangular leg nothing on flow360 (0.9094° →
+0.9092°, 0.02%) and cost HEALPix **11.6%** (0.970° → 1.082°); the gap widened from 6.2%
+to 16.0%. The mechanism for that inversion is not established and is left open — what
+matters is that the alignment hypothesis predicted the reverse.
+
+**Uniformity falls too.** Under rotation the scene content is statistically uniform
+across regions, which isolates *grid* anisotropy from the *scene's* vertical structure.
+In that reading equiangular is flatter on both datasets (2.24× vs 2.45×; 1.46× vs 1.62×).
+The HEALPix 2.37×/2.33× advantage exists only in the axis-aligned replica360 view.
+
+**Verdict.** Same architecture, same 1,558,768 parameters, same recipe, only node
+placement differs. Equal-area sampling buys neither polar accuracy nor uniformity; it
+costs ~33% global error on replica360 (two seeds, non-overlapping) and 6–16% on flow360,
+and it trains less reproducibly (seed spread 12.6% vs 1.8%). Both readings — axis-aligned
+and content-averaged — agree, so neither raster alignment nor scene structure explains it.
+
+**What this does NOT say.** The equiangular grid here is still a graph on the sphere:
+geodesic loss, tangent-space flow, wrap-around neighborhoods, no ERP-projection distortion
+inside the convolution kernel. This is not "ERP + CNN", and the OSLO-vs-RAFT polar result
+is untouched as a *measurement*. What falls is the *attribution*: the advantage over an
+ERP-raster CNN comes from somewhere else in the architecture — spherical convolution,
+geodesic loss, tangent-space representation, or the smoothing upsampler that §13.6 already
+showed is load-bearing for the polar number. Sphere-native beats raster-native; equal-area
+node placement is not the reason, and is measurably the worse choice.
+
+**Scope.** 2000 steps, replica360 training only, one architecture. Whether the ordering
+survives a full-length run on the production mix is untested.
