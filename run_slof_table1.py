@@ -124,7 +124,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--shards", default="/data/shards")
     parser.add_argument("--dataset", default="flow360", help="sfprep dataset name (shards source).")
     parser.add_argument("--mode", default="test", choices=["train", "val", "test"],
-                        help="Their split. 'test' is the official held-out one (1089 forward pairs).")
+                        help="Their split. 'test' is the official held-out one (1289 forward pairs).")
+    parser.add_argument("--directions", default="forward", choices=["forward", "both"],
+                        help="Shards source only. 'forward' is their pair set; 'both' adds the "
+                             "backward flows, which is what the geodesic universality rows use "
+                             "(2567 on flow360:test). Set it to 'both' when the point is to "
+                             "compare the two METRICS on one pair set rather than to reproduce "
+                             "their table.")
     parser.add_argument("--resize", default="320x640",
                         help="HxW their loader resizes to. Their published setting is 320x640.")
     parser.add_argument("--checkpoint", default="",
@@ -240,7 +246,8 @@ def iter_raw(pairs, size_hw, resample) -> Iterator[dict]:
         }
 
 
-def iter_shards(shards_dir: Path, dataset: str, mode: str, size_hw, resample) -> Iterator[dict]:
+def iter_shards(shards_dir: Path, dataset: str, mode: str, size_hw, resample,
+                directions: str = "forward") -> Iterator[dict]:
     """Same pairs from the sfprep tars. Stream order, not their sorted order: EPE is
     order-invariant, their AE is not, so AE from this source is not comparable."""
     from spherical_flow.shard_dataset import _import_sfprep
@@ -251,7 +258,7 @@ def iter_shards(shards_dir: Path, dataset: str, mode: str, size_hw, resample) ->
         raise FileNotFoundError(f"no shards for {dataset}:{mode} under {shards_dir}")
     for shard in found:
         for record in iter_shard(shard):
-            if record["meta"].get("direction") != "forward":
+            if directions == "forward" and record["meta"].get("direction") != "forward":
                 continue          # their loader only ever reads fflows
             yield {
                 "uid": record["meta"]["uid"],
@@ -395,9 +402,10 @@ def main() -> None:
         print(f"source=raw root={args.raw_root} mode={args.mode} pairs={len(pairs)}", flush=True)
         stream = iter_raw(pairs, size_hw, args.resample)
     else:
-        print(f"source=shards {args.dataset}:{args.mode} (frames are JPEG, flow float16)",
-              flush=True)
-        stream = iter_shards(Path(args.shards), args.dataset, args.mode, size_hw, args.resample)
+        print(f"source=shards {args.dataset}:{args.mode} directions={args.directions} "
+              f"(frames are JPEG, flow float16)", flush=True)
+        stream = iter_shards(Path(args.shards), args.dataset, args.mode, size_hw,
+                             args.resample, args.directions)
 
     latitude = pixel_latitude(height)                       # [H, 1] degrees
     coslat = torch.cos(torch.deg2rad(latitude)).unsqueeze(0)  # [1, H, 1] solid-angle weight

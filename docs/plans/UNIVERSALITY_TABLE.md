@@ -1893,3 +1893,192 @@ metric objection because it is their table.
    4-pair probe the corrections *increased* SLOF's margin (+18% → +55% global),
    which is the opposite of what a "their metric flatters them" story predicts, so
    that story should not be told until the full split has been read.
+
+### 16.5 The decomposition — the margin is NOT a metric artefact
+
+Same predictions, four conventions, and a split by |latitude|. `plain` is theirs;
+`area` weights each pixel by cos φ (the solid angle it covers); `sph` scales the
+longitudinal residual by cos φ before the norm (an ERP pixel of `du` is worth
+cos φ of angle); `sph_area` does both. `singlerotation`, 1289 pairs.
+
+| improvement over zero (%) | s≥0 | s<5 | s<20 | s≥20 |
+| --- | --- | --- | --- | --- |
+| plain (their metric) | +32.91 | +49.26 | +48.34 | +22.24 |
+| area | +29.93 | +54.40 | +49.44 | +8.14 |
+| sph | +30.28 | +54.16 | +48.88 | +7.71 |
+| sph_area | +30.32 | +54.73 | +48.75 | +5.80 |
+
+| improvement over zero (%) | 0–15° | 15–30° | 30–45° | 45–60° | 60–75° | 75–90° |
+| --- | --- | --- | --- | --- | --- | --- |
+| plain | +30.38 | +30.56 | +31.70 | +26.49 | +28.15 | +36.64 |
+| sph_area | +30.40 | +30.69 | +32.24 | +27.84 | +29.17 | +32.51 |
+
+**The corrections move the global margin by 2.6 points and never change its sign,
+in any band.** The hypothesis that the ERP-pixel metric manufactures the win —
+that it prices polar longitudinal error at 1/cos φ and hands the model a cheap
+victory where the sphere is small — is **refuted**. It is refuted twice over:
+band by band the margin is flat at ~+30%, including the equatorial bands where no
+projection inflation exists at all.
+
+What the corrections *do* change is the size of the problem, not who wins it. The
+zero baseline at 75–90° falls from 7.10 px (plain) to 0.89 px (`sph_area`), and
+globally from 2.338 to 0.967 — **59% of the raw ERP "motion" in this dataset is
+polar longitude inflation rather than displacement on the sphere.** That is worth
+reporting on its own: it means the `s≥20` bucket, which their table presents as
+the large-motion regime, is 1.72% of the pixels and is mostly a projection
+artefact — under `sph_area` its zero baseline is 64.4 px of raw displacement that
+corresponds to far less angle, and the margin there collapses from +22.2% to
++5.8%. The *only* place the metric convention materially flatters them is the
+large-motion tail.
+
+`raftfinetune` behaves the same way (+30.51 plain, +26.62 sph_area globally), and
+reproduces to the same six figures, so this is not a property of one checkpoint.
+
+**The disagreement with §9.1 is therefore ours to explain, not theirs.** Three
+candidates remain, and the metric is now the least likely of them:
+
+1. **Input scale** (§16.1 item 3). Settled by the box replay in §16.3. The 8-pair
+   preview moved global −10.96 → −4.01, so this is large but, on that evidence,
+   not large enough on its own to cross +33%.
+2. **Our shards are JPEG.** `sfprep materialize` re-encoded the FLOW360 PNGs as
+   JPEG; the flow is stored float16. This project's own P0c/P0d results say that a
+   *structured* appearance perturbation is precisely what destroys sub-pixel
+   matching, and JPEG ringing is structured and edge-anchored. If our own pipeline
+   injected the nuisance the thesis studies, every row of the universality table
+   measured a degraded model. Test in flight: the identical protocol run with
+   `--source shards` against the raw run above, same checkpoint, same pairs.
+3. **Pair set**: 2567 (both directions) versus their 1289 forward-only.
+
+None of these is a defence of the original claim. They determine *how* it has to
+be rewritten, not whether.
+
+### 16.6 Blast radius in the progress-report article
+
+Audited against `src/main.tex` at the state of 2026-08-03. Three kinds of claim,
+and they are affected very differently.
+
+**Falls, pending the §16.3 replay.** `\subsection{Regime sub-pixel: nenhum método
+supera fluxo nulo}` and the four SLOF rows of `tab:universalidade` (−221,0 /
+−10,4 / −9,5 / −0,6 on global). Those rows ran at the wrong input scale and are
+not a measurement of SLOF. The section *heading* is a universal quantifier over
+methods, and one of the methods in it is mis-run.
+
+**False now, independent of any replay.** Section~4.4's bullet says the SLOF rows
+use "o protocolo de inferência dos autores". They do not: iters 64 against their
+12, and frames in 0–255 against their [0, 1]. This sentence has to change even if
+every number survives.
+
+**Unaffected.** The PanoFlow, RAFT-large and OSLO-RAFT rows: PanoFlow(CSFlow) and
+TorchVision RAFT both receive frames through their own repositories' conventions,
+which our adapters follow, so the scale defect is confined to the five princeton
+checkpoints. The regime-contrast figure keeps all three of its curves, and
+`tab:flowscape`, the head-to-head, the A1 control, the metric section and the
+motion-structure isolation are untouched.
+
+**Strengthened.** The claim that no cited work reports a trivial baseline on its
+own test set (Section~2.2) now has a bit-exact reproduction behind it, and a
+sharper example than any argument: their `doublerotation` row *is* the trivial
+baseline, to 0.06%, printed in their Table I and read as their worst variant.
+
+### 16.7 THE REPLAY (2026-08-03) — the universality claim falls, and the ranking inverts
+
+Five SLOF rows re-run on the box through `rerun_from_json.py`, flow360:test, 2567
+pairs, haversine, iters 64, everything identical to §9.1 except
+`princeton_input_scale=unit`. 350 s each.
+
+| improvement % | global | act₀.₂₅ | act₀.₅ | act₁.₀ | poles |
+| --- | --- | --- | --- | --- | --- |
+| SLOF raft (scratch) | **+7.08** | **+15.22** | **+12.16** | **+5.10** | **+12.47** |
+| SLOF raftfinetune | **+0.63** | **+3.96** | **+3.08** | **+1.12** | **+2.36** |
+| SLOF singlerotation | −0.72 | **+3.32** | **+2.39** | −0.73 | −3.32 |
+| SLOF switchrotation | −14.42 | −5.39 | −3.57 | −1.81 | −12.84 |
+| SLOF doublerotation | −0.46 | −0.10 | +0.01 | +0.24 | −0.50 |
+| PanoFlow(CSFlow)+CFE | −11.32 | −5.79 | −4.75 | −4.16 | −13.78 |
+| frozen RAFT-large | −15.98 | −7.97 | −7.59 | −7.46 | −23.85 |
+| OSLO EMA final | −15.12 | −4.92 | −4.04 | −5.70 | −26.89 |
+
+Against §9.1, the same rows at `byte`: raft −220.97 → **+7.08**, act₀.₂₅ −59.66 →
+**+15.22**; raftfinetune −10.38 → +0.63; singlerotation −9.46 → −0.72;
+switchrotation −21.66 → −14.42; doublerotation −0.57 → −0.46 (unchanged, as a
+zero predictor must be — it has no appearance signal to lose).
+
+**The claim "no published method beats zero-flow" is dead.** Three of five rows
+beat zero on both active thresholds, two beat it globally, and the best of them
+does so at **+7.08% global / +15.22% act₀.₂₅ / +12.47% at the poles**. The
+−220.97% that anchored the strongest sentence in the thesis was our own bug, in
+its entirety. This must be corrected everywhere it appears, and the correction is
+not cosmetic: it changes what the work is allowed to claim.
+
+**The best row is the plainest one.** `raft.pt` is RAFT-large trained from scratch
+on FLOW360's own training split — no rotation equivariance, no spherical
+machinery, no distortion handling. It beats every SLOF variant and every other
+row in this table, including OSLO.
+
+**And the ranking inverts between the two metrics.** On the same checkpoints, same
+dataset:
+
+| | ERP px, their metric (lower better) | geodesic, area-weighted (higher better) |
+| --- | --- | --- |
+| raft (scratch) | 2.058 — worst | **+7.08 — best** |
+| raftfinetune | 1.624 | +0.63 |
+| singlerotation | **1.568 — best** | **−0.72 — worst of the three** |
+
+The paper's headline result is that rotation-equivariant training improves on
+plain RAFT: 1.568 against 2.058, a 24% reduction. Under an area-weighted angular
+metric on the same predictions that ordering **reverses**. This is a finding in
+its own right, it does not depend on the zero baseline at all, and it is the
+sharpest available argument for why the metric section of the thesis exists. It
+also needs its own control before it is published — see §16.8.
+
+**What this costs OSLO.** OSLO-RAFT is now beaten on flow360:test by three
+published rows, one of which is a stock perspective architecture trained
+in-domain. The sentence "OSLO is not an exception to the limit it measures" is
+still true, but the limit is no longer universal, and OSLO is no longer merely
+inside the failure set — it is in the worse half of it, on this benchmark.
+
+**What survives, and is stronger than what fell:**
+
+1. **No cited work reports a trivial baseline on its own test set.** Untouched, and
+   now backed by a bit-exact reproduction of the table in question.
+2. **Their `doublerotation` row is the trivial baseline**, to 0.06% in their metric
+   and to 0.01 points in ours. Printed in Table I, read as their worst variant.
+   Confirmed independently in both metrics.
+3. **The regime contrast, restated quantitatively.** The binary is gone; the
+   magnitude is not. The best method on flow360:test gains **+7%** over doing
+   nothing; on flowscape:test the same class of method gains **+92.6%**. An
+   order of magnitude separates the two regimes, and that statement is more robust
+   than the binary it replaces, because no single row can falsify it.
+
+### 16.8 The control the inversion needs
+
+§16.7's ranking inversion compares two numbers that differ in four ways, not one:
+the metric (ERP px versus area-weighted geodesic), the pair set (1289 forward
+versus 2567 both directions), the refinement budget (12 versus 64), and the frame
+path (raw PNG with PIL bicubic versus JPEG shards with bilinear+antialias). Only
+the first is the claim. `run_slof_table1.py --directions both` now runs the ERP
+metric on the geodesic run's exact pair set, so the other three can be pinned to
+the geodesic side and the metric left as the only free variable:
+
+```bash
+for CK in raft raftfinetune singlerotation; do
+  SHARDS_HOST=../sfprep/shards \
+  docker compose -f docker-compose.oslo_raft.yml run --rm oslo-raft \
+    python run_slof_table1.py \
+      --source shards --shards /data/shards --dataset flow360 --mode test \
+      --directions both --checkpoint /outputs/slof_weights/$CK.pt \
+      --iters 64 --input-scale unit --batch-size 8 --device cuda \
+      --output-dir /outputs/slof_erp_same_pairs_$CK
+done
+```
+
+Pre-registered reading: if `singlerotation` still beats `raft` on ERP `s≥0` under
+these settings while losing to it on geodesic global and actives, the inversion is
+the metric's and is publishable as such. If the ordering matches the geodesic one
+here, then it was the pair set or the iteration budget, and the ERP-versus-geodesic
+inversion claim is withdrawn — leaving §16.4's reproduction and §16.7's correction,
+which stand on their own.
+
+A separate local run measures what our own pipeline costs: the same protocol,
+`--source shards` (JPEG frames, float16 flow) against the raw-PNG run of §16.4,
+same checkpoint. That number bounds how much of every row in this document is our
+re-encoding rather than the method.
