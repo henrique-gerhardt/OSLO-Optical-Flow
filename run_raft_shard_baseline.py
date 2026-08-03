@@ -111,6 +111,12 @@ def parse_args() -> argparse.Namespace:
                              "--model picks large/small, --weights is ignored.")
     parser.add_argument("--iters", type=int, default=32,
                         help="Refinement iterations for the princeton path (SLOF evals used 64).")
+    parser.add_argument("--princeton-input-scale", default="byte", choices=["byte", "unit"],
+                        help="Frame range fed to a --checkpoint model. 'byte' is 0-255, which is "
+                             "what the forward's 2*(x/255)-1 normalization expects. 'unit' is "
+                             "0-1, which is what SLOF's own loader produces (ToTensor) and "
+                             "therefore the range their checkpoints were trained and published "
+                             "under; see run_slof_table1.py. Ignored for torchvision/PanoFlow.")
     parser.add_argument("--panoflow-checkpoint", default="",
                         help="Path to a PanoFlow(CSFlow) checkpoint. When set, the vendored "
                              "PanoFlow(CSFlow) net runs under CFE at native shard resolution "
@@ -208,7 +214,8 @@ def main() -> None:
             )
             print(
                 f"princeton raft checkpoint={args.checkpoint} small={princeton_meta['small']} "
-                f"iters={args.iters} infer_size={infer_size or 'shard'} "
+                f"iters={args.iters} input_scale={args.princeton_input_scale} "
+                f"infer_size={infer_size or 'shard'} "
                 f"flow_transform={args.flow_transform} device={device} "
                 f"loaded_keys={princeton_meta['loaded_keys']} "
                 f"unexpected_keys={princeton_meta['unexpected_keys']} "
@@ -249,6 +256,9 @@ def main() -> None:
                     model, frames1, frames2, device, args.flow_transform,
                 )
             elif args.checkpoint:
+                if args.princeton_input_scale == "unit":
+                    frames1 = frames1.float() / 255.0
+                    frames2 = frames2.float() / 255.0
                 raft_flow = predict_princeton_flow(
                     model, frames1, frames2, device, args.flow_transform,
                     args.iters, infer_size,
@@ -336,6 +346,7 @@ def main() -> None:
             "flow_transform": args.flow_transform,
             "torchvision": torchvision_version,
             "iters": args.iters if args.checkpoint else None,
+            "input_scale": args.princeton_input_scale if args.checkpoint else None,
             "infer_size": list(infer_size) if (args.checkpoint and infer_size) else None,
             "princeton": princeton_meta,
             "panoflow": panoflow_meta,

@@ -22,6 +22,14 @@ eval at **320×640**, iters=64, unweighted ERP px, magnitude-bucketed):
 | RAFT (trained) | 3.344 | 0.558 | 71.736 |
 | RAFT + KTN | 3.899 | 0.598 | 76.426 |
 
+> **CORRECTION (2026-08-03, §16.1).** The "All" column above is their *weighted*
+> one (`Weighted s≥0*` = EPEd, poles counted double). Table I also carries an
+> unweighted `s≥0` column, which is the one the buckets belong to: SLOF v1
+> **1.568**, v2 1.615, RAFT-ft 1.624, RAFT 2.058, KTN 2.222. Every global
+> statement in this section must be re-read against those numbers, which sit
+> much closer to the zero baseline — that is what §16 measures. The header's
+> "iters=64" is also wrong: the shipped CSVs are iters=12.
+
 Zero-flow "All" EPE (= mean |GT|): **never reported by them.** From our P2A
 numbers on our val split: unweighted global zero ≈ 1.43 px @1024-wide ⇒ **≈0.89
 px @640-wide**. Their own bucket arithmetic (All ≈ mix of lt20 body ~0.5 and
@@ -1508,3 +1516,380 @@ node placement is not the reason, and is measurably the worse choice.
 
 **Scope.** 2000 steps, replica360 training only, one architecture. Whether the ordering
 survives a full-length run on the production mix is untested.
+
+## 15. A1 at production scale (2026-08-02) — the 20k equiangular leg
+
+`P1proper_mix20k_a1eq`, git `5d7fc34aa`. The P1-proper recipe replayed with `--grid
+equiangular` as the only change: same 1,558,768 parameters, same mix
+(`chairs360:train,flowscape:train,flow360:train`), same seed 7, same 20000 steps, same
+warm start from the HEALPix-trained `oslo_raft_retina_stageA`. Metrics are haversine and
+per-area. Wall clock **22.8 h**, roughly four times my estimate — the equiangular
+neighbour graph at retina level 7 is materially slower per step than HEALPix, and any
+future scheduling should use the measured rate, not the HEALPix one.
+
+### 15.1 The endpoint, and why it is not yet the answer
+
+| flow360:val | model | zero | improvement |
+|---|---|---|---|
+| global | 0.2785° | 0.2066° | **−34.85%** |
+| active ≥ 0.25° | 0.6692° | 0.6354° | **−5.32%** |
+| active ≥ 0.5° | 0.9380° | 0.8943° | **−4.89%** |
+| active ≥ 1.0° | 2.1581° | 2.0933° | **−3.09%** |
+| poles | 0.2754° | 0.1576° | −74.77% |
+| equator | 0.2627° | 0.2133° | −23.16% |
+| seam | 0.4306° | 0.3578° | −20.33% |
+
+Negative at every threshold and every region, and the pre-registered gate (act₀.₅ > +5.2%)
+is not met. Three things block reading that as a falsification, in descending order of
+how cheaply they can be removed.
+
+**One: this is not the metric the HEALPix record was measured in.** The `+4.0` raw and
+`+4.5±0.9` EMA numbers for HEALPix date to 2026-07-23/24, before the haversine switch
+(§12) and before per-area weighting (§14.3). §12 showed the acos floor inflated the zero
+baseline and therefore flattered every improvement figure by 5–10 points on these splits.
+Comparing `−4.89` against `+4.0` compares two different rulers. Removing this costs one
+eval-only pass over the HEALPix 20k endpoint and is the single highest-value next action.
+
+**Two: the endpoint is one draw from a noisy trajectory.** The per-eval act₀.₅ series runs
+−38.0 … +7.4, and the run crossed the gate twice on the way through (+6.75 at 5k, +7.37 at
+6k). Over the deep-anneal half (11k–20k) the centre is **−4.6 ± 6.6** (s.e. 2.1), so the
+endpoint sits essentially at the basin centre rather than on an excursion — but the raw
+spread here (σ 11.1 over all evals) is the same pathology that made the EMA stage necessary
+for HEALPix in the first place, where EMA cut σ from 8.6 to 0.9. The decision variable for
+this recipe has been the EMA point, not the raw endpoint, since 2026-07-23.
+
+**Three: the warm start is a HEALPix Stage A**, declared in advance as a handicap on the
+equiangular leg. That was registered before the run precisely so a loss would not be
+over-read: a loss under this design licenses "does not transfer from a HEALPix
+initialisation at this scale", not "equiangular is worse at scale".
+
+### 15.2 An unplanned reading: the error budget is flat, the signal is not
+
+In absolute degrees the equiangular error is nearly isotropic — poles 0.2754° against
+equator 0.2627°, a ratio of **1.05×**. The *signal* is not: the zero baseline is 0.1576° at
+the poles against 0.2133° at the equator, ratio 0.74×. The model therefore spends about the
+same error budget per unit solid angle everywhere, regardless of how much motion is locally
+present, which is exactly why the polar percentage is the worst region while being the most
+accurate region in degrees. This is the static-calibration problem of §12.4 in its cleanest
+form, and it is orthogonal to the grid question.
+
+### 15.3 The EMA point (`P1proper_ema6k_a1eq`, 7.5 h)
+
+The 6k polish stage replayed on the equiangular grid, warm-started from the 20k endpoint
+above. Same recipe, `--ema-decay 0.999`, `--lr 3e-05`, no one-cycle.
+
+| flow360:val | raw @6k | **EMA @6k** | zero |
+|---|---|---|---|
+| act ≥ 0.25° | −0.65% | **−0.22%** | 0.6354° |
+| act ≥ 0.5° | −0.63% | **+0.33%** | 0.8943° |
+| act ≥ 1.0° | −2.38% | **−0.93%** | 2.0933° |
+| global | −23.60% | **−21.22%** | 0.2066° |
+| poles | −47.06% | **−49.98%** | 0.1576° |
+| equator | −14.46% | **−11.59%** | 0.2133° |
+
+**The EMA instrument transfers to the equiangular grid intact.** Raw act₀.₅ over the twelve
+evals of this stage has σ 3.79 around a centre of −0.71; the EMA series has **σ 0.65** around
+−0.33 over the last six, a 5.8× variance reduction of the same order as the 9× recorded for
+HEALPix on 2026-07-23. §15.1's second objection is therefore removed: the equiangular basin
+is well-defined, not a noise band.
+
+**The EMA series is monotone-ish upward and had not plateaued** — −3.41, −2.00, −1.70,
+−1.23, −0.97, −0.56, −0.61, −1.39, −0.15, −0.47, +0.30, **+0.33**, with the last two points
+the best of the run. That rise is about +0.30 per 1000 steps from 3k onward. Reaching +5.2
+from +0.33 at that rate needs roughly 16000 further polish steps under an assumption of
+linearity that nothing supports. A longer polish is not a path to the gate.
+
+**The gate as literally written is not met.** +0.33 ± 0.65 against a +5.2 threshold is
+7.5 sigma. What is *not* settled is whether +5.2 is still the right threshold, because that
+number was fixed under the acos metric and §12 showed acos inflated the zero baseline and
+so flattered every improvement figure by 5–10 points on these splits. The correction moves
+both legs the same direction, which is exactly why the paired reading decides this and the
+absolute number cannot:
+
+- if the HEALPix EMA re-reads near +4.5 under haversine, equiangular loses by ~4 points;
+- if it re-reads near +0.5, the two grids tie and the §14 ordering simply does not replicate
+  at production scale;
+- if it re-reads negative, equiangular wins at scale.
+
+All three are live. **A gate threshold stated as an absolute percentage is not portable
+across a metric change** — restating it, either in the metric it will be adjudicated in or
+as a margin over the HEALPix leg measured the same way, is a methodological debt this run
+exposed and did not create.
+
+### 15.4 The isotropy result, and its caveat
+
+At the EMA point the equiangular error field is isotropic to within one percent: poles
+0.2363° against equator 0.2380°, ratio **0.99×**. The §15.2 observation from the 20k
+endpoint holds and tightens.
+
+This is the flattest error field the project has measured, and it replicates §14.8's
+finding that equal-area node placement is not what buys uniformity. The caveat from §15.2
+stands and must travel with the number: the *signal* is not isotropic (zero baseline 0.158°
+polar against 0.213° equatorial, 0.74×), so a model that tracked local motion strength would
+show *less* error at the poles, not equal error. A flat error field is partly skill and
+partly the static-calibration failure of §12.4. The same caveat applies to the OSLO-vs-RAFT
+uniformity claim, which has never carried it.
+
+### 15.5 THE PAIRED READING (2026-08-02) — A1 does not replicate at production scale
+
+`P1proper_mix20k_havbase` and `P1proper_ema6k_havbase`, eval-only, 150 s each. All four
+columns are now flow360:val under haversine + per-area, so the comparison is finally
+like-for-like.
+
+| improvement % | HP 20k raw | EQ 20k raw | **HP EMA** | **EQ EMA** |
+|---|---|---|---|---|
+| act ≥ 0.25° | +1.05 | −5.32 | **+3.49** | −0.22 |
+| act ≥ 0.5° | +4.00 | −4.89 | **+4.17** | +0.33 |
+| act ≥ 1.0° | −0.64 | −3.09 | −1.28 | **−0.93** |
+| global | −36.65 | −34.85 | −21.21 | −21.22 |
+| poles | −118.88 | −74.77 | −69.62 | **−49.98** |
+| equator | −21.02 | −23.16 | **−11.15** | −11.59 |
+| seam | −21.77 | −20.33 | −14.57 | **−12.71** |
+
+**First: the metric change did NOT move the active metrics.** The shipped model re-reads at
+act₀.₅ **+4.17%** under haversine + per-area against the **+4.5 ± 0.9** recorded on
+2026-07-24 under acos + node-mean — inside the EMA band. My §15.3 expectation of a 5–10
+point deflation was wrong for this metric on this split. It was right for *global*, which
+moves from −16.8 to −21.21, a 4.4-point loss. The reason is structural: the acos floor bites
+at tiny angles, which dominate global (43% of the sphere sits below 0.0625°) and which the
+active thresholds exclude by construction. **The R2 threshold therefore needs no restating
+for the active metrics**, and the 2026-07-24 closure of P1 — Gate R2 approached, not met,
+at ~80% — survives the metric fix intact. The §15.3 debt is discharged, not carried.
+
+**Second: the §14 ordering does not replicate, and it does not simply invert either.**
+
+- Where there *is* motion, HEALPix wins clearly: **+4.17 vs +0.33** on act₀.₅, **+3.49 vs
+  −0.22** on act₀.₂₅. This is the headline metric of the whole P1 campaign, and equiangular
+  loses it by ~4 points.
+- Global is a dead tie: −21.21 vs −21.22, with HEALPix 2.4% better in degrees.
+- At the poles equiangular wins by **20 points** of improvement (0.2363° vs 0.2533°, 6.7%
+  better in degrees), and it wins the seam by 1.9 points.
+- Equiangular is flatter, but far less dramatically than §14.8 suggested: poles/equator in
+  degrees **0.99× vs 1.08×**, against 2.24× vs 2.45× on replica360. flow360's motion is
+  small everywhere, which compresses the regional spread for both grids.
+
+So §14.8's "equiangular beats HEALPix everywhere including the poles" holds **only at the
+poles** once the run is full-length, on the production mix, at the metric P1 is judged on.
+The pre-registered criterion fired against the hypothesis that motivated it.
+
+**Third, a defect this comparison exposed: the two legs are not scored against an identical
+target field.** The zero baselines differ — act₀.₅ zero **0.8556° (HP) vs 0.8943° (EQ)**,
+4.5% apart, and these are area-weighted, so §14.3's fix does not explain it. The active
+*area* fractions match to three decimals (0.12382 vs 0.12394), so set membership is not the
+cause. The residual is how each grid samples the ERP ground truth: 49152 nodes arranged
+128×384 on equiangular against nside-64 equal-area on HEALPix, with different interpolation
+stencils. Smoothing suppresses exactly the fine structure that is hardest to predict, so the
+direction of this bias plausibly favours HEALPix — the same direction as the result. **It is
+not quantified and it is not removed by area weighting.** Any use of this table must carry
+that caveat.
+
+**Fourth, a smaller leftover of §14.3:** `target_geo_deg_p50/p90/p95` are still node-weighted
+and therefore not grid-comparable (p50 0.0976 HP vs 0.0849 EQ, 15% apart, entirely explained
+by equiangular's polar node oversampling). The headline metrics are unaffected because the
+active thresholds are absolute in degrees, but the quantile readout should not be compared
+across grids until it is weighted.
+
+### 15.6 Verdict
+
+At 2000 steps on replica360, equiangular beat HEALPix everywhere (§14.8). At 20000 steps on
+the production mix it loses the active subsets by ~4 points, ties global, and keeps only the
+polar and seam advantage. The honest statement is **partial replication with a sign flip on
+the headline metric**, under a warm start that was declared in advance to handicap the
+equiangular leg and a target-sampling residual that runs the same way.
+
+What this does *not* touch: §14.8's negative claim. Equal-area node placement still is not
+the mechanism behind OSLO's polar accuracy — the equiangular grid still wins the poles here,
+at production scale, with the same parameters. What falls is the stronger reading that
+equiangular is simply the better grid.
+
+**No further runs are warranted on this question.** Removing the two remaining confounds
+costs a from-scratch equiangular Stage A plus a matched-sampling target readout, which is a
+new campaign, not a control. The result as it stands is reportable with its scope attached.
+
+## 16. SLOF's Table I reproduced in SLOF's own metric (2026-08-03) — OPENED
+
+Every universality row so far is scored in *our* metric: geodesic degrees on an
+equal-area grid, actives conditioned on true angular displacement. A referee is
+entitled to reply "that is not the metric the field uses, and your baseline is a
+consequence of your metric". This activity removes that reply. It re-implements
+their evaluation from their released code, runs it on their split with their
+checkpoints, and adds the one row their table does not have: **zero flow**. If
+the reproduction lands on their published numbers, the zero row is a number from
+*their* table.
+
+Tool: `run_slof_table1.py` (source `SLOF/evaluate_raft.py` + `dataloader.py` +
+`utils.py`, read line by line from the released tarball). Published values are
+embedded from the CSVs shipped in `SLOF/quantitative_results/`, so every run
+prints its own agreement.
+
+### 16.1 The protocol audit — five deviations, three of them ours
+
+Reading their code before running it turned up more than expected.
+
+1. **The pair set is half of ours.** `ReadData` indexes forward flows only
+   (`sorted(sequences) × sorted(frames)[:-1]`): **1289 pairs** on the official
+   test split. Our universality rows ran 2567 — the same frames plus every
+   backward flow. Not an error on either side, but the two pair sets are not the
+   same population.
+2. **The published runs are `iters=12`, not 64.** `train.py:294` calls
+   `validate_flow360(..., iters=12)`, and the shipped
+   `TEMP001_test_iters_12_rotation_False_final.csv` is numerically identical to
+   `single_rotation.csv`. `evaluate_raft.py`'s own `__main__` defaults to 64,
+   which is where our §3 protocol note came from. Our rows therefore gave their
+   checkpoints *more* refinement than the paper did.
+3. **Their loader feeds frames in [0, 1] to a forward that normalizes for
+   [0, 255].** `Flow360Loader.transform_frame` ends in `ToTensor()`; `RAFT.forward`
+   opens with `2*(image/255) - 1`. The network sees a near-constant −1 field with
+   the image content compressed by 1/255. It is scale-invariant in `fnet`
+   (instance norm) but **not** in `cnet` (batch norm, eval mode, running stats
+   frozen at whatever scale training used) — and their training used the same
+   loader, so the checkpoints are *fitted to that range*. **Our rows fed 0–255**,
+   i.e. they ran their checkpoints outside the range they were trained in. First
+   4 test pairs, `singlerotation`, iters 12, EPE in the `lt5` bucket: **0.288
+   (unit) vs 0.524 (byte)** — an 82% penalty that is ours, not theirs.
+   `run_slof_table1.py --input-scale` and `run_raft_shard_baseline.py
+   --princeton-input-scale` now expose it; the default of the latter stays `byte`
+   so no existing number silently changes.
+4. **The GT sign agrees with ours.** `ReadData` negates the `.npy` and
+   `Flow360Loader` negates it again, so the evaluated GT is the raw file — which
+   is exactly what sfprep pins for `flow360` (`default_convention = "identity"`).
+   One less thing to worry about.
+5. **Our §1 transcription of Table I mixed two columns** (corrected in place
+   above). The paper reports `Weighted s≥0*` (EPEd) *and* `s≥0` (plain EPE); §1
+   took the weighted number as the global and compared it against an unweighted
+   zero estimate. The unweighted global for SLOF v1 is **1.568**, not 2.548, and
+   §1's "1.3–2.9× above zero" reading was inflated by that mix. What the true
+   margin is, is the measurement below.
+
+Reproduced faithfully, including three things that are defects on their side and
+are flagged in the JSON under `protocol`: the magnitude buckets are **cumulative
+and overlapping** (`lt5 ⊂ lt10 ⊂ lt20`, `gte20` the complement) rather than
+disjoint; there is **no validity mask** anywhere in the evaluation; and the
+angular error normalizes `ugt` before reusing it to normalize `vgt`, then
+stretches the cosine to [−1, 1] by the **min/max of the current batch**, so AE is
+a function of batch composition. EPE is unaffected by all three and is what the
+comparison rests on.
+
+### 16.2 The harness
+
+`run_slof_table1.py` streams their pair list, applies their transforms (PIL
+resize to 320×640 for frames, normalize/`F.interpolate` at its *nearest* default/
+rescale for flow), and accumulates per-bucket sums and counts — algebraically the
+same as their concatenate-then-`np.mean`, since every selected pixel carries the
+same weight. It always scores **both** the checkpoint and zero flow in the same
+pass, on the same pixels, so the two rows cannot drift apart. `--source shards`
+runs the identical protocol off the sfprep tars instead, which measures what our
+own pipeline costs (frames went through JPEG, flow through float16) rather than
+their table.
+
+Docker-validated locally (4 pairs, CPU, both input scales, `singlerotation`);
+full-split runs follow.
+
+### 16.3 Pre-registered reading (written before the full-split numbers landed)
+
+**Gate first.** The reproduction is only usable if `singlerotation` at
+`--input-scale unit --iters 12` lands on their shipped CSV: 1.568181 / 0.309022 /
+62.475649 (s≥0, lt5, gte20) and 2.548246 on the weighted global. Agreement within
+a few percent means the remaining gap is PIL/torch version drift and the zero row
+is authoritative. A large gap means the audit missed something and no conclusion
+may be drawn from the zero row at all.
+
+Then, on the unweighted global (`s≥0`) and on `lt5`, where the mass is:
+
+- **A — zero beats every published row.** The universality claim holds *in the
+  field's own metric*, on the home method's own split, and stops depending on
+  our protocol. This is the cheapest possible answer to "your metric made the
+  baseline win".
+- **B — the published rows beat zero on `lt5` but not globally.** Then the honest
+  statement is narrower: doing nothing is unbeaten *globally*, while a raw-pixel
+  small-motion bucket does show a win. That bucket mixes latitude with motion
+  (1/cos inflation) and mixes the static majority with genuine movers, which is
+  exactly the confound the geodesic actives readout was built to remove — so the
+  thesis reports both and lets the metric section carry the difference. This
+  branch strengthens §4.2 of the article rather than weakening the work.
+- **C — the published rows beat zero everywhere.** The universality claim as
+  currently written falls. What survives is the geodesic reading on genuine
+  movers, and the thesis must print both tables and say plainly which protocol
+  each conclusion belongs to.
+
+No branch is a reason not to publish the number, and the branch is decided by the
+measurement, not by preference.
+
+**Second, an unrelated correction this audit forces regardless of the branch.**
+The five SLOF rows in §5 and §9.1 were run at `--princeton-input-scale byte`,
+outside the range their checkpoints were trained in (§16.1 item 3). They must be
+replayed at `unit` before any of them is quoted again. `rerun_from_json.py`
+carries the original args across, so only the two flags change:
+
+```bash
+python rerun_from_json.py /outputs/universality_slof_*_test \
+    --set geodesic_metric=haversine --set princeton_input_scale=unit \
+    --output-suffix _hav_unit --run
+```
+
+Iterations stay at their recorded 64 on purpose: changing the input scale and the
+refinement budget in the same step would make the delta unattributable, and 64 is
+the more generous setting for them. First indication, 8 pairs, `singlerotation`:
+global **−10.96 → −4.01**, poles −20.98 → −14.45, act₀.₂₅ +1.44 → +1.91, act₀.₅
+−1.34 → −2.47. Eight pairs decide nothing; the direction is that the scale bug
+cost them global and polar accuracy, and the actives barely moved.
+
+### 16.4 RESULT (2026-08-03) — the reproduction is bit-exact, and branch C fired
+
+`singlerotation`, official test, 1289 pairs, `--iters 12 --input-scale unit`,
+raw PNG/`.npy` (not our shards), 58 min on a laptop CPU under emulation.
+
+| EPE px @640 | s≥0 | s<5 | s<10 | s<20 | s≥20 |
+| --- | --- | --- | --- | --- | --- |
+| published (`single_rotation.csv`) | 1.568181 | 0.309022 | 0.387124 | 0.502485 | 62.475649 |
+| **reproduced** | 1.568184 | 0.309023 | 0.387125 | 0.502486 | 62.475752 |
+| difference | +0.0000% | +0.0000% | +0.0000% | +0.0000% | +0.0002% |
+
+Their AE reproduces to the same precision (0.496856 vs 0.496864 published), which
+means both of its defects — the overwritten `ugt` and the per-batch min/max
+stretch — were reproduced correctly too, at their batch size of 16. **The gate is
+passed at six significant figures.** Every item of the §16.1 audit is confirmed by
+construction: 1289 forward pairs, iters 12, `[0, 1]` frames, nearest flow resize,
+cumulative buckets, no validity mask. There is no remaining degree of freedom in
+which our reading of their protocol could differ from theirs.
+
+So the zero row is authoritative:
+
+| EPE px @640 | s≥0 | s<5 | s<10 | s<20 | s≥20 |
+| --- | --- | --- | --- | --- | --- |
+| SLOF v1 | 1.568 | 0.309 | 0.387 | 0.502 | 62.476 |
+| **zero flow** | **2.338** | **0.609** | **0.771** | **0.973** | **80.345** |
+| improvement | **+32.9%** | **+49.3%** | **+49.8%** | **+48.3%** | **+22.2%** |
+
+**Branch C.** In their own metric, on their own split, at their own settings, SLOF
+beats the trivial baseline everywhere, and not narrowly. The claim "no published
+360° method beats zero-flow" is **false as stated for FLOW360 in the ERP-pixel
+metric**, and every place the thesis says it must be rewritten. This was the
+pre-registered risk of running this activity at all, and it fired.
+
+**A second finding, from their own table.** The zero row's `s≥0` is **2.3375**.
+Their `doublerotation` row publishes **2.3388** — 0.06% away — and its buckets
+track the zero row just as closely (0.6108 vs 0.6091 on `s<5`). Our §5 already
+called doublerotation "the confidently-predict-zero solution" from the geodesic
+side; the ERP metric now says it numerically. **The trivial baseline is already
+printed in Table I of the paper, unlabelled, as the authors' worst variant.**
+Nobody, including the authors, appears to have noticed that a row of their own
+table is doing nothing. That is a cleaner illustration of the missing-baseline
+problem than any number we could have produced ourselves, and it survives every
+metric objection because it is their table.
+
+**What is now open.** Two things, and they are separable:
+
+1. Why our geodesic rows disagree. §9.1 has singlerotation at −9.46% global on the
+   same dataset. Three candidate causes, in order of expected size: the input-scale
+   bug (§16.1 item 3, ours); the pair set (2567 with backward flows vs their 1289);
+   and the metric itself (area-weighted geodesic degrees on an equal-area grid
+   versus pixel-uniform ERP displacement, which prices a polar longitudinal error
+   at up to 1/cos φ). The first is settled by the replay in §16.3 and must be run
+   before anything else is concluded.
+2. Whether the ERP-pixel margin survives an area-correct reading. The run now in
+   flight decomposes the same predictions four ways — raw px, cos-weighted px, du
+   scaled by cos φ, and both — by GT-magnitude bucket and by |latitude| band. On a
+   4-pair probe the corrections *increased* SLOF's margin (+18% → +55% global),
+   which is the opposite of what a "their metric flatters them" story predicts, so
+   that story should not be told until the full split has been read.
