@@ -2248,3 +2248,209 @@ backward convention — after which every flow360 number in this project, includ
 OSLO's training, is measured on half-corrupted data and must be redone. If no
 transform helps, the backward half is genuinely harder and the finding is about
 the dataset, not our pipeline.
+
+### 16.12 THE BACKWARD CONVENTION IS INVERTED — half of flow360 has been wrong
+
+`singlerotation`, flow360:test **backward pairs only** (1278), iters 12, `unit`,
+zero baseline 2.2523:
+
+| `--gt-transform` | EPE `s≥0` | vs zero |
+| --- | --- | --- |
+| `identity` — what sfprep ships | 2.8992 | **−28.72%** |
+| **`negated`** | **2.0732** | **+7.95%** |
+| `negate_x` | 2.2923 | −1.77% |
+| `negate_y` | 2.7610 | −22.59% |
+
+`negated` is the only transform under which a real predictor beats doing nothing,
+and it does so under all four metric variants (+12.8 area, +13.4 sph_area) and in
+every latitude band. The reading is clean because the zero row is invariant under
+a sign flip while the model is not. **flow360's backward flows are stored negated
+with respect to the frame1 → frame2 contract, and sfprep emitted them as
+`identity`.**
+
+Fixed in `sfprep/adapters/flow360.py`: the convention is now assigned per
+direction, `identity` forward and `negated` backward, verified on a 400-record
+discovery (202 forward/identity, 198 backward/negated). `pin_convention` did not
+prevent this — it only stops `diagnose` from overriding the default, and diagnose
+was never able to see the backward half anyway.
+
+**Why nobody caught it.** Two independent blindfolds. The zero-flow baseline is
+invariant under a sign flip, so no statistic computed from the GT alone can
+detect it — the magnitudes, the active fractions, the band histogram are all
+identical either way. And the dataset's own published evaluator never reads
+`bflow`: `validate_flow360` requests `fflow` only, so the authors never exercised
+it either. It takes a *model* to see it, and the model has to be run on the
+backward half in isolation, which nothing in this project did until today.
+
+**Blast radius.** 3942 of flow360's 7913 pairs: 1278 of test's 2567, roughly half
+of val's 791, and roughly half of train's 4555.
+
+1. **Every flow360 evaluation in this document** — §5, §9.1, §16.7 — averaged a
+   correct forward half with a sign-inverted backward half. The corrected
+   singlerotation row on the full test set at iters 12 is roughly **+20.7%**
+   (0.502·1.5691 + 0.498·2.0732 = 1.820 against zero 2.295), against the −0.72%
+   §16.7 reported.
+2. **OSLO was trained on it.** `flow360:train` is in the P1-proper mix, so for
+   half of those pairs the supervision pointed the wrong way. The campaign was
+   fitting a sub-pixel matcher against a target that contradicted itself
+   pair-to-pair.
+3. **The `+4.5%` act₀.₅ headline** was measured on flow360:val, half of which
+   carries inverted targets.
+
+A residual remains and is not explained: even negated, the backward half reaches
+only +7.95% where the forward half reaches +32.9%. A sign flip is unambiguously
+wrong and unambiguously fixed, but the gap says something else is also off —
+most likely which frame's grid `bflows/N.npy` is defined on, i.e. an off-by-one
+in the pairing. That is the next thing to isolate, and it does not block the
+re-materialization, since no ordering of frames makes an inverted sign correct.
+
+### 16.13 Fix verified
+
+`shards_fixed` (flow360 re-materialized with the per-direction convention),
+backward pairs, `--gt-transform identity`: EPE `s≥0` = **2.0732028186847393**,
+digit-for-digit the value the old shards produced under `--gt-transform negated`.
+The materialization applied exactly the diagnosed transform and nothing else. The
+corrected shards are the ones to read from here on.
+
+### 16.14 THE CORRECTED TABLE (2026-08-03) — the universality claim is dead by a wide margin
+
+flow360:test, 2567 pairs, `shards_fixed`, haversine, `--princeton-input-scale unit
+--iters 12` (their published protocol on both axes). Zero baseline global
+0.43670° (0.43145 on the corrupted shards — the 1.2% shift is the ERP endpoint
+construction's nonlinearity under a sign flip, not a metric change).
+
+| improvement % | global | act₀.₂₅ | act₀.₅ | act₁.₀ | poles | equator |
+| --- | --- | --- | --- | --- | --- | --- |
+| SLOF switchrotation | **+30.28** | **+35.03** | **+31.36** | **+19.92** | **+22.88** | +33.14 |
+| SLOF singlerotation | **+26.88** | **+30.85** | **+27.16** | **+17.38** | **+21.13** | +29.56 |
+| SLOF raftfinetune | **+25.40** | **+27.83** | **+24.76** | **+16.84** | **+24.95** | +25.43 |
+| SLOF doublerotation | −0.21 | −0.12 | −0.14 | −0.16 | −0.11 | −0.25 |
+| SLOF raft (scratch) | −11.96 | −2.41 | −1.21 | +0.03 | −9.97 | −13.52 |
+
+Against §9.1, which is what the article prints: switchrotation **−21.66 → +30.28**,
+singlerotation **−9.46 → +26.88**, raftfinetune **−10.38 → +25.40**. Three
+published checkpoints beat the trivial baseline by a quarter to a third of its
+error, on every region and every active threshold. **"No published method beats
+zero-flow" is not merely false — it is off by fifty points on three rows.**
+
+**Two of my own conclusions from this session are refuted by this table**, and
+both were driven by the corrupted backward half:
+
+- §16.7 concluded "the best row is the plainest one", `raft.pt` at +7.08% global.
+  On correct targets `raft.pt` is the *worst* trained row at **−11.96%**. It
+  looked good only because it was the least accurate predictor and therefore the
+  least damaged by a sign-inverted target; the accurate models were the ones the
+  corruption punished.
+- §16.9's ordering under "matched conditions" carried the same defect and says
+  nothing.
+
+**What survives every correction.** `doublerotation` remains numerically
+indistinguishable from doing nothing: −0.21% global here, −0.57% on the corrupted
+shards, +0.03% under `acos`, and 2.3388 against zero's 2.3375 in their own ERP
+metric. Four independent measurements, three different targets, two metrics. It is
+the trivial baseline, printed unlabelled in their Table I as their worst variant,
+and that finding is now the most robust thing in this document.
+
+**The static-calibration result also survives, and is universal.** Every winning
+row is catastrophic on the static majority — `band_0_0625` improvement −275%
+(singlerotation), −340% (switchrotation), −173% (raftfinetune) over 32.8% of the
+sphere — and wins anyway. The decision-gate proposal in `docs/plans/DECISION_GATE.md`
+now has a *better* motivation than the one it was parked with: it would compound
+with methods that already beat zero, instead of trying to rescue ones that do not.
+
+**Pending, and now the only number that matters for the thesis**: OSLO's final
+model re-read on `shards_fixed`. Until it lands nothing can be said about where
+OSLO sits, except that the bar it has to clear is no longer zero — it is +25% to
++30%.
+
+### 16.15 RETRACTION — the convention is inverted on the FORWARD half, and §16.12/§16.14 are void
+
+The corrected-table replay returned frozen RAFT-large at **−66.60% global** on
+`shards_fixed`, against −15.98% on the original shards. A model cannot get four
+times worse from a fix. Two RAFT-family predictors were disagreeing about the
+sign of the same targets, which is only possible if one of them predicts reversed
+motion — so I stopped inferring and measured the 2×2 directly, with the one
+arbiter that is independent of FLOW360: TorchVision RAFT-large, trained on
+Sintel/KITTI/FlyingThings, unambiguous convention. flow360:test, geodesic global
+improvement over zero:
+
+| | `identity` | `negated` |
+| --- | --- | --- |
+| **forward** | −82.07 | **+39.46** |
+| **backward** | **+49.31** | −75.50 |
+
+Margins of 120 points. **The physical convention is `negated` forward and
+`identity` backward** — the exact inverse of what §16.12 concluded and what
+`shards_fixed` was built with. The original shards had the forward half wrong and
+the backward half right; `shards_fixed` has both wrong, which is precisely why
+RAFT-large collapsed on it.
+
+**Why §16.12 got it backwards.** It used SLOF `singlerotation` as the arbiter.
+SLOF's checkpoints were fine-tuned against this same inverted target, so they
+predict physically reversed motion, and every convention question answered with
+them comes back inverted. I used a reversed ruler to measure the ruler. The
+bit-exact reproduction of §16.4 is not a defence: **a model trained against a
+reversed target reproduces its own published table exactly.** That reproduction
+validates our pipeline against theirs and says nothing about physical sign — a
+hole I named two sections ago and then failed to close before drawing
+conclusions from SLOF.
+
+**What is now void.**
+
+- §16.12's fix and its blast-radius reasoning: right that the two halves differ,
+  wrong about which one and in which direction.
+- §16.13's verification: it confirmed the materializer applied the transform I
+  asked for, which it did. The transform was wrong.
+- **§16.14's corrected table in its entirety.** Those +30% SLOF rows were measured
+  on `shards_fixed`, i.e. against targets wrong in *both* halves. They mean
+  nothing. The universality question is, as of now, **unmeasured** — not answered
+  either way.
+- §16.7 and §16.9 were already void for a different reason.
+
+**What survives.** §16.4's reproduction, as a pipeline check. The `doublerotation`
+≈ zero identification, since a zero predictor is invariant to every sign question
+raised here. And the observation that the zero baseline's sign-invariance is
+exactly what let this defect survive undetected in a published dataset, in its
+authors' code, and in ours.
+
+**Fixed in the adapter** (`negated` forward, `identity` backward, verified 202/198
+on a 400-record discovery), but **do not re-materialize yet**: the 2×2 above is
+six pairs at resolution 5. It must be repeated on the full split before any data
+is rebuilt on it. Commands in §16.16.
+
+### 16.16 Confirmation before rebuilding
+
+Nothing gets re-materialized until the 2×2 is repeated at full scale, with a
+second arbiter that is not a model at all.
+
+**(a) Full split, frozen RAFT-large, four runs.** Same tool, same protocol as the
+existing `universality_raftlarge_flow360_test_hav` row, on the ORIGINAL shards
+(so both halves are raw and the transform is the only variable):
+
+```bash
+for D in forward backward; do for T in identity negated; do
+  SHARDS_HOST=../sfprep/shards \
+  docker compose -f docker-compose.oslo_raft.yml run --rm -e TORCH_HOME=/outputs/torch_home \
+    oslo-raft python run_raft_shard_baseline.py \
+      --shards /data/shards --sources flow360:test --resolution 6 \
+      --predictor raft --directions $D --gt-transform $T \
+      --geodesic-metric haversine --device cuda \
+      --output-dir /outputs/conv_${D}_${T}
+done; done
+```
+
+Expected if §16.15 holds: forward strongly positive under `negated` only,
+backward strongly positive under `identity` only, both by tens of points.
+
+**(b) A model-free arbiter.** The claim now implicates a published dataset, so it
+should not rest on any network. Warp frame1 by each candidate flow and compare
+photometrically against frame2: the correct convention minimises the residual,
+and no training is involved. `sfprep diagnose` already implements this and was
+switched off for flow360 by `pin_convention = true` on the grounds that the
+motion is too small to see photometrically — a judgement that now looks like the
+third blindfold in this chain, alongside the sign-invariant baseline and the
+authors' evaluator never reading `bflow`. It needs a per-direction run and, if
+the global motion really is too small, restriction to the high-magnitude tail.
+
+Only with (a) and (b) agreeing does flow360 get rebuilt, and only then does any
+number in this document — including OSLO's — mean anything again.

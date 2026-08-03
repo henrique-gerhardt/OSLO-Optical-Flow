@@ -137,6 +137,18 @@ def parse_args() -> argparse.Namespace:
                              "'0,0.125,0.25,0.5,1,2,4,8,16,inf'. Unlike the cumulative active_X "
                              "tails, bands locate the displacement at which a method starts "
                              "beating the zero baseline. Empty = off (default).")
+    parser.add_argument("--directions", default="both",
+                        choices=["both", "forward", "backward"],
+                        help="Restrict to one flow direction. Needed because a dataset can carry "
+                             "a different sign convention per direction, which no statistic of the "
+                             "GT alone can reveal (the zero baseline is sign-invariant).")
+    parser.add_argument("--gt-transform", default="identity",
+                        choices=["identity", "negated", "negate_x", "negate_y"],
+                        help="Sign/axis convention applied to the GT before scoring. Diagnostic: "
+                             "the convention a strong independently-trained predictor prefers is "
+                             "the physical one. Reproducing a paper's numbers does NOT settle "
+                             "this, since a model trained against a reversed target reproduces "
+                             "its own table exactly.")
     parser.add_argument("--geodesic-metric", default="acos", choices=["acos", "haversine"],
                         help="Great-circle formula. 'acos' reproduces every existing number and "
                              "has a 0.028 deg float32 floor; 'haversine' is exact at zero.")
@@ -152,7 +164,16 @@ def get_device(name: str) -> torch.device:
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def iter_source_records(shards_dir: Path, sources: List[Tuple[str, str]]):
+GT_TRANSFORMS = {
+    "identity": lambda f: f,
+    "negated": lambda f: -f,
+    "negate_x": lambda f: torch.stack([-f[..., 0], f[..., 1]], dim=-1),
+    "negate_y": lambda f: torch.stack([f[..., 0], -f[..., 1]], dim=-1),
+}
+
+
+def iter_source_records(shards_dir: Path, sources: List[Tuple[str, str]],
+                        directions: str = "both"):
     iter_shard, list_shards = _import_sfprep()
     shards = []
     for dataset, split in sources:
@@ -161,7 +182,10 @@ def iter_source_records(shards_dir: Path, sources: List[Tuple[str, str]]):
             raise FileNotFoundError(f"no shards for {dataset}:{split} under {shards_dir}")
         shards.extend(found)
     for shard in shards:
-        yield from iter_shard(shard)
+        for record in iter_shard(shard):
+            if directions != "both" and record["meta"].get("direction") != directions:
+                continue
+            yield record
 
 
 def main() -> None:
@@ -289,10 +313,12 @@ def main() -> None:
                         motion_bands=motion_bands)
 
     pending: List[dict] = []
-    for record in tqdm(iter_source_records(Path(args.shards), sources), desc="pairs", unit="pair"):
+    for record in tqdm(iter_source_records(Path(args.shards), sources, args.directions),
+                       desc="pairs", unit="pair"):
         frame1_erp = _to_chw_free_float(record["frame1"])
         frame2_erp = _to_chw_free_float(record["frame2"])
-        flow_erp = torch.from_numpy(np.ascontiguousarray(record["flow"])).float()
+        flow_erp = GT_TRANSFORMS[args.gt_transform](
+            torch.from_numpy(np.ascontiguousarray(record["flow"])).float())
         valid_erp = torch.from_numpy(np.ascontiguousarray(record["valid"]))
         item = {
             "flow_erp": flow_erp,
