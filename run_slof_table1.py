@@ -125,7 +125,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset", default="flow360", help="sfprep dataset name (shards source).")
     parser.add_argument("--mode", default="test", choices=["train", "val", "test"],
                         help="Their split. 'test' is the official held-out one (1289 forward pairs).")
-    parser.add_argument("--directions", default="forward", choices=["forward", "both"],
+    parser.add_argument("--gt-transform", default="identity",
+                        choices=["identity", "negated", "negate_x", "negate_y"],
+                        help="Sign/axis convention applied to the GT before scoring. Diagnostic "
+                             "only: FLOW360's backward flows are pinned to 'identity' in sfprep "
+                             "and were never validated, because their own evaluator reads fflow "
+                             "and never bflow. A model that beats zero under one setting and "
+                             "loses to it under another names the right convention.")
+    parser.add_argument("--directions", default="forward",
+                        choices=["forward", "backward", "both"],
                         help="Shards source only. 'forward' is their pair set; 'both' adds the "
                              "backward flows, which is what the geodesic universality rows use "
                              "(2567 on flow360:test). Set it to 'both' when the point is to "
@@ -246,6 +254,14 @@ def iter_raw(pairs, size_hw, resample) -> Iterator[dict]:
         }
 
 
+GT_TRANSFORMS = {
+    "identity": lambda f: f,
+    "negated": lambda f: -f,
+    "negate_x": lambda f: torch.stack([-f[0], f[1]], dim=0),
+    "negate_y": lambda f: torch.stack([f[0], -f[1]], dim=0),
+}
+
+
 def iter_shards(shards_dir: Path, dataset: str, mode: str, size_hw, resample,
                 directions: str = "forward") -> Iterator[dict]:
     """Same pairs from the sfprep tars. Stream order, not their sorted order: EPE is
@@ -258,7 +274,7 @@ def iter_shards(shards_dir: Path, dataset: str, mode: str, size_hw, resample,
         raise FileNotFoundError(f"no shards for {dataset}:{mode} under {shards_dir}")
     for shard in found:
         for record in iter_shard(shard):
-            if directions == "forward" and record["meta"].get("direction") != "forward":
+            if directions != "both" and record["meta"].get("direction") != directions:
                 continue          # their loader only ever reads fflows
             yield {
                 "uid": record["meta"]["uid"],
@@ -425,7 +441,8 @@ def main() -> None:
 
     def flush(batch: List[dict]) -> None:
         nonlocal nonfinite_px
-        gt = torch.stack([item["flow"] for item in batch], dim=0)          # B2HW float64
+        gt = torch.stack([GT_TRANSFORMS[args.gt_transform](item["flow"]) for item in batch],
+                         dim=0)                                            # B2HW float64
         nonfinite_px += int((~torch.isfinite(gt)).sum().item())
         magnitude = gt.pow(2).sum(1).sqrt()
         masks = bucket_masks(magnitude)

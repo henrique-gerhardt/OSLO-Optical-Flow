@@ -2082,3 +2082,169 @@ A separate local run measures what our own pipeline costs: the same protocol,
 `--source shards` (JPEG frames, float16 flow) against the raw-PNG run of §16.4,
 same checkpoint. That number bounds how much of every row in this document is our
 re-encoding rather than the method.
+
+### 16.9 CONTROL RESULT (2026-08-03) — the inversion claim is WITHDRAWN
+
+The three checkpoints re-scored in the ERP-pixel metric on the geodesic run's
+exact conditions: 2567 pairs (both directions), iters 64, JPEG shards, `unit`.
+
+| EPE px `s≥0` | published (1289 fwd, raw, iters 12) | matched (2567, shards, iters 64) | drift |
+| --- | --- | --- | --- |
+| raft (scratch) | 2.0576 | **2.0818** | +1.18% |
+| raftfinetune | 1.6243 | 2.1822 | **+34.35%** |
+| singlerotation | 1.5682 | 2.2270 | **+42.01%** |
+| zero flow | 2.3375 | 2.2951 | −1.81% |
+
+**Under matched conditions the ERP metric gives the geodesic ordering**: raft
+2.082 < raftfinetune 2.182 < singlerotation 2.227, exactly the geodesic +7.08 >
++0.63 > −0.72. The pre-registered branch fires: **§16.7's ranking-inversion claim
+is withdrawn.** It was not the metric. Two of the four differences were doing the
+work, and they are on our side of the fence, not the metric's.
+
+**What the control found instead is worse, and more useful.** The degradation is
+not uniform — it is **inversely proportional to how good the checkpoint was**. The
+best-published model loses 42%, the second loses 34%, and the one that was worst
+published loses 1%. All three collapse into a narrow band (2.08–2.23) just under
+the zero baseline (2.295), where published they spanned 1.57–2.06. That is the
+exact signature of a nuisance that destroys fine-grained accuracy: it does not
+penalise everyone equally, it deletes whatever margin came from resolving detail,
+and it leaves the crudest predictor nearly untouched. This project has measured
+that shape before, under its own name — §P0c/P0d, structured appearance
+perturbation at sub-pixel displacement.
+
+The pair set is excluded as the cause: it moves the *zero* baseline by −1.81%,
+and zero does not read the frames at all. Two candidates remain, and both are
+ours:
+
+1. **JPEG.** `sfprep materialize` re-encoded FLOW360's PNGs as JPEG. Every
+   geodesic row in this document — SLOF, PanoFlow, RAFT-large **and OSLO's own
+   training and evaluation** — has been reading re-compressed frames.
+2. **Iteration budget**, 12 against 64. RAFT is not guaranteed to be monotone in
+   refinement steps for a checkpoint fine-tuned at a fixed budget.
+
+Two isolations in flight, both local, both against the §16.4 raw run of the same
+checkpoint: `--source shards --directions forward --iters 12` (changes JPEG and
+nothing else) and a 128-pair paired sweep of iters 12 against 64 on raw frames
+(changes the budget and nothing else). Until they land, no causal claim.
+
+**This does not restore the universality claim.** §16.7's replay and §16.4's
+reproduction are unaffected — both were run at their own protocols, and the
+geodesic replay stands as the corrected version of §9.1 whatever explains the
+drift. What is at stake now is whether *our whole evaluation substrate* has been
+handicapping every method it measures, including ours.
+
+### 16.10 JPEG IS EXONERATED (2026-08-03) — the drift is the iteration budget
+
+flow360 test+val re-materialized with `--lossless` into a separate `shards_lossless`
+(same manifest, `val_every=6`, splits verified 4555/791/2567), then the identical
+protocol run on both shard sets: forward-only, iters 12, `unit`, `singlerotation`.
+
+| source | EPE `s≥0` | vs published 1.568181 |
+| --- | --- | --- |
+| raw PNG/`.npy` files (§16.4) | 1.568184 | +0.0002% |
+| **PNG shards** (`--lossless`) | 1.568143 | **−0.0025%** |
+| **JPEG shards** (q95, what every row used) | 1.569069 | **+0.0566%** |
+
+**Our JPEG costs 0.059%.** The hypothesis of §16.9 — that `sfprep`'s re-encoding
+was deleting the sub-pixel signal and handicapping every method this project has
+measured, including OSLO's own training — is **refuted, decisively and at full
+split**. The shard pipeline is faithful to the raw files at the fourth decimal.
+That is worth having on the record: it closes a question a referee would be right
+to ask, and it removes any doubt about the substrate the P1 campaign trained on.
+
+By elimination, §16.9's 34–42% drift is the **iteration budget**, 12 against 64.
+The pair set was already excluded (it moves the *zero* row by −1.8%, and zero
+never reads a frame), and JPEG is now excluded at 0.06%. Nothing else differs.
+
+**This is our third protocol defect on the SLOF rows, and the largest.** Every
+geodesic row in §5, §9.1 and even the corrected replay of §16.7 ran
+`--iters 64`, which is `evaluate_raft.py`'s `__main__` default but not the setting
+that produced the paper: `train.py:294` calls the evaluator with 12, and the
+shipped CSVs are `iters_12`. Running RAFT for 64 refinement steps on a checkpoint
+fine-tuned at 12, over displacements whose median is 0.13°, accumulates GRU drift
+that a from-scratch checkpoint (`raft.pt`, +1.18%) happens to tolerate and the
+fine-tuned ones do not.
+
+So the definitive universality table is **`--princeton-input-scale unit --iters
+12`**, their published setting on both axes, and it has not been run yet. §16.7's
+numbers are a lower bound on those methods: they were measured under a handicap of
+ours. The claim's death is unaffected — removing a handicap cannot make a method
+that already beats zero stop beating it — but the magnitudes and the ordering in
+that table are not final.
+
+Two runs settle it, both minutes on the box:
+
+```bash
+# (a) confirm the attribution: shards, forward, unit, iters 64 (only iters differs
+#     from the 1.5691 row above). Expect ~2.2 if the budget is the cause.
+SHARDS_HOST=../sfprep/shards \
+docker compose -f docker-compose.oslo_raft.yml run --rm oslo-raft \
+  python run_slof_table1.py --source shards --shards /data/shards \
+    --dataset flow360 --mode test --directions forward \
+    --checkpoint /outputs/slof_weights/singlerotation.pt \
+    --iters 64 --input-scale unit --batch-size 8 --device cuda \
+    --output-dir /outputs/slof_iterstest_64
+
+# (b) the definitive geodesic table, their published protocol on both axes
+SHARDS_HOST=../sfprep/shards \
+docker compose -f docker-compose.oslo_raft.yml run --rm oslo-raft \
+  python rerun_from_json.py /outputs/universality_slof_*_test \
+    --set geodesic_metric=haversine --set princeton_input_scale=unit --set iters=12 \
+    --set motion_bands_deg=0,0.0625,0.125,0.25,0.5,1,2,4,8,16,32,inf \
+    --output-suffix _hav_unit_i12 --run
+```
+
+The lossless shards are not needed for either — they were the control, and the
+control passed. They stay on disk as the evidence.
+
+### 16.11 THE DRIFT DECOMPOSED — it is the backward pairs, and they were never validated
+
+`singlerotation`, EPE `s≥0`, one factor changed at a time from the published
+setting:
+
+| run | EPE `s≥0` | attributable |
+| --- | --- | --- |
+| published (raw files, forward, iters 12) | 1.568181 | — |
+| JPEG shards, forward, iters 12 | 1.569069 | re-encoding **+0.06%** |
+| JPEG shards, forward, **iters 64** | 1.638641 | refinement budget **+4.43%** |
+| JPEG shards, **both directions**, iters 64 | 2.227017 | pair set **+35.9%** |
+
+My §16.10 attribution to the iteration budget was wrong by an order of magnitude,
+and my §16.9 dismissal of the pair set was wrong for the wrong reason: I argued
+that it moves the *zero* row by only −1.8%, which says nothing about a model.
+Splitting the `both` run by pixel count (forward 50.21%, backward 49.79%):
+
+| backward pairs only, inferred | EPE `s≥0` |
+| --- | --- |
+| zero flow | 2.252 |
+| singlerotation | 2.820 |
+
+**The model is 25% WORSE than doing nothing on the backward half, while being 30%
+better on the forward half.** A backward pair is a time-reversed pair; RAFT has no
+difficulty with that, and no plausible model weakness reverses the *sign* of the
+benefit. This is the signature of a ground truth whose convention is wrong.
+
+There is structural reason to suspect exactly that. Their `exr2flow` builds
+`flowf = (R, -G)` and `flowb = (B, -A)` — different sign patterns per channel.
+sfprep pins flow360 to `identity` with `pin_convention = true`, precisely because
+the motion is too small to diagnose photometrically, so the *backward* half was
+adopted, never measured. And their own evaluator never reads it:
+`validate_flow360` requests `fflow` only. **Nobody in this chain — the authors or
+us — has ever validated the backward convention.**
+
+If it is wrong it touches 3942 of flow360's 7913 pairs: half of test, half of the
+val split where the `+4.5%` act₀.₅ lives, and half of the train split OSLO
+consumed.
+
+`run_slof_table1.py` gains `--directions backward` and `--gt-transform
+{identity,negated,negate_x,negate_y}` for the diagnostic. The reading is
+unambiguous because the zero row is invariant to a sign flip while the model is
+not: whichever transform makes a real predictor beat zero on the backward half by
+roughly the margin it achieves on the forward half is the correct convention.
+
+Pre-registered: if `identity` stays ~−25% and one transform lands near +30%, the
+sfprep pin is wrong and flow360 must be re-materialized with the corrected
+backward convention — after which every flow360 number in this project, including
+OSLO's training, is measured on half-corrupted data and must be redone. If no
+transform helps, the backward half is genuinely harder and the finding is about
+the dataset, not our pipeline.
