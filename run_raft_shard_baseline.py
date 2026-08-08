@@ -78,6 +78,9 @@ from spherical_flow.shard_dataset import (
     _to_chw_free_float,
     sample_pair_to_nodes,
 )
+from spherical_flow.so3_augment import sample_rotation, so3_augment_pair
+from spherical_flow.geometry import equirectangular_pixels_to_unit_vectors
+from spherical_flow.flow360 import bilinear_sample_erp
 
 
 def parse_sources(text: str) -> List[Tuple[str, str]]:
@@ -152,8 +155,47 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--geodesic-metric", default="acos", choices=["acos", "haversine"],
                         help="Great-circle formula. 'acos' reproduces every existing number and "
                              "has a 0.028 deg float32 floor; 'haversine' is exact at zero.")
+    parser.add_argument("--val-so3-prob", type=float, default=0.0,
+                        help="Probability of rotating each pair by a random SO(3) element before "
+                             "prediction. Measures robustness to camera orientation: the ERP has a "
+                             "privileged axis and a sphere-native grid does not, so a rotated scene "
+                             "is ordinary for one and out-of-distribution for the other. The "
+                             "predictor receives a re-rendered ERP, which costs exactly the one "
+                             "bilinear resampling a node-sampling model also pays, so the "
+                             "comparison carries no interpolation advantage either way.")
+    parser.add_argument("--val-so3-max-angle-deg", type=float, default=180.0)
+    parser.add_argument("--val-so3-uniform", action="store_true",
+                        help="Draw from the Haar measure on SO(3) instead of the axis-uniform, "
+                             "angle-uniform schedule the training augmentation uses.")
+    parser.add_argument("--val-so3-seed", type=int, default=1234,
+                        help="Rotations come from a dedicated generator advanced once per pair, so "
+                             "every predictor run at this seed sees the same rotation sequence.")
     parser.add_argument("--output-dir", default="/outputs/raft_shard_baseline")
     return parser.parse_args()
+
+
+def rotate_erp(frame: torch.Tensor, rotation: torch.Tensor,
+               grid: Tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
+    """Re-render an ERP frame as seen by a camera rotated by ``R``.
+
+    The convention matches :func:`so3_augment_pair`, which samples the real frames
+    at ``p @ R``: the rotated raster at direction ``d`` shows whatever the real
+    raster holds at ``d @ R``. Reading the rotated raster at an unrotated node
+    therefore returns exactly what the node-sampling path returns, so the target
+    that ``so3_augment_pair`` produces scores the two without any further
+    bookkeeping.
+    """
+    height, width = frame.shape[:2]
+    directions, _ = grid
+    u, v = points_to_equirectangular_pixels(directions @ rotation, height, width)
+    return bilinear_sample_erp(frame, u, v).reshape(height, width, frame.shape[2])
+
+
+def erp_direction_grid(height: int, width: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    v, u = torch.meshgrid(torch.arange(height, dtype=torch.float32),
+                          torch.arange(width, dtype=torch.float32), indexing="ij")
+    u, v = u.reshape(-1), v.reshape(-1)
+    return equirectangular_pixels_to_unit_vectors(u, v, height, width), u
 
 
 def get_device(name: str) -> torch.device:
@@ -263,6 +305,11 @@ def main() -> None:
     active_counts: Dict[str, float] = {}
     target_chunks: List[torch.Tensor] = []
     pixel_cache: Dict[Tuple[int, int], Tuple[torch.Tensor, torch.Tensor]] = {}
+    direction_cache: Dict[Tuple[int, int], Tuple[torch.Tensor, torch.Tensor]] = {}
+    so3_gen = torch.Generator().manual_seed(args.val_so3_seed)
+    if args.val_so3_prob > 0.0 and args.predictor == "oracle":
+        raise ValueError("--predictor oracle scores the unrotated GT raster and cannot be "
+                         "combined with --val-so3-prob")
     seen = 0
     start_time = time.time()
 
@@ -320,20 +367,35 @@ def main() -> None:
         flow_erp = GT_TRANSFORMS[args.gt_transform](
             torch.from_numpy(np.ascontiguousarray(record["flow"])).float())
         valid_erp = torch.from_numpy(np.ascontiguousarray(record["valid"]))
-        item = {
-            "flow_erp": flow_erp,
-            "target": sample_pair_to_nodes(
-                frame1_erp, frame2_erp, flow_erp, valid_erp, points, basis_east, basis_north
-            ),
-        }
+        height, width = flow_erp.shape[:2]
+
+        rotation = None
+        if args.val_so3_prob > 0.0 and float(
+                torch.rand((), generator=so3_gen)) < args.val_so3_prob:
+            rotation = sample_rotation(so3_gen, max_angle_deg=args.val_so3_max_angle_deg,
+                                       uniform_so3=args.val_so3_uniform)
+        if rotation is None:
+            target = sample_pair_to_nodes(frame1_erp, frame2_erp, flow_erp, valid_erp,
+                                          points, basis_east, basis_north)
+        else:
+            target = so3_augment_pair(frame1_erp, frame2_erp, flow_erp, valid_erp,
+                                      points, rotation, basis_east, basis_north)
+            if (height, width) not in direction_cache:
+                direction_cache[(height, width)] = erp_direction_grid(height, width)
+            frame1_erp = rotate_erp(frame1_erp, rotation, direction_cache[(height, width)])
+            frame2_erp = rotate_erp(frame2_erp, rotation, direction_cache[(height, width)])
+        item = {"flow_erp": flow_erp, "target": target}
         if args.predictor == "raft":
-            height, width = flow_erp.shape[:2]
             if infer_size is None and not args.panoflow_checkpoint:
                 require_divisible_by_8(height, width)
-            item["frame1_u8"] = torch.from_numpy(
-                np.ascontiguousarray(record["frame1"])).permute(2, 0, 1).contiguous()
-            item["frame2_u8"] = torch.from_numpy(
-                np.ascontiguousarray(record["frame2"])).permute(2, 0, 1).contiguous()
+            if rotation is None:                    # keep the byte-exact original path
+                f1 = torch.from_numpy(np.ascontiguousarray(record["frame1"]))
+                f2 = torch.from_numpy(np.ascontiguousarray(record["frame2"]))
+            else:
+                f1 = frame1_erp.mul(255.0).round().clamp(0, 255).to(torch.uint8)
+                f2 = frame2_erp.mul(255.0).round().clamp(0, 255).to(torch.uint8)
+            item["frame1_u8"] = f1.permute(2, 0, 1).contiguous()
+            item["frame2_u8"] = f2.permute(2, 0, 1).contiguous()
             if pending and pending[0]["flow_erp"].shape != flow_erp.shape:
                 process(pending)
                 pending = []
