@@ -3997,3 +3997,80 @@ now carry a status banner pointing at `LITERATURE_SCOPE.md`, and the refuted
 "ERP methods structurally cannot win the SO(3) protocol" sentence in
 `THESIS_REGIME_ARGUMENT.md` §5 is struck through in place with the measurement
 that killed it.
+
+### 16.44 THE CROSSOVER IS MEASURED — within one dataset, one run, one checkpoint
+
+`--motion-band-regions` (§16.42's outstanding item) implemented, validated in
+Docker (`run_band_region_check.py`: synthetic closed-form, plus the streaming
+`accumulate_maps` proved to agree with the one-shot `summarize_maps` to 1.2e-06
+across 53 keys), and run on flowscape:test. Sanity: global band fracs sum to
+1.00000 and every region-band cell nests inside its global band.
+
+**UNROTATED flowscape:test, POLES, geodesic degrees.** ERP px = the band's mean
+displacement times the area-weighted mean $\sec\varphi$ of 3.908, over 0.3516°/px.
+
+| band | ERP px | zero | OSLO | RAFT-large | OSLO/RAFT | % nodes |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0–0.5 | 4 | 0.322 | 0.287 | **0.106** | 2.70 | 0.04% |
+| 0.5–1 | 7 | 0.616 | 0.545 | **0.122** | 4.45 | 0.03% |
+| 1–2 | 21 | 1.849 | 0.884 | **0.282** | 3.14 | 0.02% |
+| 2–4 | 35 | 3.191 | 0.961 | **0.791** | 1.22 | 0.37% |
+| **4–8** | **74** | 6.689 | **2.028** | 2.264 | **0.90** | 5.55% |
+| **8–16** | **109** | 9.799 | **4.007** | 4.874 | **0.82** | 3.62% |
+| **16+** | **237** | 21.341 | **17.503** | 19.736 | **0.89** | 0.29% |
+
+**THE EQUATOR CONTROL, same run, same checkpoint, same pairs:**
+
+| band | ERP px | OSLO | RAFT-large | OSLO/RAFT |
+| --- | --- | --- | --- | --- |
+| 0–0.5 | 1 | 0.324 | **0.119** | 2.72 |
+| 0.5–1 | 2 | 0.466 | **0.159** | 2.93 |
+| 1–2 | 4 | 0.639 | **0.189** | 3.37 |
+| 2–4 | 8 | 0.713 | **0.272** | 2.62 |
+| 4–8 | 15 | 0.998 | **0.521** | 1.92 |
+| 8–16 | 31 | 3.814 | **1.827** | 2.09 |
+| 16+ | 365 | 121.353 | **121.187** | 1.00 |
+
+**The crossover exists, and it is polar-specific.** At the poles the ratio runs
+2.70 → 4.45 → 3.14 → 1.22 → **0.90 → 0.82 → 0.89**: RAFT-large leads below 4°,
+OSLO leads above it, and the flip is monotone in displacement. **At the equator
+OSLO never leads at any displacement** — the ratio narrows from 2.72 to 1.92 but
+never crosses 1. Same run, same weights, same 1386 pairs: the only variables are
+displacement and latitude.
+
+This is what §16.38–16.42 could not do. Those compared replica360 against
+flowscape, which changed dataset, content, domain **and OSLO checkpoint** at
+once. Here the checkpoint is one file, the data is one split, and the contrast is
+internal.
+
+**The pre-registration was one band off, and that is the honest number.** §16.42
+predicted the crossing inside the 2–4 band, from a 32 px reach. The 2–4 band
+sits at 35 px and RAFT still leads there by 1.22×; the flip happens by 74 px.
+So the threshold model predicts the crossover's *location* to within a factor of
+about two, not exactly. It also does not fully explain latitude: the equator's
+8–16 band is 31 px with a ratio of 2.09, while the poles' 2–4 band is 35 px with
+a ratio of 1.22 — comparable pixels, very different outcomes. **ERP displacement
+sets the scale; the anisotropic polar stretch is a second effect that pixel count
+alone does not capture.** A mechanism with a measured caveat, not a law.
+
+**Under Haar rotation the crossover disappears** — RAFT-large leads every polar
+band (ratios 2.17 / 2.75 / 3.07 / 2.80 / 2.01 / 1.38 / 1.04). The cause is not
+placement: it is that **OSLO pays 29.3% for the rotation and RAFT-large 6.3%**.
+§16.42's attribution — "all of the raw flowscape margin was placement" — is
+therefore **too strong and is corrected here**. Within displacement bands, where
+placement is controlled by construction, a genuine polar advantage is present in
+the unrotated data. What rotation removes is not a placement artefact but OSLO's
+own robustness deficit.
+
+**Scope note found by the sanity check.** Unrotated, the polar cap carries only
+74% of its geometric node mass after validity masking (0.0993 vs 0.1335) — CARLA
+puts the ego vehicle at the bottom pole. Rotated, it recovers to 99% (0.1315).
+So the unrotated polar rows describe the valid three-quarters of the polar cap,
+and the rotation independently checks out as doing what it should.
+
+**What this licenses in the article**, stated at exactly its width: on the
+official FlowScape test split, in its native orientation, OSLO-RAFT has lower
+polar error than frozen RAFT-large for displacements above roughly 4° (about 74
+ERP px at the poles), covering 9.5% of the sphere's valid nodes, while losing at
+every displacement at the equator and at every displacement once the scene is
+randomly rotated.

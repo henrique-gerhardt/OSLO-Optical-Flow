@@ -65,6 +65,10 @@ from spherical_flow.panoflow_adapter import (
     load_panoflow_checkpoint,
     predict_panoflow_cfe_flow,
 )
+from spherical_flow.prior_adapter import (
+    load_prior_checkpoint,
+    predict_prior_flow,
+)
 from spherical_flow.raft_adapter import (
     FLOW_TRANSFORMS,
     erp_flow_to_tangent,
@@ -124,6 +128,12 @@ def parse_args() -> argparse.Namespace:
                         help="Path to a PanoFlow(CSFlow) checkpoint. When set, the vendored "
                              "PanoFlow(CSFlow) net runs under CFE at native shard resolution "
                              "(its own eval protocol); --checkpoint/--model/--infer-size ignored.")
+    parser.add_argument("--prior-checkpoint", default="",
+                        help="PriOr-RAFT (ICCV 2025) checkpoint. Mutually exclusive with "
+                             "--panoflow-checkpoint and --checkpoint. Runs at native "
+                             "resolution; the dual-branch machinery is inside the net.")
+    parser.add_argument("--prior-eval-iters", type=int, default=12,
+                        help="PriOr-RAFT refinement iterations at eval (repo default 12).")
     parser.add_argument("--panoflow-eval-iters", type=int, default=12,
                         help="GRU eval iterations for the PanoFlow path (repo default 12).")
     parser.add_argument("--infer-size", default="",
@@ -261,10 +271,28 @@ def main() -> None:
     weights_name = torchvision_version = None
     princeton_meta = None
     panoflow_meta = None
+    prior_meta = None
     device = torch.device("cpu")
+    if sum(bool(x) for x in (args.panoflow_checkpoint, args.prior_checkpoint,
+                             args.checkpoint)) > 1:
+        raise SystemExit("--panoflow-checkpoint, --prior-checkpoint and --checkpoint "
+                         "are mutually exclusive")
     if args.predictor == "raft":
         device = get_device(args.device)
-        if args.panoflow_checkpoint:
+        if args.prior_checkpoint:
+            model, prior_meta = load_prior_checkpoint(
+                args.prior_checkpoint, device, eval_iters=args.prior_eval_iters
+            )
+            print(
+                f"prior_raft checkpoint={args.prior_checkpoint} "
+                f"eval_iters={prior_meta['eval_iters']} resolution=native "
+                f"params={prior_meta['params']:,} "
+                f"flow_transform={args.flow_transform} device={device} "
+                f"loaded_keys={prior_meta['loaded_keys']} "
+                f"unexpected_keys={prior_meta['unexpected_keys']}",
+                flush=True,
+            )
+        elif args.panoflow_checkpoint:
             model, panoflow_meta = load_panoflow_checkpoint(
                 args.panoflow_checkpoint, device, eval_iters=args.panoflow_eval_iters
             )
@@ -325,7 +353,12 @@ def main() -> None:
         if args.predictor == "raft":
             frames1 = torch.stack([it["frame1_u8"] for it in items], dim=0)
             frames2 = torch.stack([it["frame2_u8"] for it in items], dim=0)
-            if args.panoflow_checkpoint:
+            if args.prior_checkpoint:
+                raft_flow = predict_prior_flow(
+                    model, frames1, frames2, device, args.flow_transform,
+                    eval_iters=args.prior_eval_iters,
+                )
+            elif args.panoflow_checkpoint:
                 raft_flow = predict_panoflow_cfe_flow(
                     model, frames1, frames2, device, args.flow_transform,
                 )
@@ -389,7 +422,8 @@ def main() -> None:
             frame2_erp = rotate_erp(frame2_erp, rotation, direction_cache[(height, width)])
         item = {"flow_erp": flow_erp, "target": target}
         if args.predictor == "raft":
-            if infer_size is None and not args.panoflow_checkpoint:
+            if infer_size is None and not (args.panoflow_checkpoint
+                                           or args.prior_checkpoint):
                 require_divisible_by_8(height, width)
             if rotation is None:                    # keep the byte-exact original path
                 f1 = torch.from_numpy(np.ascontiguousarray(record["frame1"]))
@@ -427,7 +461,8 @@ def main() -> None:
         "sources": sources,
         "model": None if args.predictor != "raft" else {
             "arch": (
-                "panoflow_csflow" if args.panoflow_checkpoint
+                "prior_raft" if args.prior_checkpoint
+                else "panoflow_csflow" if args.panoflow_checkpoint
                 else "princeton" if args.checkpoint
                 else "torchvision"
             ),

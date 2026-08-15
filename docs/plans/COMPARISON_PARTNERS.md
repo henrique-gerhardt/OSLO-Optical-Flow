@@ -237,3 +237,43 @@ Read `s/step` from the log, multiply, and pick the row from the table above.
    readout from P2A; SEPE is our geodesic distance in different units.
 4. **Pre-register the reading before launching.** Three refuted predictions in
    one afternoon on 2026-08-14 is the argument for this, not against it.
+
+---
+
+## 8. PriOr-RAFT vendored (2026-08-15) — built and validated on CPU
+
+`spherical_flow/prior_vendor/` (7 files, from longliangLiu/PriOr-Flow) plus
+`spherical_flow/prior_adapter.py`, wired into `run_raft_shard_baseline.py` as
+`--prior-checkpoint` / `--prior-eval-iters`.
+
+**Three edits to the vendored source, all recorded in each file's header:**
+package-relative imports; removal of the unused `timm` import in `extractor.py`
+(dead — it is imported and never referenced, so vendoring drops a dependency);
+and a lazy `scipy` import inside `forward_interpolate`, a KITTI warm-start helper
+this evaluation never calls. Upstream also hardcodes `.cuda()` at 14 sites in the
+projection and sampling helpers, which makes the module unimportable without a
+GPU. Those became an explicit `_DEVICE` that the adapter pins via `set_device`, so
+box placement is identical to upstream and CPU validation became possible.
+
+**Licence: the upstream repository declares none.** The copy is headed with its
+provenance and a note that it must not be redistributed without asking the
+authors. Flagging rather than assuming.
+
+**Validated in Docker, no GPU:** the network builds at 8,337,646 parameters, and
+a full run through the harness on replica360:val loads a 217-key checkpoint saved
+the way upstream saves it (`DataParallel`, hence the `module.` prefix), strips the
+prefix, produces finite ERP flow, and scores through the same geodesic stack every
+other row uses.
+
+**One trap found and guarded.** At 64x128 the network returns **100% NaN** without
+raising, because the 1/8 feature map cannot host a 4-level correlation pyramid. At
+256x512 it is clean. The adapter now refuses inputs below 128 px on either side
+and raises on any non-finite output, so a bad crop can never look like a result.
+
+**Before trusting the row: reproduce a published number.** A divergence from
+PriOr-Flow's table would otherwise be ambiguous between "the method is like that"
+and "we vendored it wrong" — the same ambiguity the SLOF reproduction resolved
+when the convention defect surfaced. The cheap version of that check is ERP-pixel
+EPE on flowscape:test against their published 2.33 px "All". Our split holds 1386
+of their 1400 pairs and our readout is at r6 nodes, so a few per cent of
+disagreement is expected and a large gap is not.
