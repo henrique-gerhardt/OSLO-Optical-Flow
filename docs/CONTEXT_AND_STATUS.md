@@ -1,5 +1,18 @@
 # Context And Status
 
+<!-- SCOPE-BANNER -->
+> **STATUS 2026-08-14 — read `docs/plans/LITERATURE_SCOPE.md` before quoting anything here.**
+> Two independent corrections apply across this project's documents. (1) The FLOW360
+> forward-flow convention was inverted, so every FLOW360 result recorded before
+> 2026-08-04 is void. (2) A literature check on 2026-08-14 found that several things
+> treated here as ours already exist in print: the geodesic (SEPE) metric, polar/equatorial
+> stratification, rotation-robustness evaluation in panoramic vision, and matched-backbone
+> comparison across panoramic representations. `LITERATURE_SCOPE.md` is the register of what
+> we may and may not claim.
+>
+> **This file specifically:** Every FLOW360 number here predates the convention fix and is VOID, including the frozen-RAFT-vs-zero comparisons.
+
+
 ## Objective
 
 We are evaluating whether OSLO/OSLO-IC spherical convolutions can be adapted from 360-degree image compression to 360-degree optical flow.

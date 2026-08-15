@@ -140,6 +140,8 @@ def parse_args() -> argparse.Namespace:
                              "'0,0.125,0.25,0.5,1,2,4,8,16,inf'. Unlike the cumulative active_X "
                              "tails, bands locate the displacement at which a method starts "
                              "beating the zero baseline. Empty = off (default).")
+    parser.add_argument("--motion-band-regions", default="",
+                        help="comma-separated region names to CROSS with --motion-bands-deg, e.g. 'poles,equator'. Emits keys like poles_band_2_4_geo_deg, so polar error can be read restricted to a displacement range. Empty = off (default); existing runs stay byte-identical.")
     parser.add_argument("--directions", default="both",
                         choices=["both", "forward", "backward"],
                         help="Restrict to one flow direction. Needed because a dataset can carry "
@@ -240,6 +242,7 @@ def main() -> None:
     sources = parse_sources(args.sources)
     active_thresholds = parse_thresholds(args.active_thresholds_deg)
     motion_bands = parse_bands(args.motion_bands_deg)
+    band_regions = tuple(r.strip() for r in args.motion_band_regions.split(",") if r.strip())
     set_geodesic_mode(args.geodesic_metric)
     points = healpix_unit_vectors(args.resolution)
     basis_east, basis_north = tangent_basis(points)
@@ -357,7 +360,7 @@ def main() -> None:
         maps = compute_maps(pred_flow, target_batch, points, basis_east, basis_north)
         target_chunks.append(target_sample_from_maps(maps, None))
         accumulate_maps(maps, region_masks, active_thresholds, totals, counts, active_counts,
-                        motion_bands=motion_bands)
+                        motion_bands=motion_bands, band_regions=band_regions)
 
     pending: List[dict] = []
     for record in tqdm(iter_source_records(Path(args.shards), sources, args.directions),
@@ -416,7 +419,7 @@ def main() -> None:
     metrics = finalize_metrics(totals, counts, active_counts, target_chunks)
     metrics["elapsed_s"] = time.time() - start_time
     metrics["pairs"] = seen
-    print_metrics(f"{args.predictor}_validation", metrics, motion_bands)
+    print_metrics(f"{args.predictor}_validation", metrics, motion_bands, band_regions)
     print(f"pairs={seen} elapsed_s={metrics['elapsed_s']:.1f}", flush=True)
 
     result = {

@@ -131,6 +131,34 @@ def active_key(threshold: float) -> str:
     return f"active_{str(threshold).replace('.', '_')}"
 
 
+def _selections(
+    maps: Dict[str, torch.Tensor],
+    valid: torch.Tensor,
+    region_masks: Dict[str, torch.Tensor],
+    active_thresholds: list[float],
+    motion_bands: list[tuple[float, float]],
+    band_regions: tuple[str, ...],
+) -> list[tuple[str, torch.Tensor]]:
+    """Node subsets to score: active thresholds, motion bands, and region x band.
+
+    ``band_regions`` crosses each named region with each motion band, giving keys like
+    ``poles_band_2_4_geo_deg``. Region and band masks are otherwise independent
+    selections, so "polar error restricted to nodes moving more than 2 deg" cannot be
+    read from any run that leaves this empty. Empty by default: existing runs keep
+    byte-identical outputs.
+    """
+    target = maps["zero_geo_deg"]
+    out = [(active_key(t), valid & (target >= t)) for t in active_thresholds]
+    out += [(band_key(lo, hi), valid & (target >= lo) & (target < hi)) for lo, hi in motion_bands]
+    for region_name in band_regions:
+        if region_name not in region_masks:
+            raise KeyError(f"unknown region {region_name!r}; have {sorted(region_masks)}")
+        in_region = valid & region_masks[region_name].unsqueeze(0)
+        out += [(f"{region_name}_{band_key(lo, hi)}", in_region & (target >= lo) & (target < hi))
+                for lo, hi in motion_bands]
+    return out
+
+
 def add_improvement_metrics(metrics: Dict[str, float]) -> Dict[str, float]:
     for key, value in list(metrics.items()):
         if not key.endswith("_geo_deg") or key.endswith("_zero_geo_deg") or key.startswith("target_"):
@@ -152,6 +180,7 @@ def summarize_maps(
     active_thresholds: list[float],
     motion_bands: list[tuple[float, float]] = (),
     node_weights: Optional[torch.Tensor] = None,
+    band_regions: tuple[str, ...] = (),
 ) -> Dict[str, float]:
     """One-shot twin of :func:`accumulate_maps`; ``node_weights`` has the same meaning."""
     out: Dict[str, float] = {}
@@ -174,11 +203,8 @@ def summarize_maps(
         for name in ("geo_deg", "zero_geo_deg", "tangent_epe_rad"):
             out[prefix + name] = float(
                 weighted_masked_mean(maps[name], mask, node_weights).detach().cpu())
-    selections = [(active_key(t), valid & (maps["zero_geo_deg"] >= t)) for t in active_thresholds]
-    selections += [
-        (band_key(lo, hi), valid & (maps["zero_geo_deg"] >= lo) & (maps["zero_geo_deg"] < hi))
-        for lo, hi in motion_bands
-    ]
+    selections = _selections(maps, valid, region_masks, active_thresholds,
+                             motion_bands, band_regions)
     for key, mask in selections:
         count = mass(mask)
         prefix = key + "_"
@@ -211,6 +237,7 @@ def accumulate_maps(
     active_counts: Dict[str, float],
     motion_bands: list[tuple[float, float]] = (),
     node_weights: Optional[torch.Tensor] = None,
+    band_regions: tuple[str, ...] = (),
 ) -> None:
     """Stream masked sums into ``totals``/``counts``.
 
@@ -238,11 +265,8 @@ def accumulate_maps(
             totals[key] = totals.get(key, 0.0) + float((maps[metric_name] * w).sum().detach().cpu())
             counts[key] = counts.get(key, 0.0) + count
 
-    selections = [(active_key(t), valid & (maps["zero_geo_deg"] >= t)) for t in active_thresholds]
-    selections += [
-        (band_key(lo, hi), valid & (maps["zero_geo_deg"] >= lo) & (maps["zero_geo_deg"] < hi))
-        for lo, hi in motion_bands
-    ]
+    selections = _selections(maps, valid, region_masks, active_thresholds,
+                             motion_bands, band_regions)
     for prefix, mask in selections:
         w = weigh(mask)
         count = float(w.sum().item())
@@ -282,6 +306,7 @@ def print_metrics(
     prefix: str,
     metrics: Dict[str, float],
     motion_bands: list[tuple[float, float]] = (),
+    band_regions: tuple[str, ...] = (),
 ) -> None:
     keys = [
         "global_geo_deg",
@@ -316,5 +341,10 @@ def print_metrics(
         band = band_key(lo, hi)
         keys += [f"{band}_frac", f"{band}_zero_geo_deg", f"{band}_geo_deg",
                  f"{band}_improvement_pct"]
+    for region_name in band_regions:
+        for lo, hi in motion_bands:
+            band = f"{region_name}_{band_key(lo, hi)}"
+            keys += [f"{band}_frac", f"{band}_zero_geo_deg", f"{band}_geo_deg",
+                     f"{band}_improvement_pct"]
     items = [f"{key}={metrics[key]:.4f}" for key in keys if key in metrics]
     print(f"{prefix} " + " ".join(items), flush=True)

@@ -1,5 +1,18 @@
 # ERP RAFT Baseline
 
+<!-- SCOPE-BANNER -->
+> **STATUS 2026-08-14 — read `docs/plans/LITERATURE_SCOPE.md` before quoting anything here.**
+> Two independent corrections apply across this project's documents. (1) The FLOW360
+> forward-flow convention was inverted, so every FLOW360 result recorded before
+> 2026-08-04 is void. (2) A literature check on 2026-08-14 found that several things
+> treated here as ours already exist in print: the geodesic (SEPE) metric, polar/equatorial
+> stratification, rotation-robustness evaluation in panoramic vision, and matched-backbone
+> comparison across panoramic representations. `LITERATURE_SCOPE.md` is the register of what
+> we may and may not claim.
+>
+> **This file specifically:** Every FLOW360 number here predates the convention fix and is VOID.
+
+
 This baseline evaluates TorchVision RAFT directly on native FLOW360 equirectangular frames, then converts the predicted ERP pixel flow into the same spherical endpoint/tangent representation used by the OSLO-style runner.
 
 It is evaluation-only. There is no RAFT fine-tuning in this step.

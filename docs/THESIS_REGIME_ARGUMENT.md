@@ -1,5 +1,18 @@
 # The Two-Regime Argument: why the thesis targets real-video 360° flow
 
+<!-- SCOPE-BANNER -->
+> **STATUS 2026-08-14 — read `docs/plans/LITERATURE_SCOPE.md` before quoting anything here.**
+> Two independent corrections apply across this project's documents. (1) The FLOW360
+> forward-flow convention was inverted, so every FLOW360 result recorded before
+> 2026-08-04 is void. (2) A literature check on 2026-08-14 found that several things
+> treated here as ours already exist in print: the geodesic (SEPE) metric, polar/equatorial
+> stratification, rotation-robustness evaluation in panoramic vision, and matched-backbone
+> comparison across panoramic representations. `LITERATURE_SCOPE.md` is the register of what
+> we may and may not claim.
+>
+> **This file specifically:** VOID as a framing document: every FLOW360 number is inverted-target, and the SO(3) claim in section 5 is refuted by our own measurement (frozen RAFT-large degrades 6.3% under Haar rotation, OSLO 29.3%).
+
+
 Research summary for thesis writing (2026-07-24). This note consolidates the
 framing argument developed at the close of the P2C campaign: what regime the
 thesis actually studies, why the field's benchmarks do not contain it, why
@@ -115,8 +128,14 @@ way a FlowScape leaderboard position does not.
 - **Positioning against published methods** uses comparisons aligned with the
   claims: the universality table (frozen RAFT-large done; PriOr-RAFT,
   PanoFlow(CSFlow), SLOF public weights available) on the flow360 real leg —
-  SLOF is the load-bearing row, being FLOW360's in-domain home method; the
-  SO(3) rotation protocol, which ERP methods structurally cannot win; and
+  SLOF is the load-bearing row, being FLOW360's in-domain home method; ~~the
+  SO(3) rotation protocol, which ERP methods structurally cannot win~~
+  **[REFUTED 2026-08-14 — under Haar rotation on flowscape:test frozen
+  RAFT-large degrades 6.3%, OSLO 29.3% and PanoFlow 313.9%; the ERP method is
+  the most robust of the three, and orientation sensitivity tracks in-domain
+  training rather than representation. The protocol itself is also not ours:
+  rotation-robustness evaluation is established in panoramic depth,
+  reconstruction and segmentation. See `plans/LITERATURE_SCOPE.md`]**; and
   honest placement of OSLO on flowscape/mpf against published numbers, with
   the P2A grid-floor analysis stating what a 3,072-node estimation grid can
   resolve. A raw EPE shootout on large-motion benchmarks is reported for

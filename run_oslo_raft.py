@@ -233,6 +233,8 @@ def parse_args() -> argparse.Namespace:
                         "'0,0.125,0.25,0.5,1,2,4,8,16,inf'. Unlike the cumulative "
                         "active_X tails, bands locate the displacement at which a method "
                         "starts beating the zero baseline. Empty = off (default).")
+    p.add_argument("--motion-band-regions", default="",
+                   help="comma-separated region names to CROSS with --motion-bands-deg, e.g. 'poles,equator'. Emits keys like poles_band_2_4_geo_deg, so polar error can be read restricted to a displacement range. Empty = off (default); existing runs stay byte-identical.")
     p.add_argument("--upsample-weights", default="learned",
                    choices=["learned", "pwc", "uniform"],
                    help="Bypass the trained upsample head with a fixed rule (--retina "
@@ -350,7 +352,7 @@ def move_batch(batch: dict, device: torch.device) -> dict:
 
 @torch.no_grad()
 def evaluate(model, loader, geom, sup_level, region_masks, active_thresholds, device, eval_iters,
-             max_pairs, motion_bands=(), node_weights=None):
+             max_pairs, motion_bands=(), node_weights=None, band_regions=()):
     # geom is what the model consumes (a SphereLevel single-res, or a SpherePyramid multi-res);
     # sup_level is the grid the loss/metrics live on (the level itself, or the pyramid's fine level).
     model.eval()
@@ -366,7 +368,8 @@ def evaluate(model, loader, geom, sup_level, region_masks, active_thresholds, de
         maps = compute_maps(pred, batch, points, sup_level.basis_east, sup_level.basis_north)
         target_chunks.append(target_sample_from_maps(maps, None))
         accumulate_maps(maps, region_masks, active_thresholds, totals, counts, active_counts,
-                        motion_bands=motion_bands, node_weights=node_weights)
+                        motion_bands=motion_bands, node_weights=node_weights,
+                        band_regions=band_regions)
         seen += batch["frame1"].size(0)
         if max_pairs is not None and seen >= max_pairs:
             break
@@ -397,6 +400,7 @@ def main() -> None:
     os.makedirs(args.output_dir, exist_ok=True)
     active_thresholds = parse_thresholds(args.active_thresholds_deg)
     motion_bands = parse_bands(args.motion_bands_deg)
+    band_regions = tuple(r.strip() for r in args.motion_band_regions.split(",") if r.strip())
     set_geodesic_mode(args.geodesic_metric)
     train_sources = parse_sources(args.train_sources)
     val_sources = parse_sources(args.val_sources)
@@ -640,7 +644,7 @@ def main() -> None:
         model.load_state_dict({k: s.to(backup[k].dtype) for k, s in state.items()})
         m = evaluate(model, val_loader, geom, sup_level, region_masks, active_thresholds,
                      device, args.eval_iters, args.max_val_pairs, motion_bands,
-                     node_weights=node_weights)
+                     node_weights=node_weights, band_regions=band_regions)
         model.load_state_dict(backup)
         return m
 
@@ -703,7 +707,7 @@ def main() -> None:
             with torch.no_grad():
                 maps = compute_maps(preds[-1], batch, sup_level.points, sup_level.basis_east, sup_level.basis_north)
                 tm = summarize_maps(maps, region_masks, active_thresholds, motion_bands,
-                                    node_weights=node_weights)
+                                    node_weights=node_weights, band_regions=band_regions)
             lr_now = opt.param_groups[0]["lr"]
             aux_txt = ""
             if aux_w > 0.0:
@@ -715,21 +719,21 @@ def main() -> None:
         if args.eval_every and step % args.eval_every == 0 and step != total_steps:
             metrics = evaluate(model, val_loader, geom, sup_level, region_masks, active_thresholds,
                                device, args.eval_iters, args.max_val_pairs, motion_bands,
-                               node_weights=node_weights)
-            print_metrics(f"val@{step}", metrics, motion_bands)
+                               node_weights=node_weights, band_regions=band_regions)
+            print_metrics(f"val@{step}", metrics, motion_bands, band_regions)
             if ema_state is not None:
-                print_metrics(f"val_ema@{step}", evaluate_state(ema_state), motion_bands)
+                print_metrics(f"val_ema@{step}", evaluate_state(ema_state), motion_bands, band_regions)
             model.train()
 
     metrics = evaluate(model, val_loader, geom, sup_level, region_masks, active_thresholds,
                        device, args.eval_iters, args.max_val_pairs, motion_bands,
-                       node_weights=node_weights)
+                       node_weights=node_weights, band_regions=band_regions)
     metrics["elapsed_s"] = time.time() - start
-    print_metrics("validation", metrics, motion_bands)
+    print_metrics("validation", metrics, motion_bands, band_regions)
     metrics_ema = None
     if ema_state is not None:
         metrics_ema = evaluate_state(ema_state)
-        print_metrics("validation_ema", metrics_ema, motion_bands)
+        print_metrics("validation_ema", metrics_ema, motion_bands, band_regions)
     print(f"elapsed_s={metrics['elapsed_s']:.1f}", flush=True)
 
     meta = {

@@ -1,5 +1,18 @@
 # OSLO-RAFT Development Plan
 
+<!-- SCOPE-BANNER -->
+> **STATUS 2026-08-14 — read `docs/plans/LITERATURE_SCOPE.md` before quoting anything here.**
+> Two independent corrections apply across this project's documents. (1) The FLOW360
+> forward-flow convention was inverted, so every FLOW360 result recorded before
+> 2026-08-04 is void. (2) A literature check on 2026-08-14 found that several things
+> treated here as ours already exist in print: the geodesic (SEPE) metric, polar/equatorial
+> stratification, rotation-robustness evaluation in panoramic vision, and matched-backbone
+> comparison across panoramic representations. `LITERATURE_SCOPE.md` is the register of what
+> we may and may not claim.
+>
+> **This file specifically:** FLOW360-derived conclusions are VOID. Architecture and instrument sections still hold.
+
+
 This document is the working plan for the next stage of the project: building and training a complete spherical optical-flow model with its own weights ("OSLO-RAFT"), starting from SO(3) data augmentation and the multi-dataset foundation, and training it to perform well against the frozen corrected-RAFT baseline.
 
 It assumes the current validated state described in [NEXT_SESSION_HANDOFF.md](NEXT_SESSION_HANDOFF.md): the frozen-RAFT + HEALPix residual result is robust across seeds and is preserved as the project's safe baseline and fallback contribution. Nothing in this plan deletes or retrains that pipeline.

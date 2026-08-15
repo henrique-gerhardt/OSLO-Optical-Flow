@@ -2454,3 +2454,1546 @@ the global motion really is too small, restriction to the high-magnitude tail.
 
 Only with (a) and (b) agreeing does flow360 get rebuilt, and only then does any
 number in this document — including OSLO's — mean anything again.
+
+### 16.17 CONFIRMED AT FULL SCALE — and the wall was a sign error
+
+flow360:test, resolution 6, haversine, frozen TorchVision RAFT-large, original
+shards, 1289 forward + 1278 backward pairs:
+
+| | `identity` | `negated` |
+| --- | --- | --- |
+| forward, global | −65.81 | **+40.73** |
+| forward, act₀.₅ | −53.15 | **+45.17** |
+| backward, global | **+37.82** | −67.44 |
+| backward, act₀.₅ | **+42.75** | −54.77 |
+
+~105-point margins, matching the 6-pair probe. **`negated` forward, `identity`
+backward, settled.**
+
+**The consequence is the whole thesis.** Combining the two halves under their
+correct conventions, frozen RAFT-large scores global error 0.2601° against a zero
+baseline of 0.4286° — **+39% global, +45% on the active nodes**, zero-shot, a
+stock perspective architecture with no fine-tuning and no spherical machinery.
+
+The row the article prints for that same network is **−15.98%**. It is the average
+of a forward half whose targets were inverted (−65.8) and a backward half whose
+targets were fine (+37.8). Every "nobody beats zero on sub-pixel motion" statement
+in this project is that average.
+
+**So the sub-pixel wall, as measured on flow360, does not exist.** It was our own
+preparation pipeline. `pin_convention = true` fixed `identity` for the whole
+dataset on the reasoning that the motion was too small to diagnose
+photometrically — and that single unvalidated assumption produced: a wall, a
+universality claim, a regime-contrast argument, a training set half of whose
+supervision pointed backwards, and roughly a year of campaign built on top.
+
+**What must now be re-measured, in order:**
+
+1. Rebuild flow360 (adapter fixed, `negated`/`identity`), all three splits.
+2. The universality table, every row. The question is now open in the *opposite*
+   direction: not whether anyone beats zero, but by how much, and where OSLO sits
+   among methods that clear +39%.
+3. **OSLO's P1 campaign.** `flow360:train` is in the P1-proper mix, so half its
+   flow360 supervision was reversed. Gate R2, the `+4.5%` act₀.₅, the EMA basin,
+   the static-calibration diagnosis — all were fitted and read against that.
+4. The same 2×2 on **every other dataset**. replica360, flowscape, chairs360 and
+   mpf were never subjected to this test either. chairs360 and flowscape have
+   warp-validated conventions on record; replica360 and mpf do not.
+
+**What survives.** `doublerotation` ≈ zero, which no sign question can touch. The
+§16.4 pipeline reproduction. And one methodological result that is now worth more
+than the claim it destroyed: **a trivial-baseline comparison cannot detect an
+inverted target, because the baseline is sign-invariant — and neither can
+reproducing a published table, because a model trained against a reversed target
+reproduces its own numbers exactly.** Three independent parties missed this on
+the same dataset: its authors, whose evaluator never reads `bflow`; SLOF's
+fine-tuning, which learned the reversal; and this project, which pinned the
+convention and then measured it with SLOF.
+
+### 16.18 Convention audit across every dataset — flow360 is the only casualty
+
+Same 2×2, frozen RAFT-large, geodesic global improvement over zero. Six pairs at
+resolution 5 for the local sets (margins are 60–180 points, so the sample size is
+not the question); flow360's row is the full-split result of §16.17.
+
+| dataset | directions | `identity` | `negated` | verdict |
+| --- | --- | --- | --- | --- |
+| flow360 forward | 3971 | −65.81 | **+40.73** | **BROKEN** |
+| flow360 backward | 3942 | **+37.82** | −67.44 | ok as shipped |
+| replica360 forward | 954 | **+88.81** | −89.67 | clean |
+| replica360 backward | 954 | **+87.59** | −87.17 | clean |
+| mpf forward | 4188 | **−0.33** | −66.09 | clean (66-pt margin) |
+| flowscape forward | 6336 | **+73.09** | −91.64 | clean |
+| chairs360 forward | 23512 | **+55.64** | −75.49 | clean |
+
+**replica360 is clean in both directions**, which is the single most valuable
+result here: Stage A, Gate R1, the OSLO-vs-RAFT head-to-head, A1 round 1 and the
+retention stamp all rest on it and all survive. It carries the same two-direction
+structure as flow360 and the same per-dataset (not per-direction) `diagnose`, so
+it was exposed to the identical failure mode and simply did not have it.
+
+mpf's 66-point asymmetry settles its sign. That RAFT-large only ties zero there
+(−0.33 global) is a separate question and mpf carries no article result.
+
+flowscape and chairs360 are forward-only, so no per-direction divergence is
+possible, and both have warp-validated conventions on record — but a record is
+not a measurement, so both were measured. Their shards did not exist locally;
+their raws did, so a 64-pair slice of each was materialized on the spot
+(`sfprep materialize --limit 64`) and scored. Margins of 131 and 165 points,
+both favouring `identity`. The command below is what the box would have run:
+
+```bash
+for S in flowscape:test chairs360:val; do for T in identity negated; do
+  SHARDS_HOST=../sfprep/shards \
+  docker compose -f docker-compose.oslo_raft.yml run --rm -e TORCH_HOME=/outputs/torch_home \
+    oslo-raft python run_raft_shard_baseline.py \
+      --shards /data/shards --sources $S --resolution 5 \
+      --predictor raft --directions forward --gt-transform $T \
+      --geodesic-metric haversine --max-pairs 64 --device cuda \
+      --output-dir /outputs/conv_${S%%:*}_${T}
+done; done
+```
+
+**Scope, if those two come back clean:** the defect is confined to flow360, one
+direction of it, and the rebuild is one dataset. Everything measured on
+replica360 or flowscape stands as printed.
+
+**Audit closed.** flow360 forward is the only broken convention in the project.
+Every other dataset, in every direction it carries, prefers the shipped
+`identity` by 131–178 points. The rebuild is one dataset.
+
+### 16.19 The corrected table, first rows (2026-08-03) — the regime survives, the wall does not
+
+flow360:test, `shards_v2`, 2567 pairs, haversine. Zero global 0.42865°.
+
+| row | global | act₀.₂₅ | act₀.₅ | act₁.₀ | poles | seam |
+| --- | --- | --- | --- | --- | --- | --- |
+| **frozen RAFT-large** (zero-shot, native) | **+39.32** | **+46.27** | **+44.01** | **+37.82** | **+25.10** | +23.18 |
+| SLOF switchrotation (unit, iters 12) | −56.55 | −47.28 | −40.32 | −26.90 | −55.26 | −28.48 |
+
+The RAFT-large figure lands on the +39.3% predicted in §16.17 from combining the
+two halves, which is the internal consistency check this whole chain needed.
+
+**The sub-pixel wall does not exist on FLOW360.** A stock perspective
+architecture, frozen, zero-shot, no spherical machinery, beats the trivial
+baseline by 39% globally and 44% on the active nodes. The −15.98% this project
+published for that same network was the average of an inverted forward half and a
+correct backward half.
+
+**SLOF's released checkpoints predict reversed motion.** Against physically
+correct targets they are far *worse* than doing nothing: −56.55% global. A model
+predicting exactly −g would read −100%; −56.55% is an attenuated reversal. Two
+readings, and they converge: either FLOW360's `fflows` are mislabelled and SLOF
+trained consistently with the dataset's own label, or the convention was simply
+never checked by anyone. **Either way, whoever downloads the published weights
+gets reversed flow**, and no published evaluation could have caught it — the
+trivial baseline is sign-invariant, and reproducing the authors' table does not
+test convention, because a model trained against a reversed target reproduces its
+own numbers exactly (§16.4 does, to six figures).
+
+**What replaces the regime argument.** The same frozen RAFT-large scores +74.4%
+on flowscape:test (large motion, unaffected by any of this) against +39.3% on
+flow360:test (sub-pixel). A 35-point gap is a real regime effect and it is
+defensible; the sign flip that the thesis built its story on was an artefact of
+our own data. The honest claim shrinks from "sub-pixel motion defeats every
+method" to "sub-pixel motion halves what the same method achieves at large
+motion", which is smaller, true, and measured.
+
+Remaining: the other four SLOF rows, PanoFlow, and — the one that decides where
+OSLO stands — the retrained model.
+
+### 16.20 Shard set swapped and verified (2026-08-03)
+
+`shards_v2` (corrected flow360) received the four unchanged datasets by hard link
+from the old set, indexes merged, and was promoted to the canonical `shards`
+path. The previous set is kept as `shards_v1_broken` — it is the evidence that
+the defect existed, and every before/after number in §16 depends on being able to
+show it.
+
+Verification at the canonical path, frozen RAFT-large, 64 pairs, resolution 5:
+
+| source | expected | measured |
+| --- | --- | --- |
+| flow360:test forward, `identity` | ≈+40% (was −65.81) | **+43.69** |
+| flowscape:test, `identity` | ≈+73% | **+73.25** |
+
+Both pass. Note for bookkeeping: after the swap, `args.shards` records
+`/data/shards` for old and new runs alike, so **the output directory name is the
+only marker of which vintage a run used**. Keep the `_v2` suffix on everything
+produced from here on.
+
+### 16.21 THE RETRAIN (2026-08-04) — Gate R2 passes by an order of magnitude
+
+`P1proper_mix20k_v2`, 20k steps, 22.7 h, identical recipe to the original run
+(same seed 7, same warm start from Stage A, same `--real-resample-prob 0.3`,
+same edge-corruption 3.1, same OneCycle) — **only the flow360 shards changed**.
+Validation `flow360:val`, acos, area-weighted node means, no rotation on val.
+
+| metric | `P1proper_mix20k` (v1, broken) | `P1proper_mix20k_v2` | zero (both) |
+| --- | --- | --- | --- |
+| act₀.₂₅ | — | **+58.83** | 0.6152° |
+| act₀.₅ | +4.0 | **+60.38** | 0.8559° |
+| act₁.₀ | — | **+35.31** | 1.8140° |
+| global | −31.1 | **+10.52** | 0.2106° |
+| equator | — | +21.36 | 0.2170° |
+| seam | — | +7.30 | 0.3077° |
+| poles | — | **−43.06** | 0.1633° |
+
+**The two runs are on the same ruler to within 0.04%, measured.**
+`active_0_5_zero_geo_deg` reads 0.8556 before and 0.8559 after, and the active
+set is selected on |g| in both. The near-invariance is expected — flipping the
+sign of the flow cannot change how far the trivial baseline is from the truth —
+but it is *near*, not exact, and §16.25 measures why. What changed is the
+numerator: the model's own error on the active set fell from 0.8214° to
+**0.3391°**, a factor of 2.42. A 0.04% shift in the denominator does not produce
+a 2.42× change in the ratio; this is a real reduction in a directly comparable
+quantity, not a rescoring artefact.
+
+**Gate R2 (+5.2% act₀.₅) passes at 11.6×.** The gate was chased for the entire P1
+campaign — approached three times, never consolidated, and closed at 86% with the
+diagnosis "blocker is the level, paths forward are data scale and static
+calibration" (memory `oslo-raft-p1*`). The blocker was neither. It was that half
+of the flow360 training pairs carried the negated target, so the network was
+being asked to predict +g and −g for the same appearance change, and the only
+loss-minimising answer to contradictory supervision is to predict nothing. The
++4.5 ± 0.9 that took a 9× variance reduction to stabilise was the residue of that
+compromise.
+
+**Global goes positive for the first time on real flow360 pairs**: −31.1 → +10.52.
+The static-calibration problem does not vanish — the model still spends error on
+the static majority — but it is no longer large enough to swamp the leg.
+
+**Poles are the one regression, and they are now the open problem.** −43.06%,
+against a zero baseline of 0.1633° — the *lowest* zero error of any region, i.e.
+the poles of this dataset are where the field is most nearly static. The model
+commits motion there and pays for it. This is the static-calibration item in its
+purest form and it is now isolated: every other region is positive.
+
+**What this does not yet establish.** This is `flow360:val`, sequences held out
+from our own split of the official *train* half. The frozen RAFT-large reference
+(+39.32 global / +44.01 act₀.₅, §16.19) is on `flow360:test`, and the two are not
+comparable. The number that goes in the table is OSLO on test, under haversine,
+and it is a minutes-long eval. Until it exists, the claim is "the wall was
+contradictory supervision", not "OSLO beats RAFT-large".
+
+### 16.22 OSLO on corrected flow360:test — positive, genuine, and second
+
+`P1final_test_flow360_v2`, the 20k raw checkpoint, `flow360:test`, 2567 pairs,
+haversine, area-weighted, 8 min. Zero global 0.42865°, active fracs
+34.6/18.0/5.8 — bit-identical to every other row in this table, so the
+comparison is byte-level.
+
+| row | global | act₀.₂₅ | act₀.₅ | act₁.₀ | equator | poles | seam |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| frozen RAFT-large (zero-shot) | **+39.32** | **+46.27** | **+44.01** | **+37.82** | — | **+25.10** | **+23.18** |
+| **OSLO 20k `_v2`** | +19.17 | +37.87 | +37.66 | +31.48 | +26.89 | **+0.10** | +16.48 |
+| OSLO EMA, v1 broken shards | −14.0 | −4.9 | −4.0 | — | — | −24.8 | — |
+| SLOF switchrotation | −56.55 | −47.28 | −40.32 | −26.90 | — | −55.26 | −28.48 |
+
+**The correlation is entirely load-bearing.** The pre-registered control on the
+same checkpoint and the same split: `--ablate-corr` takes global from 0.3465° to
+**69.02°** — a 199× degradation, and the strongest collapse ever recorded in this
+project (the previous best was 54° on the v1 model, §P1). +37.66% on the active
+nodes is genuine correspondence, not an appearance prior.
+
+**Same-pool → cross-pool, second measurement.** act₀.₅ goes +60.38 (val) →
++37.66 (test). The v1 model made the same crossing as +4.5 → −4.0. The drop is
+real and has the same causes as before (all decisions were made on val; test is a
+disjoint, 2× harder pool), but it no longer changes the sign — it costs 23 points
+out of 60 instead of all of them.
+
+**OSLO is positive and OSLO is second.** A frozen, zero-shot, perspective
+RAFT-large beats it on every axis of this table. The honest statement is that
+OSLO clears the trivial baseline by a wide margin on real sub-pixel video, which
+nothing in this project had ever done, and that it does not beat a stock
+perspective architecture on this dataset.
+
+**⚠ THE POLAR ADVANTAGE DOES NOT REPLICATE HERE, and this is the third dataset.**
+OSLO reads +0.10% at the poles — zero-parity, it does nothing there — against
+RAFT-large's +25.10%. On replica360 and flowscape the split runs the other way
+(OSLO wins poles, 2.3× and 2.4× flatter). Those are both large-motion; flow360 is
+the sub-pixel regime. So the surviving claim has to carry the regime with it:
+**native spherical geometry buys polar accuracy and sphere uniformity relative to
+a perspective architecture in the large-motion regime**, replicated twice, and it
+does not carry over to the sub-pixel regime, where the same comparison inverts.
+Note also that the poles are not unusually static on this split (zero poles
+0.4454° vs global 0.4286°), so "there was nothing to find" does not explain it.
+
+### 16.23 The inventory (2026-08-04) — `shards_fixed` was accidentally the perfect control, and the table is already complete
+
+Auditing every `/outputs/universality_*` JSON gave a vintage discriminator that
+needs no bookkeeping: the zero-flow global. `0.4368` = v1 shards, acos. `0.4314`
+= v1 shards, haversine. `0.4367` = `shards_fixed`, haversine. **`0.4286` =
+`shards_v2`, haversine.** Every corrected row carries 0.4286 and is therefore
+mutually comparable byte-for-byte.
+
+**`shards_fixed` — the set that §16.15 retracted for being wrong in *both* halves
+— is the exact inverse of the correct convention, which makes it the inverted arm
+of a 2×2 nobody had to pay for.** flow360:test, global / act₀.₅:
+
+| model | `shards_fixed` (inverted) | `shards_v2` (correct) | swing |
+| --- | --- | --- | --- |
+| frozen RAFT-large | −66.60 / −53.94 | **+39.32 / +44.01** | 106 / 98 |
+| PanoFlow(CSFlow)+CFE | −49.11 / −39.86 | **+29.81 / +34.48** | 79 / 74 |
+| SLOF raftfinetune | **+25.40 / +24.76** | −37.64 / −29.29 | −63 / −54 |
+| SLOF singlerotation | **+26.88 / +27.16** | −48.68 / −37.06 | −76 / −64 |
+| SLOF switchrotation | **+30.28 / +31.36** | −56.55 / −40.32 | −87 / −72 |
+| SLOF doublerotation | −0.21 / −0.14 | −0.01 / +0.13 | ~0 / ~0 |
+| SLOF raft (from scratch) | −11.96 / −1.21 | −13.26 / −2.22 | ~0 / ~0 |
+
+The structure is exactly what the diagnosis predicts and could not have been
+faked. **The two externally-trained models flip strongly negative → strongly
+positive. The three SLOF checkpoints that actually learned something flip the
+opposite way, positive → negative.** The two SLOF rows that flip nothing are the
+two that predict nothing: `doublerotation` is the trivial zero-predictor (it sits
+at ±0.2% under either convention, as a zero-predictor must, since the baseline is
+sign-invariant) and `raft` is the from-scratch run that never converged (−465% on
+val, §round 1).
+
+That is six checkpoints from three labs, two disjoint training conventions, and
+one sign axis — separated by 60 to 106 points in the direction predicted, with the
+two null models correctly reading null. **SLOF's released weights predict motion
+in FLOW360's own inverted forward convention.** No further argument is needed;
+this replaces the single-row evidence of §16.19.
+
+**The corrected universality table is complete and cost no additional GPU time**
+— every row already existed under a `_v2` name. flow360:test, `shards_v2`, 2567
+pairs, zero global 0.42865°, haversine, area-weighted:
+
+| row | global | act₀.₅ |
+| --- | --- | --- |
+| frozen RAFT-large (zero-shot, perspective) | **+39.32** | **+44.01** |
+| PanoFlow(CSFlow)+CFE (zero-shot, 360°-native) | +29.81 | +34.48 |
+| **OSLO 20k `_v2`** (in-domain) | +19.17 | +37.66 |
+| SLOF doublerotation (trivial zero-predictor) | −0.01 | +0.13 |
+| SLOF raft (from scratch) | −13.26 | −2.22 |
+| SLOF raftfinetune | −37.64 | −29.29 |
+| SLOF singlerotation | −48.68 | −37.06 |
+| SLOF switchrotation | −56.55 | −40.32 |
+
+**Three independent architectures beat the trivial baseline comfortably.** The
+universality claim is dead, and it is dead by a margin that leaves no room for
+rescue. What remains true, and is what the thesis now argues: the same frozen
+RAFT-large scores +74.4% at large motion and +39.3% here, so the sub-pixel regime
+*halves* a method's margin. The five negative rows are all SLOF's, and they are
+negative because their targets were inverted, not because the regime defeated
+them.
+
+**One finding worth keeping**: OSLO's active-node score (+37.66) sits **above
+PanoFlow's** (+34.48) while its global sits well below (+19.17 vs +29.81). That
+is the actives-versus-calibration trade-off this project has documented since P1,
+now visible across labs rather than inside SLOF's variants: OSLO commits on the
+movers and pays on the static majority. It is the strongest surviving argument
+for the decision-gate proposal (`docs/plans/DECISION_GATE.md`).
+
+**Open bookkeeping item.** The zero-flow global differs between vintages at fixed
+metric: 0.4314 (v1, haversine) vs 0.4286 (v2, haversine), 0.65%. A sign flip
+cannot do this — the baseline is sign-invariant — so the GT itself changed
+slightly in the re-materialisation, beyond the frames going lossless. It does not
+touch any conclusion here (all corrected rows share 0.4286 exactly), but any
+sentence of the form "was −14.81, now +39.32" crosses both a metric change and a
+GT change and must not be written as a single-cause statement. Worth pinning
+before the article: diff `target_geo_deg_p50/p90` and the pair count between a v1
+and a v2 run.
+
+### 16.24 The root cause, in our own config — the check existed and was overridden
+
+Tracing sfprep's git history closes the origin question. `sfprep/adapters/flow360.py`
+carried `flow_convention=self.default_convention` for both directions from the
+first commit (397c465), and `datasets.toml` supplies that default:
+
+```toml
+default_convention = "identity"   # validated convention used by the model repo
+pin_convention = true             # lock it: FLOW360 motion is too small to diagnose photometrically
+```
+
+So the three shard vintages are exactly: **v1** = `identity`/`identity` (forward
+wrong, backward right), **`shards_fixed`** = commit 6adf546, `identity` forward /
+`negated` backward (both wrong — the inverted control of §16.23), **`shards_v2`**
+= commit f4d37a6, `negated` forward / `identity` backward (both right).
+
+**sfprep already contains an automated convention diagnoser, it abstained, and
+the abstention was overridden by hand.** `sfprep/diagnose.py` warps frame 2 under
+every candidate convention, measures photometric error against zero-flow, and
+adopts the winner *only when the margin clears `--min-improvement`*; otherwise it
+keeps the config default. Its own docstring names the failure mode: "Small-motion
+datasets (e.g. FLOW360) are often inconclusive and should rely on their validated
+default." The tool was right to say it could not tell. What went wrong is the
+word **validated** in that config comment, next to a value that was never
+validated — it was inherited from the dataclass default (`config.py:17`) — and
+then locked with `pin_convention = true`.
+
+This is the fourth and best blindfold, and unlike the other three it is ours. The
+other three are properties of the problem (a sign-invariant baseline; a published
+table that reproduces under either convention; SLOF never reading `bflow`). This
+one is a process failure with a name: **an abstention was converted into a
+finding by annotation.**
+
+Two structural defects would have kept the diagnoser from catching this even
+unpinned, and both must be fixed in sfprep before the next dataset is onboarded:
+
+1. **No motion or gradient gating.** It averages the photometric error over every
+   pixel. On flow360 the median displacement is ~0.23 ERP px and the real
+   inter-frame appearance change is 3.1/255 (§P0), so the discriminating signal
+   is a rounding error on the aggregate. The gate is not optional here; it is the
+   only thing that makes the measurement possible.
+2. **It diagnoses per dataset, not per direction.** flow360's two directions have
+   *opposite* conventions. A single verdict for the dataset cannot be right, at
+   any SNR. This alone invalidates the tool for any dataset shipping both
+   directions.
+
+`run_constancy_arbiter.py` (this repo) implements the gated, per-direction,
+α-sweep version as the shard-side certification: it sweeps
+`R(α) = mean |frame2[x + α·g(x)] − frame1[x]|` and reports where the minimum
+sits, per direction, with a per-pair sign vote. Its `--self-test` synthesises a
+pair with a known convention and asserts the arbiter recovers `+1`, then feeds it
+`−g` and asserts `−1` — the guard this project earned in §16.15 by reasoning
+about a sign instead of measuring it.
+
+### 16.25 The zero-baseline discrepancy resolved, and the model-free arbiter delivers
+
+**The open item of §16.23 is closed: the pool did not change, the parameterisation
+did.** All three vintages, frozen RAFT-large, haversine, flow360:test:
+
+| statistic | v1 (1 half inverted) | `shards_fixed` (2 halves) | `shards_v2` (0 halves) | spread |
+| --- | --- | --- | --- | --- |
+| `target_geo_deg_p50` | 0.132098 | 0.132132 | 0.132061 | 0.05% |
+| `target_geo_deg_p90` | 0.756320 | 0.756850 | 0.755820 | 0.14% |
+| `quantile_samples` | 126154189 | 126173100 | 126140285 | 0.03% |
+| `active_0_5_frac` | 0.179705 | 0.179802 | 0.179582 | 0.12% |
+| `equator_zero` | 0.409485 | 0.410274 | 0.408936 | 0.33% |
+| `global_zero` | 0.431449 | 0.436698 | 0.428648 | 1.88% |
+| `poles_zero` | 0.455637 | 0.478522 | 0.445366 | **7.45%** |
+
+The pair pool, the validity mask and the GT *distribution* are the same to three
+or four significant figures. Only the *means* move, they move most at the poles
+and least at the equator, and the median barely moves at all — so this is a tail
+effect concentrated at high latitude, carried by a small number of nodes.
+
+**Mechanism.** |g| would be exactly sign-invariant if the target lived in the
+tangent plane, but it does not: the target is the geodesic displacement between
+the ERP source pixel and the ERP destination pixel `x + g`, both mapped to the
+sphere, and that map is nonlinear. The arc from x to `x + g` is not the same
+length as the arc from x to `x − g`, because the longitudinal scale `cos φ`
+differs at the two destinations. The asymmetry is negligible where `cos φ` is
+flat (equator, 0.33%) and large where it is steep (poles, 7.45%).
+
+**This ordering is itself a check, and it passes.** At the poles: `shards_v2`
+0.4454 < v1 0.4556 < `shards_fixed` 0.4785, i.e. **monotone in the number of
+inverted halves** — 0, then 1, then 2. Globally the same order holds. The vintage
+assignment of §16.23 was derived from model behaviour; this reproduces it from
+the ground truth alone, with no model involved.
+
+Two consequences. First, §16.21's "same ruler" claim is amended to what was
+measured: 0.04% on the active-set denominator, which cannot manufacture a 2.42×
+change. Second, a caveat worth carrying into the article: **any geodesic metric
+derived from an ERP pixel-space flow inherits a parameterisation asymmetry at
+high latitude.** It is small (0.3% at the equator) but it is not zero at the
+poles, and polar numbers at the few-pixel scale should be read with that in mind.
+
+**THE MODEL-FREE ARBITER (2026-08-04) — the defect is confirmed by photometry
+alone.** `run_constancy_arbiter.py`, validated in Docker: the self-test recovers
+`+1` from a synthesised pair with a known convention and `−1` when fed `−g`,
+with R = 0.00 at the minimum. Then, run on the **v1 shards** (the broken vintage,
+still present on the laptop, JPEG frames, 14 Jun) — 24 pairs per direction,
+`--min-motion-px 2.0 --edge-quantile 0.9`, 1.2 s:
+
+| direction | R(−1) | R(0) | R(+1) | grid argmin | parabolic argmin | pairs for +1 | verdict |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| forward | **18.52** | 28.10 | 36.91 | **−1.0** | −0.936 | 1 / 23 | negated |
+| backward | 30.03 | 23.27 | **14.67** | **+1.0** | +0.975 | 21 / 23 | identity |
+
+Every pre-registered prediction fired. The two directions of one dataset return
+**opposite** conventions; the sub-grid minima land within 4% and 2.5% of exactly
+±1, which is itself a consistency check (a mis-scaled or mis-registered flow
+would not minimise at unit alpha); the correct sign explains 34% and 37% of the
+photometric residual while the wrong sign is *worse than not warping at all*
+(36.91 vs 28.10 unwarped, forward).
+
+**The claim no longer depends on any neural network.** The evidence is now three
+independent layers: photometric constancy with no model (this section), the
+2×2 across six checkpoints from three labs (§16.23), and the corrected retrain
+(§16.21-16.22). The gate that made this measurable is the one `sfprep/diagnose.py`
+lacks — restricting to pixels that actually move. Ungated, on this dataset, the
+signal is a rounding error; gated, it is a 34-point margin with a 22-to-1 vote.
+
+### 16.26 Full-split arbiter, positive control, and the root-cause fix in sfprep
+
+**Positive control first.** flowscape:test, 300 pairs, large motion, convention
+known correct: argmin **+1.0**, parabolic 0.9918, **300 of 300 pairs** favour +1,
+z = 17.26, the correct sign explains 43.0% of the residual. The instrument works
+when the signal is there.
+
+**flow360:test on `shards_v2`, full split**, 2567 pairs seen, 102 skipped for
+carrying fewer than 64 gated pixels, 85 s:
+
+| direction | pairs | R(−1) | R(0) | R(+1) | grid | parabolic | vote for +1 | z | explained |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| forward | 1239 | 31.85 | 24.88 | **12.12** | **+1.0** | 0.9654 | 1205/1239 = 97.3% | 33.2 | **51.3%** |
+| backward | 1226 | 32.00 | 23.95 | **14.28** | **+1.0** | 0.9582 | 1181/1226 = 96.3% | 32.4 | 40.4% |
+
+**Both directions now read `identity`** — the stored flow *is* the motion, which
+is exactly what a correct shard set must produce. Combined with the v1 reading
+(forward −1, backward +1, §16.25), the shards that produced the retrain and every
+row of the corrected table are photometrically certified, on the full split, by a
+procedure containing no learned parameters.
+
+**A number worth quoting in the thesis.** On flow360 the gate keeps ~1.4% of
+pixels, and on that 1.4% the GT warp explains **51%** of the photometric
+residual. §P0 measured that the same warp explains *nothing* over all pixels
+(3.10 unwarped vs 3.12 warped). Both are correct, and together they are the
+sharpest statement of the regime this project has: **the correspondence signal in
+the sub-pixel regime is strong and it is intact — on the small minority of pixels
+that move. What destroys it in aggregate is the static majority.** That is a
+measurement of the problem the decision gate proposes to solve, not an analogy
+for it.
+
+Minor note: the parabolic minima sit slightly below 1 (0.958-0.992). Expected —
+occlusion and appearance change contribute residual that no alpha removes, which
+biases the fitted minimum toward 0. It is not a scale error.
+
+**ROOT-CAUSE FIX SHIPPED IN sfprep.** `sfprep/diagnose.py` rewritten,
+`constancy_gate()` added to `flow_io.py`, three CLI flags added
+(`--min-motion-px`, `--edge-quantile`, `--max-abs-lat-deg`, plus `--datasets`).
+Four changes, each closing one of the failure's paths:
+
+1. **Gated scoring.** The photometric error is measured only where displacement
+   exceeds `--min-motion-px` and gradient is in the top decile. The gate is built
+   from |flow|, which is invariant under all eight candidate conventions, so every
+   candidate is scored on identical pixels and the comparison stays paired.
+2. **Per-direction diagnosis.** Records group by `(dataset, direction)`. When
+   directions disagree the dataset-level convention is written as `"mixed"` and a
+   banner prints; a single per-dataset setting for such a dataset is announced as
+   wrong rather than silently averaged.
+3. **A pin can no longer overrule a measurement.** `pin_convention` is honoured
+   only while the diagnosis is inconclusive. A pin that contradicts a conclusive
+   diagnosis **aborts** with both values in the message.
+4. **Pin and default now come from the live config**, not from the `datasets.json`
+   written by an earlier `build`. The file you edit was not the file the tool
+   obeyed — a smaller instance of the same defect class.
+
+**Acceptance test, run in Docker on the raw FLOW360 dataset** (30 samples per
+direction, ~1.45% of pixels gated):
+
+* On the *original* config, `pin_convention = true` and `default = identity`, the
+  tool **aborts**: `[flow360:forward] PIN CONTRADICTS A CONCLUSIVE DIAGNOSIS:
+  pinned 'identity', measured 'negated' (+66.2% over zero)`. It refuses to
+  reproduce the defect on the exact configuration that caused it.
+* With the pin removed it recovers both conventions unaided:
+  **forward `negated`** (err 6.18 vs zero 18.27, **+66.2%**) and **backward
+  `identity`** (9.52 vs 18.08, **+47.3%**), then prints the disagreement banner.
+  In both directions the runner-up candidate is ~3.3× worse than the winner *and
+  worse than zero-flow* — this is not a marginal call.
+* Regression on known-good datasets: flowscape:forward `identity` (+42.7%),
+  replica360 forward and backward `identity` (+72.5% / +73.4%), directions agree,
+  no banner. All match the §16.18 audit.
+
+`datasets.toml` no longer pins flow360. The comment that read `# validated
+convention used by the model repo` is gone; the value it labelled was never
+validated.
+
+### 16.27 EMA on corrected data (2026-08-05) — the trade-off reappears inside one run
+
+`P1proper_ema6k_v2`: 6k steps continued from the 20k `_v2` checkpoint, constant
+lr 3e-5, decay 0.999, 7.3 h. flow360:val, acos, area-weighted.
+
+| metric | 20k `_v2` | +6k raw | EMA |
+| --- | --- | --- | --- |
+| act₀.₂₅ | +58.83 | **+61.11** | +58.88 |
+| act₀.₅ | +60.38 | **+62.80** | +59.61 |
+| act₁.₀ | +35.31 | **+37.78** | +33.69 |
+| global | +10.52 | +11.96 | **+16.09** |
+| equator | +21.36 | +22.99 | **+26.04** |
+| seam | +7.30 | +6.28 | **+10.68** |
+| poles | −43.06 | −45.79 | **−30.91** |
+
+**EMA no longer dominates.** In the v1 campaign weight averaging beat the raw
+walk on every metric — that was the whole reason it was adopted, and it is why
+the final v1 model was the EMA point. On corrected data the two checkpoints
+split cleanly: **raw wins all three active thresholds** (act₀.₅ +62.80 vs
++59.61), **EMA wins every calibration metric** (global +16.09 vs +11.96, poles
+−30.91 vs −45.79, a 15-point gap).
+
+That is the actives-versus-calibration trade-off again, and this is the most
+controlled instance of it this project has produced. Previous sightings compared
+different training variants (SLOF's five checkpoints, §round 1) or different
+labs (OSLO's actives above PanoFlow's while its global sits below, §16.23). Here
+it is **two checkpoints from one run** — same data, same recipe, same optimiser
+trajectory, differing only in whether the weights are averaged. Weight averaging
+buys calibration and pays for it in commitment on the movers. The trade-off is
+therefore not an artefact of how anyone trained; it is a property of the
+objective on this data.
+
+Converged ladder on flow360:val, act₀.₅ / global / poles:
+
+| stage | act₀.₅ | global | poles |
+| --- | --- | --- | --- |
+| v1 P1d | +1.1 | −53.6 | — |
+| v1 20k | +4.0 | −31.1 | −100.6 |
+| v1 EMA (old final model) | +4.5 | −16.8 | −56 |
+| **v2 20k** | +60.4 | +10.5 | −43.1 |
+| **v2 +6k raw** | **+62.8** | +12.0 | −45.8 |
+| **v2 EMA** | +59.6 | **+16.1** | **−30.9** |
+
+The continuation is worth its 7.3 h on both corners: raw actives went +60.4 →
++62.8 and EMA global went +10.5 → +16.1 while cutting the polar deficit by 12
+points.
+
+**Poles remain the one negative region here** — −30.9% at best, against the
+*lowest* zero error of any region on this split (0.1633°). Every other region is
+positive on both checkpoints. (Amended by §16.28: the polar deficit is specific
+to this split. On flow360:test, where the poles are not near-static, both
+checkpoints are positive there.)
+
+**Which model goes in the table is not yet decided**, and it should not be
+decided on val — that is the selection pressure §round 2 identified. Both
+checkpoints need the flow360:test eval under haversine, against frozen
+RAFT-large's +39.32 global / +44.01 act₀.₅.
+
+### 16.28 THE FINAL TABLE (2026-08-05) — the trade-off transfers, and the polar deficit was a split property
+
+Both checkpoints on flow360:test, haversine, area-weighted, 2567 pairs, 8 min
+each. Zero global 0.428648° and active fracs 34.6/18.0/5.8, identical to every
+other row — byte-comparable throughout.
+
+| row | global | act₀.₂₅ | act₀.₅ | act₁.₀ | equator | poles | seam |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| frozen RAFT-large (zero-shot, perspective) | **+39.32** | **+46.27** | **+44.01** | **+37.82** | — | **+25.10** | **+23.18** |
+| PanoFlow(CSFlow)+CFE (zero-shot, 360°-native) | +29.81 | — | +34.48 | — | — | — | — |
+| **OSLO +6k raw** | +20.37 | +39.84 | **+40.22** | **+34.51** | +27.65 | +1.62 | +17.09 |
+| **OSLO EMA** | **+22.44** | +38.80 | +38.32 | +32.41 | **+29.47** | **+4.95** | **+18.34** |
+| OSLO 20k `_v2` | +19.17 | +37.87 | +37.66 | +31.48 | +26.89 | +0.10 | +16.48 |
+| SLOF doublerotation (trivial zero-predictor) | −0.01 | — | +0.13 | — | — | — | — |
+| SLOF singlerotation | −48.68 | — | −37.06 | — | — | — | — |
+
+**1. The trade-off transfers, so it is not selection pressure.** The val ordering
+was raw ahead on every active threshold and EMA ahead on every region metric.
+Test reproduces it exactly: raw +40.22 vs +38.32 on act₀.₅, EMA +22.44 vs +20.37
+on global. Had this been an artefact of tuning on val it would have washed out on
+a disjoint, 2× harder pool. It did not. §16.27's claim stands on cross-pool
+evidence: **the actives-versus-calibration split is a property of the objective
+on this data, not of how anyone trained.** The gap does narrow — 3.19 → 1.90
+points on act₀.₅, 4.13 → 2.07 on global — so the two corners are closer to each
+other out of domain than in it.
+
+**2. The 6k continuation generalises.** act₀.₅ +37.66 → +40.22 on *test*, not
+just on val. Those 7.3 h bought 2.6 points cross-pool.
+
+**3. The val→test crossing is now stable and quantified**: 22.7, 22.6 and 21.3
+points of act₀.₅ across the three checkpoints. The EMA loses least, which is weak
+evidence that weight averaging regularises against pool shift, but 1.3 points is
+not enough to claim it.
+
+**4. THE POLAR DEFICIT WAS A SPLIT PROPERTY, and this is the cleanest reading of
+the static-calibration problem yet.** On flow360:val the poles carry the *lowest*
+zero error of any region (0.1633°, i.e. they are near-static) and both checkpoints
+are strongly negative there (−45.8 and −30.9). On flow360:test the poles carry
+*more* motion than the global average (zero 0.4454° vs 0.4286°) and both
+checkpoints are **positive** (+1.62 and +4.95). Same weights, same metric, same
+code — the deficit appears exactly where the field is static and vanishes where it
+is not. **The polar problem is not a polar problem. It is the static-confidence
+problem, observed at whichever region happens to be static.** That is a direct
+measurement in support of `docs/plans/DECISION_GATE.md`, and it retires "poles are
+OSLO's weak region" as a formulation.
+
+**5. OSLO is second on actives and third on global, and it loses to a frozen
+perspective network on every axis.** Against RAFT-large: closest on act₀.₅
+(+40.22 vs +44.01, 3.8 points) and furthest at the poles (+4.95 vs +25.10, 5×).
+Against PanoFlow it now wins the actives clearly (+40.22 vs +34.48) while still
+losing globally (+22.44 vs +29.81) — the same trade-off, across labs.
+
+**The polar-advantage claim does not survive on this dataset, with the better
+checkpoint.** §16.22 flagged it at +0.10 vs +25.10; the EMA improves OSLO to
++4.95 and RAFT-large still wins by 5×. The claim scopes to the large-motion
+regime — replica360 and flowscape, where it replicated twice — and must be stated
+with that scope everywhere it appears.
+
+**Model selection, stated rather than implied.** Gate R2 was pre-registered on
+act₀.₅, so the primary model is **`P1proper_ema6k_v2/oslo_raft.pt`** (raw
+continuation): act₀.₅ +40.22 test / +62.80 val, and it wins all three active
+thresholds on both splits. The EMA point is reported alongside it as the
+calibration corner, not as a footnote — a pair of checkpoints from one run that
+each win one half of the objective is the empirical case for a decision gate, and
+it is more informative than either number alone.
+
+### 16.29 The displacement-response curve — the whole failure is one band
+
+Motion bands were already recorded in the corrected flow360:test runs. Improvement
+over zero-flow per band, haversine, area-weighted:
+
+| band | RAFT-large | PanoFlow+CFE |
+| --- | --- | --- |
+| 0 – 0.0625° | **−445.8** | **−321.9** |
+| 0.0625 – 0.125° | +28.2 | +15.6 |
+| 0.125 – 0.25° | +45.4 | +28.7 |
+| 0.25 – 0.5° | +58.4 | +41.2 |
+| 0.5 – 1° | +60.9 | +48.8 |
+| 1 – 2° | +64.6 | +58.6 |
+| 2 – 4° | **+65.2** | **+58.9** |
+| 4 – 8° | +55.9 | +43.5 |
+| 8 – 16° | +36.1 | +19.3 |
+| 16 – 32° | +10.0 | +1.8 |
+| > 32° | +4.6 | +0.0 |
+
+**Every band above 0.0625° is positive, for both architectures.** The curve is an
+inverted U: it climbs to +65% / +59% at 1–4°, then decays past 8° as displacement
+outruns the correlation range, and it collapses to −446% / −322% in the lowest
+band. The two labs' methods trace the same shape.
+
+**This localises the entire flow360 deficit to one band.** The global figures
+(+39.3 and +29.8) are not "moderate performance everywhere" — they are strong
+performance at every magnitude the methods can address, dragged down by a single
+band that carries the largest share of nodes. Magnitude is not the problem
+*within* this dataset: the static majority is.
+
+It also supersedes the cross-dataset band-matched control as the argument's
+backbone. That control asked whether a fixed displacement behaves differently
+across datasets; this asks where the error actually lives, and answers it without
+needing a second dataset. The cross-dataset control is still unrun on corrected
+data (flowscape:test rows carry no band breakdown).
+
+**This is the decision-gate case, measured.** A per-node static/motion gate would
+act on exactly the band that reads −446%, and every band it does not touch is
+already positive. It also explains §16.28's polar finding directly: the poles read
+negative on val, where they are near-static, and positive on test, where they are
+not — same mechanism, seen through a regional mask instead of a displacement one.
+
+### 16.30 OSLO by displacement band — the dead zone is 4× wider, and the gate ceiling is +35%
+
+`P1final_test_flow360_v2_cont6k_bands`. Improvement over zero per band, with the
+node mass of each band (fracs partition the sphere and the decomposition
+reconstructs the global to 0.04%):
+
+| band | nodes | RAFT-large | PanoFlow | **OSLO** |
+| --- | --- | --- | --- | --- |
+| 0 – 0.0625° | **32.8%** | −445.8 | −321.9 | **−1018.1** |
+| 0.0625 – 0.125° | 15.8% | +28.2 | +15.6 | **−51.4** |
+| 0.125 – 0.25° | 16.9% | +45.4 | +28.7 | **−0.9** |
+| 0.25 – 0.5° | 16.6% | +58.4 | +41.2 | +37.8 |
+| 0.5 – 1° | 12.2% | +60.9 | +48.8 | +55.8 |
+| 1 – 2° | 3.5% | +64.6 | +58.6 | +62.4 |
+| 2 – 4° | 1.0% | +65.2 | +58.9 | +56.9 |
+| 4 – 8° | 0.7% | +55.9 | +43.5 | **+51.2** |
+| 8 – 16° | 0.3% | +36.1 | +19.3 | **+33.1** |
+| 16 – 32° | 0.1% | +10.0 | +1.8 | +8.4 |
+| > 32° | 0.1% | +4.6 | +0.0 | +3.0 |
+
+**Three readings.**
+
+**1. OSLO's dead zone is four times wider.** Both raster methods cross into
+positive at 0.0625°; OSLO crosses at 0.25°. It is negative in the three smallest
+bands, which together hold **65.4% of the nodes** — that single fact explains the
+whole gap between its actives (+40.2) and its global (+20.4).
+
+**2. It over-commits twice as hard where nothing moves.** In the 0–0.0625° band
+the truth moves 0.0167° and OSLO asserts 0.1863°, a factor of 11. RAFT-large
+asserts 0.0909°, a factor of 5.5. The static-confidence problem is not shared
+equally: OSLO has it worse than either published method.
+
+**3. Above 4° it beats PanoFlow.** +51.2 vs +43.5 at 4–8°, +33.1 vs +19.3 at
+8–16°. The large-displacement end is not where OSLO loses on this dataset.
+
+**THE GATE CEILING, COMPUTED.** The band decomposition is exact, so the payoff of
+a per-node static gate can be projected rather than guessed. Substituting the
+zero-flow prediction for the model's own in the smallest bands:
+
+| gated bands | global | improvement over zero |
+| --- | --- | --- |
+| none (measured) | 0.3413° | **+20.4%** |
+| smallest 1 | 0.2859° | **+33.3%** |
+| smallest 2 | 0.2784° | **+35.1%** |
+| smallest 3 | 0.2781° | +35.1% |
+
+**A perfect gate on the two smallest bands takes OSLO from +20.4% to +35.1%
+global, leaving every active-node number untouched.** That lands between PanoFlow
+(+29.8) and frozen RAFT-large (+39.3), from a head that adds no correlation
+capacity. It is an oracle upper bound, not a promise — a learned gate will not be
+perfect — but it converts A4 from "a plausible idea" into a target with a measured
+ceiling and a known failure mode. This is the strongest single argument that the
+project has a path worth funding.
+
+### 16.31 The polar deficit, diagnosed — it is 1.29×, not 15×, and the mechanism is input sampling
+
+**FIRST, THE NUMBER IS NOT WHAT IT LOOKS LIKE.** flow360:test, haversine,
+area-weighted. RAFT-large's regional errors reconstructed from its published
+improvements against the shared zero:
+
+| region | zero | OSLO | RAFT-large | OSLO % | RAFT % | gap (deg) |
+| --- | --- | --- | --- | --- | --- | --- |
+| global | 0.4286 | 0.3413 | 0.2602 | +20.4 | +39.3 | 0.0812 |
+| poles | 0.4454 | 0.4381 | 0.3336 | **+1.6** | **+25.1** | 0.1046 |
+| seam | 0.9109 | 0.7553 | 0.6998 | +17.1 | +23.2 | 0.0555 |
+
+**Polar tax, defined as a model's own polar error divided by its own global
+error: OSLO 1.2837, RAFT-large 1.2825.** They are the same to three decimals.
+The truth's own polar tax is 1.0390, so both models degrade at the poles by the
+same 23% beyond what the content demands.
+
+In degrees, OSLO trails RAFT by 0.105° at the poles and 0.081° globally — a
+**1.29×** polar surcharge. The improvement-over-zero view reports the same facts
+as **15.5×** (+25.1 vs +1.6), because that metric is a ratio and the poles are
+where the zero baseline sits closest to both models: dividing by a number that is
+barely above the numerator amplifies a small absolute gap without bound.
+
+**Consequence for where the effort goes.** "OSLO loses at the poles" is mostly
+"OSLO loses everywhere, and the polar percentage magnifies it". The dominant
+lever is the global deficit, which §16.30 already localised to the three smallest
+displacement bands. A genuine but secondary polar surcharge of 29% remains, and
+the rest of this section is about that.
+
+**THE MECHANISM HYPOTHESIS — the retina, not the estimator.** The retina samples
+the ERP frame at HEALPix node directions with `bilinear_sample_erp`, a four-tap
+kernel. How much raster each node stands for is a function of latitude, because
+ERP pixel density per solid angle goes as 1/cos φ while HEALPix node density is
+uniform:
+
+| latitude | 0° | 30° | 45° | 60° | 75° | 85° | 89° |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| ERP pixels per r=7 node | 1.7 | 2.0 | 2.4 | 3.4 | 6.6 | 19.5 | 97.3 |
+
+Area-weighted inside the masks: **1.78 at the equator versus 6.61 at the poles, a
+3.7× more aggressive decimation** performed by a 4-tap kernel. The retina holds
+196,608 nodes against 524,288 ERP pixels, so it discards 62% of the raster
+globally and far more than that at high latitude. Content above the node Nyquist
+rate does not vanish — it folds back, and the model ingests aliasing as signal.
+**RAFT-large reads the full raster and pays none of this**, which is exactly the
+asymmetry the table above measures.
+
+**Why SO(3) augmentation does not protect against it.** Training runs at
+`so3_prob 1.0`, so the sphere is randomly rotated every sample and the content
+distribution is rotation-uniform. But the *raster* keeps its own poles: rotation
+moves which sphere direction a node reads, never where the ERP's own
+oversampling lives. Evaluation runs at `val_so3_prob 0.0`, where the HEALPix
+polar cap aligns with the ERP polar cap — the worst-aliased region of the input —
+and no rotation-augmented training can teach a compensation for damage that the
+augmentation itself scrambles.
+
+**THE DIAGNOSTIC LADDER** (cheapest first, each with its reading pre-registered):
+
+1. **Rotated evaluation**, `--set val_so3_prob=1.0`, 8 min, no code. If the polar
+   deficit vanishes and the equator degrades ⇒ ERP raster sampling. If it
+   vanishes and the equator holds ⇒ scene content at the poles of these
+   sequences. If it persists ⇒ HEALPix grid geometry or the estimator itself.
+2. **Retina aliasing probe**, `analyze_retina_aliasing.py`, model-free, minutes.
+   Samples each frame twice — raw, and low-passed to the node spacing at each
+   latitude — and reports the folded energy per latitude band, with an
+   equiangular grid of equal node count as the control. Directly tests the
+   mechanism above and measures the headroom an area-averaging prefilter would
+   recover.
+3. **Region × band cross-tabulation**, small change in `metrics.py` (intersect the
+   region masks with the band masks). §16.30 showed the global deficit lives in
+   bands below 0.25°; this asks whether the poles carry more mass there. The
+   polar zero is 1.039× the global one, so the *mean* says poles move slightly
+   more than average — but a mean hides a bimodal split of static cap plus fast
+   movers, and only the cross-tab separates composition from per-band skill.
+4. **Known measurement confound**, already quantified in §16.25: a geodesic
+   target built from an ERP pixel-space flow carries a parameterisation asymmetry
+   worth 7.45% at the poles against 0.33% at the equator. Part of the 29%
+   surcharge is the ruler, not the model.
+
+If the ladder lands on the retina, the fix is an area-correct prefilter before
+sampling — cheap, one-time, and outside the network — and that is a far better
+outcome than a capacity argument.
+
+### 16.32 Polar diagnosis CLOSED — the aliasing hypothesis is dead, and there is no OSLO-specific polar defect
+
+**STEP 1, ROTATED EVALUATION** (`P1final_test_flow360_v2_cont6k_rot`,
+`--val-so3-prob 1.0`, flow360:test, 8 min):
+
+| region | model error, unrotated → rotated | zero, unrotated → rotated |
+| --- | --- | --- |
+| equator | 0.2959 → 0.3387 (**+14.5%**) | 0.4089 → 0.4264 |
+| global | 0.3413 → 0.3477 (+1.9%) | 0.4286 → 0.4304 |
+| poles | 0.4381 → 0.3864 (**−11.8%**) | 0.4454 → 0.4379 |
+
+Polar excess, defined as the model's poles/equator ratio divided by the truth's
+own: **1.360 unrotated → 1.111 rotated. Rotation removes 69% of it**, while the
+global error stays flat and the actives do not move (act₀.₅ +40.2 → +40.9). This
+is redistribution, not repair: the deficit is attached to whatever sits at the
+poles of these scenes.
+
+**STEP 2, THE ALIASING PROBE — MY HYPOTHESIS WAS WRONG.**
+`analyze_retina_aliasing.py`, model-free, 25 frames. Above-Nyquist energy the
+retina folds in, per latitude band, in levels of 255:
+
+| latitude | 0–15 | 15–30 | 30–45 | 45–60 | 60–75 | 75–90 |
+| --- | --- | --- | --- | --- | --- | --- |
+| HEALPix alias | 0.000 | 0.022 | **0.880** | 0.497 | 0.201 | 0.231 |
+| equiangular alias (control) | 0.000 | 0.023 | 0.913 | 0.486 | 0.205 | 0.287 |
+| band-limited contrast | 37.5 | 35.2 | 34.7 | 33.6 | **28.7** | **26.3** |
+
+**Aliasing peaks at mid-latitude and *falls* toward the poles, never exceeding 1%
+of the signal.** §16.31 was right that the retina decimates 3.7× harder inside the
+polar mask, and wrong about the consequence: ERP polar rows are longitudinally
+redundant by construction, so the content there is already smooth and there is
+almost nothing above the node Nyquist rate to fold. The equiangular control tracks
+HEALPix to three decimals, confirming the probe measures the raster and not the
+grid. **The prefilter fix proposed in §16.31 would buy nothing and is withdrawn.**
+
+Two process notes. The probe's first run reported 144/255 of "aliasing" with the
+control identical — impossible on its face, and the tell that found the bug: the
+box-blur summed a `2k`-wide window and divided by `k`, doubling the image. Fixed,
+then gated on a constant image (must survive untouched) and on variance (must
+fall) before any number was read. Second, the ladder's own pre-registration was
+defective: rotating the sampling grid moves the content *and* the raster position
+together, so steps 1's "equator degrades ⇒ raster" reading could never have
+separated them. It took the model-free probe to do that.
+
+**What the two measurements say together.** The deficit lives at the poles of the
+scene; the raster contributes under 1%; and the band-limited contrast column shows
+polar content carries **26–29 against 35–37 at the equator, roughly 25% less
+texture**. Correlation has less to lock onto there, so the model leans on its
+prior and commits — the same over-commitment §16.30 measured as a factor of 11 in
+the static band.
+
+**AND THE DECISIVE FRAMING, FROM §16.31: THERE IS NO OSLO-SPECIFIC POLAR DEFECT
+ON THIS DATASET.** Polar tax, each model's polar error over its own global error:
+OSLO **1.2837**, frozen RAFT-large **1.2825**, truth 1.0390. Both models degrade
+at the poles by the same 23% beyond what the content demands. OSLO is not
+disproportionately bad at the poles — it is uniformly less accurate, and the
+improvement-over-zero ratio magnifies that at the one region where the trivial
+baseline is closest to both.
+
+**Diagnosis closed, and it collapses into the work already planned.** There is no
+separate polar problem to solve: fix the global deficit — which §16.30 localised
+to the bands below 0.25° and priced at +35.1% global for a perfect gate — and the
+polar number follows. The A4 decision gate is the single lever for both. What
+does *not* survive: any plan to attack the poles through the retina, the grid, or
+sampling geometry.
+
+### 16.33 THE ERP POLAR PENALTY IS PROPORTIONAL TO DISPLACEMENT — the uniformity claim is regime-bound, with a mechanism
+
+The missing equator rows arrived, and they settle both questions at once.
+flow360:test, haversine, area-weighted:
+
+| | equator | poles | poles/equator | excess over the truth's own ratio |
+| --- | --- | --- | --- | --- |
+| zero (the truth) | 0.4089 | 0.4454 | 1.089 | — |
+| **OSLO** | 0.2959 | 0.4381 | **1.481** | +36.0% |
+| frozen RAFT-large | 0.2294 | 0.3336 | **1.454** | +33.5% |
+| PanoFlow+CFE | 0.2661 | 0.3679 | **1.383** | +26.9% |
+
+**1. OSLO's deficit has NO regional structure.** Dividing region by region,
+OSLO / RAFT-large reads **1.290 at the equator, 1.312 globally, 1.313 at the
+poles**. OSLO is uniformly about 30% less accurate everywhere. The dramatic
++1.6% versus +25.1% polar comparison is therefore an artefact of the
+improvement-over-zero ratio in full: there is no polar-specific defect left to
+explain, and §16.31's reframing is confirmed with the third region in hand.
+
+**2. THE UNIFORMITY ADVANTAGE COLLAPSES, AND NOT BECAUSE OSLO GOT WORSE.**
+
+| dataset | OSLO | RAFT-large | OSLO flatter by |
+| --- | --- | --- | --- |
+| flowscape:test | 4.33 | **10.40** | 2.40× |
+| replica360 | 2.37 | **5.36** | 2.26× |
+| **flow360:test** | 1.48 | **1.45** | **0.98× (tied, marginally behind)** |
+
+RAFT-large's own polar ratio falls from 10.40 to 1.45 — a **7.2× collapse** —
+while OSLO's falls from 4.33 to 1.48, a 2.9× collapse. Both converge on ~1.45.
+The advantage did not evaporate because the spherical grid stopped working; it
+evaporated because **the handicap it compensates for stopped existing**.
+
+**3. THE MECHANISM: the ERP polar penalty scales with displacement magnitude.**
+A displacement of $d$ degrees at latitude $\varphi$ occupies $d / (0.3516 \cos
+\varphi)$ ERP pixels. At 85° on a 1024×512 raster:
+
+| | displacement | ERP px at 85° | ERP px at equator |
+| --- | --- | --- | --- |
+| flowscape p50 | 2.467° | **80.5** | 7.0 |
+| flowscape p90 | 7.290° | **237.9** | 20.7 |
+| flow360 p50 | 0.132° | **4.3** | 0.4 |
+| flow360 p90 | 0.756° | 24.7 | 2.2 |
+
+At large motion, near-polar displacements reach **80 to 238 ERP pixels**. RAFT
+correlates at 1/8 resolution with a lookup radius of 4, so 238 px is 30 cells —
+far outside the finest level, forcing the match onto coarse levels that cannot
+place it precisely. That is the polar failure the equal-area grid removes: the
+same 7.29° is exactly 2.0 node spacings at r=4, comfortably inside the lookup
+rings, at every latitude.
+
+At sub-pixel motion the same arithmetic runs the other way. 0.132° is 4.3 px at
+85° against 0.4 px at the equator, so **the ERP's polar oversampling magnifies an
+otherwise unresolvable displacement into a measurable one**. RAFT is never pushed
+outside its search range, the stretch cannot destroy an appearance match over 4
+pixels, and its polar handicap simply does not fire. OSLO gets no such help: its
+estimation grid is 3.665° at every latitude, so 0.132° is 0.036 of a node
+spacing **everywhere on the sphere**.
+
+**The equal-area grid is uniformly resolution-limited; the ERP raster is
+non-uniformly resolution-limited, and near the poles it is over-resolved — which
+is a liability at large motion and an asset at sub-pixel motion.**
+
+**4. All three architectures degrade at the poles by 27–36% beyond what the
+content demands**, and they sit within nine points of each other — one
+sphere-native, two raster-native. In this regime the polar excess is a property
+of the data, not of the representation, which is the same conclusion §16.32
+reached from the texture measurement (polar contrast 26–29 against 35–37).
+
+**Consequence for the thesis.** "Native spherical geometry buys polar accuracy
+and sphere uniformity" survives, replicated twice, but it must carry its scope in
+the sentence: **it holds where displacement is large enough that the ERP polar
+stretch exceeds a raster method's search range.** That is now a mechanism with an
+arithmetic threshold, not a caveat — a stronger claim than the unscoped version,
+because it predicts where the advantage appears and where it will not. The
+counterpart is that OSLO's uniformity advantage on flow360 is nil, and the
+article must say so.
+
+### 16.34 Orientation robustness — instrument built, experiment pre-registered
+
+A 360° camera on a drone or a head tilts constantly, and the two representations
+answer that differently: the ERP has a privileged axis, a sphere grid does not.
+No paper in the §16 review reports this. Half the measurement already exists —
+under full random SO(3) rotation OSLO's global error moves 0.3413° → 0.3477°,
+**+1.9%** (§16.32). The other half needs the raster methods rotated the same way.
+
+**Instrument.** `run_raft_shard_baseline.py` gains `--val-so3-prob` (plus
+`--val-so3-max-angle-deg`, `--val-so3-uniform`, `--val-so3-seed`). The predictor
+receives an ERP **re-rendered** under the rotation: for each output pixel
+direction `d`, the rotated raster takes the real raster at `d @ R`, matching
+`so3_augment_pair`'s convention exactly, so reading the rotated raster at an
+unrotated node returns what the node-sampling path returns and the target that
+`so3_augment_pair` produces scores both with no further bookkeeping.
+
+**The fairness point that makes the comparison mean something**: each side pays
+exactly one bilinear resampling — OSLO samples the real ERP at rotated node
+directions, the raster method reads an ERP built by one bilinear. Neither carries
+an interpolation advantage. `--predictor oracle` is refused under rotation, since
+it would score the unrotated GT raster.
+
+**Gates, Docker-validated:** identity rotation is a no-op (max 1.2e-5); rotated
+output stays in range; and the two invariants that actually prove the transform —
+rotating the sphere cannot change the distribution of |displacement|, and it does
+not (`target_geo_deg_p50` 0.056114 → 0.056106, 0.01%; `active_0_5_frac` 0.10243 →
+0.10269). Regional zero baselines converge as content is redistributed
+(poles/equator 0.755 → 1.082 on an 8-pair probe), which is the expected
+signature. With `--val-so3-prob 0` the original code path is taken unchanged.
+
+**PRE-REGISTERED READING.** OSLO degrades +1.9%. If RAFT-large and PanoFlow
+degrade by ≥10%, the claim is **sphere-native estimation is robust to camera
+orientation and raster methods are not** — a property with a practical
+motivation, an architectural cause, and no prior report in this literature. If
+they degrade by a comparable ~2%, the claim dies and the cost was one afternoon;
+that outcome is worth knowing too, because it would mean ERP methods tolerate
+orientation better than the privileged-axis argument predicts.
+
+**Caveat to carry:** OSLO's rotated run drew its rotations from `run_oslo_raft`'s
+generator and these draw from `--val-so3-seed`, so the sequences differ. Across
+2567 pairs the comparison is distributional, not paired.
+
+### 16.35 RESULT — orientation robustness REFUTED, and an unplanned finding that survives it
+
+flow360:test, 2567 pairs, `--val-so3-prob 1.0`, same seed for both raster runs.
+
+| model | global, unrotated → rotated | degradation | improvement, unrot → rot |
+| --- | --- | --- | --- |
+| OSLO-RAFT | 0.34132 → 0.34771 | **+1.87%** | +20.37 → +19.23 |
+| frozen RAFT-large | 0.26010 → 0.26436 | **+1.64%** | +39.32 → +38.59 |
+| PanoFlow+CFE | 0.30087 → 0.30554 | **+1.55%** | +29.81 → +29.02 |
+
+**The pre-registered hypothesis is refuted, and not narrowly: all three degrade by
+1.5–1.9%, and OSLO degrades the most.** The residual is consistent with the one
+bilinear resampling every arm pays. Sphere-native estimation buys no measurable
+robustness to camera orientation on this data, and §16.34's claim is withdrawn.
+
+**Why it failed is not a mystery, and §16.33 already predicted it.** The
+orientation argument is a corollary of the polar-penalty argument: rotating the
+scene hurts a raster method by moving content into the polar stretch. But §16.33
+measured that the ERP polar penalty is proportional to displacement, and at
+flow360's 0.132° median it has already collapsed to nothing — RAFT's own
+poles/equator ratio is 1.45 here against 10.40 on flowscape. There is no penalty
+left for rotation to trigger. **The correct prediction, which follows from the
+same arithmetic rather than from a new guess, is that orientation robustness can
+only appear in the large-motion regime**, and flowscape:test is the one-command
+test of it.
+
+**THE UNPLANNED FINDING.** Rotation uniformises content across regions, which is
+exactly the control the raw regional comparison lacks. Under that control:
+
+| model | equator | poles | poles/equator | excess over the truth |
+| --- | --- | --- | --- | --- |
+| zero (truth) | 0.42628 | 0.43673 | 1.025 | — |
+| **OSLO-RAFT** | 0.33871 | 0.38644 | **1.141** | **+11.4%** |
+| PanoFlow+CFE | 0.29177 | 0.34486 | 1.182 | +15.4% |
+| frozen RAFT-large | 0.24904 | 0.31210 | 1.253 | +22.3% |
+
+**With content controlled, OSLO is the flattest of the three, and RAFT-large's
+polar excess is 2× OSLO's.** The unrotated ordering (OSLO 1.481, RAFT 1.454,
+PanoFlow 1.383) inverts. The raw comparison was confounded: it scored each region
+on whatever that dataset happens to put there, and flow360's poles carry 25% less
+texture (§16.32), which penalises the *region* rather than the representation.
+
+This partially rescues the uniformity claim, and it changes its form. It is not
+"OSLO's polar error is lower" — on flow360 it is not. It is **"per unit of
+content, OSLO's error varies least with latitude"**, and that holds in the
+sub-pixel regime where the raw comparison said it did not.
+
+**Discipline, because this was not pre-registered.** §16.34 registered a
+prediction about orientation and that prediction failed; the regional table above
+is exploratory, found while reading a null result. It needs its own replication
+before it enters the article as a claim — on flowscape:test and replica360 under
+the same rotation, where a content-controlled comparison also removes the
+in-domain confounds. Until then it is a hypothesis with one supporting
+measurement, which is exactly what the aliasing hypothesis was before its probe
+killed it.
+
+### 16.36 The regime prediction CONFIRMED on the first arm — PanoFlow degrades 286% under rotation at large motion
+
+§16.35 closed with a prediction derived from §16.33's arithmetic rather than from
+a new guess: orientation sensitivity is a *large-motion* phenomenon, because the
+ERP polar penalty it depends on is proportional to displacement. flowscape:test,
+1386 pairs, `--val-so3-prob 1.0`, same harness and seed as the flow360 leg.
+
+| PanoFlow(CSFlow)+CFE | global | poles | equator | poles/equator |
+| --- | --- | --- | --- | --- |
+| unrotated | **0.251°** (+92.6) | 0.379° (+95.3) | 0.262° (+85.5) | 1.449 |
+| rotated | **0.968°** (+71.42) | 1.742° (+58.33) | 0.801° (+73.40) | 2.173 |
+| | **+285.6% (3.86×)** | | | |
+
+**Same weights, same rotation protocol, two regimes: +1.55% degradation at
+flow360's 0.132° median, +285.6% at flowscape's 2.47° median — a factor of 184.**
+The prediction was quantitative and it held.
+
+**The task did not get harder — only its placement on the raster changed.**
+Rotation is an isometry of the sphere, so the motion statistics must be
+invariant, and they are: target p50 2.4686 vs 2.467, p90 7.2945 vs 7.290, active
+fracs 92.25/85.01/73.67 vs 92.3/85.0/73.7, global zero 3.3869 vs 3.402 (−0.4%).
+Every number a "rotation just makes it harder" explanation would need to move
+stayed put. What moved is *where the content sits*: the zero baseline's own
+poles/equator ratio collapses 4.47 → 1.39, i.e. flowscape's large motion is
+concentrated near the poles unrotated and spread evenly once rotated.
+
+**What this does NOT yet establish.** One arm is not a comparison. The claim
+under test is *relative* — that a sphere-native estimator is less orientation-
+sensitive than a raster one — and it needs OSLO and RAFT-large on the same run.
+Two readings remain open until then:
+
+1. *The claim is alive.* OSLO degrades little, and PanoFlow's published 4.6× lead
+   over OSLO on this benchmark (§7) turns out to be contingent on scene
+   orientation.
+2. *The claim is dead.* OSLO degrades comparably, and rotation is simply a harder
+   placement for every method, sphere-native or not.
+
+**Pre-registered reading, before the two controls run.** OSLO unrotated is
+1.158°. If OSLO's degradation is ≤ 20% (≤ 1.39°) while PanoFlow's is 286%, the
+gap closes from 4.6× to ≤ 1.4× and the orientation claim is alive with a
+mechanism. If OSLO degrades ≥ 100%, the claim dies and this section joins §16.32
+and §16.34 on the pile of refuted hypotheses. Anything between is a partial
+result to be reported as such, not rounded toward the hypothesis.
+
+**The one confound that survives, and its control.** Rotating a raster costs the
+raster arms one extra bilinear resample that OSLO does not pay — OSLO samples
+nodes once from the original frame at rotated directions, while `rotate_erp`
+builds a resampled ERP for the raster arms. The flow360 leg bounds that cost at
+1.55%, but blur cost need not be regime-invariant. The clean control is a
+**small-angle rotation**: `--val-so3-max-angle-deg 15` pays the identical
+resampling while barely moving content. If PanoFlow stays near 0.251° there, the
+resampling is exonerated and the 3.86× is orientation. Cost: eight minutes.
+
+### 16.37 THE CONTROLS LAND — the orientation hypothesis dies a second time, and a much better finding replaces it
+
+flowscape:test, 1386 pairs, `--val-so3-prob 1.0`, all three arms through the same
+harness. The zero baseline, p50, p90 and active fracs match across all rows to
+four figures, so the task is bit-comparable.
+
+| model | global unrot → rot | degradation | act₀.₅ unrot → rot | degradation |
+| --- | --- | --- | --- | --- |
+| PanoFlow(CSFlow)+CFE | 0.251 → **0.968** | **+285.6%** | 0.277 → 1.102 | +297.6% |
+| OSLO-RAFT | 1.158 → **1.415** | **+22.2%** | 1.306 → 1.613 | +23.5% |
+| frozen RAFT-large | 0.872 → **0.918** | **+5.2%** | 1.005 → 1.058 | +5.2% |
+
+**The pre-registered prediction failed, and it failed in the direction that kills
+the hypothesis outright.** §16.36 registered "OSLO ≤ 20% while PanoFlow is at
+286% ⇒ the claim is alive". OSLO came in at 22.2% — but the number that settles
+it is not OSLO's, it is RAFT-large's **+5.2%**. The *perspective raster* model is
+four times more orientation-robust than the sphere-native one. Sphere-native
+estimation buys no robustness to camera orientation in either regime, and OSLO
+carries `so3_prob 1.0` in training, so it cannot even be excused as unaugmented.
+**The orientation line (§16.34, §16.36) is closed as refuted.**
+
+**But the run found something better than what it was looking for.** Two raster
+models, identical input pipeline, identical `rotate_erp` resampling, same seed
+and split: one moves 5.2% and the other 286%. The difference between them is not
+architecture — it is that **PanoFlow was trained on this benchmark and RAFT-large
+never saw it**.
+
+**PanoFlow's near-saturation of its own benchmark is orientation-contingent.**
+Rotation is an isometry of the sphere: p50 2.4686 vs 2.467, p90 7.2945 vs 7.290,
+active fracs 92.25/85.01/73.67 vs 92.3/85.0/73.7, global zero 3.3869 vs 3.402.
+Every motion statistic is preserved. Under that null transform PanoFlow loses
+**78% of its margin over zero-flow** and ends up **behind out-of-domain frozen
+RAFT-large** (0.968 vs 0.918). Its published lead over OSLO collapses from
+**4.61× to 1.46×**.
+
+**The resampling confound is closed, and by a better control than the one I
+planned.** §16.36 proposed a small-angle probe; it ran (PanoFlow, 15°) and is
+ambiguous on its own — global +80.1%, but decomposed it is **equator +9.4% and
+poles +363%**, with polar motion magnitude unchanged (`poles_zero` 7.981 vs
+8.065). So 15° is not a small perturbation in raster terms at the poles, and the
+probe bounds interpolation cost at the equator only. The decisive control is
+**RAFT-large**: it pays the identical resample, including the aliasing incurred
+when polar content is mapped equatorward, and it moves 5.2%. Whatever the
+resampling costs, it does not cost 286%.
+
+**Why this matters more than the hypothesis it replaced.** It is the same failure
+family as the two the thesis already documents. A benchmark with a canonical
+camera orientation rewards a model for learning where things usually are, that
+component is indistinguishable from correspondence competence in the reported
+number, and **no published protocol measures it** — exactly as no protocol
+measured the flow convention (§16.25) and none reported a zero-flow baseline.
+Random SO(3) at evaluation is a one-line control that separates the two, and it
+is free.
+
+**And §16.35's unplanned finding does NOT replicate — withdrawn.** It was
+flagged as exploratory and requiring exactly this run. Content-controlled
+poles/equator on flowscape, each arm normalised by its own rotated zero ratio:
+
+| model | rot poles/equator | own zero | normalised | equator − poles (pts) |
+| --- | --- | --- | --- | --- |
+| frozen RAFT-large | 1.925 | 1.387 | **1.388** | **9.8** |
+| OSLO-RAFT | 1.974 | 1.414 | 1.396 | 15.3 |
+| PanoFlow+CFE | 2.173 | 1.387 | 1.567 | 15.1 |
+
+On flow360 the ordering was OSLO 1.141 < PanoFlow 1.182 < RAFT 1.253. Here
+RAFT-large is flattest, OSLO ties PanoFlow, and the second normalisation
+(improvement-point gap) puts OSLO last. **"Per unit of content, OSLO's error
+varies least with latitude" does not survive its own replication and must not
+enter the article.** One dataset supported it, one refuted it, and it was
+registered as needing the second before it counted.
+
+**Standing tally of this line**: aliasing refuted (§16.32), orientation
+robustness refuted twice (§16.35, here), content-controlled uniformity refuted
+(here). What the runs produced instead is a control that indicts a published
+result, which is worth more to the thesis than any of the three would have been.
+
+### 16.38 CONSEQUENCE — the same control threatens the thesis' central positive claim
+
+The article's headline positive result is that spherical geometry buys polar
+accuracy and uniformity against a perspective architecture, replicated on
+replica360 and flowscape. The rotated flowscape run is a content control on
+exactly that claim, and it does not pass. Polar tax = a model's polar error
+divided by its own global error (§16.31's instrument):
+
+| comparison | OSLO | frozen RAFT-large | verdict |
+| --- | --- | --- | --- |
+| replica360, raw | 1.839 | 3.151 | OSLO much flatter |
+| flowscape, raw | 2.718 | 4.186 | OSLO much flatter |
+| **flowscape, rotated** | **1.608** | **1.596** | **dead tie** |
+| flow360, raw (§16.31) | 1.284 | 1.283 | **dead tie** |
+
+**Both controls we have applied erase the advantage.** flowscape rotated
+uniformises content by force; flow360 needs no rotation because its motion is
+already near-uniform across latitude. The advantage survives only in the two raw
+large-motion comparisons — and flowscape's raw zero baseline has a poles/equator
+ratio of **4.47**, i.e. that dataset puts its large motion at the poles. Rotate
+it to 1.39 and the advantage is gone.
+
+Under rotation RAFT-large also beats OSLO at the poles in absolute terms (1.465°
+vs 2.276°), reversing the raw ordering (3.650° vs 3.147°).
+
+**This is §14.8's lesson a second time: the measurement stands, the attribution
+falls.** OSLO does have lower polar error on both raw benchmarks, and that is
+what a user sees on data with natural content placement. What is no longer
+supported is *why* — "the equal-area grid removes the polar handicap" predicts an
+advantage that persists under content control, and it does not.
+
+**The decider is replica360 under rotation.** It is the independent replication
+the claim rests on, and it is one command. Pre-registered reading, written before
+it runs:
+- OSLO's polar tax stays below RAFT-large's ⇒ the claim survives, scoped to
+  "holds on natural content placement, absent under forced uniformity", and the
+  flowscape result becomes a boundary rather than a refutation.
+- The taxes tie ⇒ the abstract, §4.4 and the contributions list all overstate,
+  and the honest headline becomes the regime-contrast result plus the
+  orientation-contingency finding of §16.37, which is the stronger pair anyway.
+
+Do not edit the article's claim until this runs. Do not soften it in advance
+either — three refutations in one afternoon is a reason for care, not for
+pre-emptive retreat.
+
+### 16.39 THE DECIDER — the claim SURVIVES on replica360, and strengthens under the control
+
+replica360:val, 162 pairs, `--val-so3-prob 1.0`, both arms rerun today on build
+5dcac0dc. Zero baselines match to five figures (13.4075 both), so the two are
+scored on the same task.
+
+| | OSLO unrot | **OSLO rot** | RAFT unrot | **RAFT rot** |
+| --- | --- | --- | --- | --- |
+| global | 1.5640 | **1.3804** | 1.1582 | **1.0714** |
+| poles | 2.8760 | **2.5036** | 3.6493 | **3.8333** |
+| equator | 1.2116 | **1.0822** | 0.6808 | **0.4879** |
+| **polar tax** | 1.8389 | **1.8137** (−1.4%) | 3.1508 | **3.5777** (+13.5%) |
+| poles/equator | 2.374 | **2.313** | 5.360 | **7.857** |
+
+**§16.38's branch 1 fires.** OSLO's polar tax is unmoved by forced content
+uniformity; RAFT-large's gets 13.5% worse. OSLO's uniformity advantage grows from
+**2.26× to 3.40×**, and it wins the poles in absolute terms by a wider margin
+under the control than without it (2.504° vs 3.833°, against 2.876° vs 3.649°).
+
+**The decisive comparison needs no cross-vintage arithmetic.** OSLO 1.8137 vs
+RAFT 3.5777 is within the rotated condition, both arms run today on the same
+build, same seed, same split. That single row is the content-controlled claim,
+and it is a 1.97× gap in OSLO's favour.
+
+**The two datasets disagree, and the mechanism says why — §16.33 again.**
+
+| dataset | zero poles/equator | OSLO tax rot | RAFT tax rot | verdict |
+| --- | --- | --- | --- | --- |
+| replica360 | **1.024** (uniform) | 1.814 | 3.578 | advantage holds |
+| flowscape | 1.387 (partly controlled) | 1.608 | 1.596 | advantage gone |
+
+flowscape *unrotated* has a zero poles/equator of **4.47**: that dataset puts its
+large motion at the poles, which is exactly where the ERP penalty
+$d/(0.3516\cos\varphi)$ is catastrophic for a raster method. Rotation **relieves**
+RAFT of that placement and its tax collapses 4.19 → 1.60. replica360's motion is
+already latitude-uniform, so there is nothing to relieve and nothing collapses.
+
+So the flowscape result is not a refutation of the claim, it is a measurement of
+how much of the *raw* flowscape margin was placement rather than geometry — and
+the answer is all of it. The claim's correct form:
+
+> Against a perspective architecture on ERP, the equal-area grid reduces the
+> polar tax by roughly 2×, and this survives forcing content to be uniform across
+> latitude (replica360). Where a benchmark additionally concentrates large motion
+> at the poles (flowscape), the raw margin overstates the geometric effect,
+> because that placement penalises the raster method on its own terms.
+
+Both halves are measured, and the second is a boundary the thesis states itself
+rather than one a committee finds.
+
+**Two loose ends, one command each, neither touching the decisive row.**
+
+1. *Both globals improved under rotation* (OSLO −11.7%, RAFT −7.5%). That
+   direction is unexplained and the unrotated runs are an older vintage that
+   recorded no `geodesic_metric` key. Rerun both unrotated on the current build
+   before quoting any unrot→rot delta. The rotated-condition comparison is
+   unaffected.
+2. *The flowscape rotation did not fully uniformise* — zero poles/equator went
+   4.47 → 1.387, not → 1.0, because `--val-so3-uniform` was never set and the
+   default angle distribution is not Haar. §16.37's flowscape control is
+   therefore **partial**, and its numbers understate how far the placement
+   confound reaches. replica360 landed at 1.024 only because its content was
+   already uniform.
+
+### 16.40 Both loose ends pulled — one closes, the other reopens §16.37
+
+**Loose end 1 — build drift: ruled out.** `raft_erp_replica360_val` rerun on
+build 5dcac0dc returns 1.1582 / 3.6493 / 0.6808, **bit-identical** to the old
+vintage. No code has moved under that row. (OSLO's `_cur` leg is still pending.)
+
+**And it delivered something better than the check it was run for.** The rerun
+records the zero baseline the old vintage never wrote down:
+
+| replica360:val, zero-flow | poles | equator | poles/equator |
+| --- | --- | --- | --- |
+| unrotated | 13.9596 | 13.2751 | **1.0516** |
+| rotated | 13.6399 | 13.3171 | 1.0242 |
+
+**replica360's motion is already latitude-uniform, unrotated.** The dataset does
+not concentrate motion at the poles the way flowscape does (4.47). So the raw
+replica360 head-to-head in the article — OSLO tax 1.8389 vs RAFT 3.1508 — **was
+already a content-controlled comparison**, and the rotation run confirms rather
+than rescues it. The claim never depended on the control it was being asked to
+survive. This is the strongest footing the positive result has had.
+
+**Loose end 2 — the flowscape rotation was a bad control, and by a lot.** With
+`--val-so3-uniform` (Haar), same model, same split, same seed:
+
+| RAFT-large on flowscape:test | global | polar tax | poles/equator | **zero p/e** |
+| --- | --- | --- | --- | --- |
+| unrotated | 0.8720 | 4.186 | 10.399 | **4.471** |
+| rotated, non-Haar (§16.37) | 0.9177 | 1.596 | 1.925 | **1.387** |
+| **rotated, Haar** | 0.9268 | **1.099** | **1.108** | **0.988** |
+
+Only the Haar leg actually uniformises the content (zero p/e 0.988). The default
+sampler left a 39% residual concentration, and RAFT's measured polar tax differs
+by **45%** between the two rotations. **§16.37 and §16.38's flowscape rows are
+computed on a partial control and must be re-read on the Haar leg before any of
+them is quoted.** The direction of the error is known: the partial control
+understated how much of the raw margin was placement.
+
+Note what did *not* move: RAFT's global goes 0.872 → 0.927 (+6.3%) under Haar,
+against +5.2% non-Haar. The model is genuinely orientation-robust; it is the
+*regional* split that the sampler was mismeasuring.
+
+**A clean two-point confirmation of §16.33, with content held uniform.** RAFT's
+polar tax, measured only where the zero baseline is flat across latitude:
+
+| condition | median displacement | RAFT polar tax |
+| --- | --- | --- |
+| flowscape, Haar-rotated (zero p/e 0.988) | 2.47° | **1.099** |
+| replica360, native (zero p/e 1.052) | 11.88° | **3.151** |
+
+The ERP polar penalty scales with displacement, and this is the first
+measurement of it that owes nothing to where a dataset happens to put its motion.
+It also predicts the shape of the OSLO comparison: the geometric advantage should
+be small on flowscape and large on replica360 — which is what the raw numbers
+said before any of this, for a reason that is now measured rather than asserted.
+
+**Still outstanding**: OSLO on replica360 `_cur`, OSLO on flowscape `_rotu`, and
+PanoFlow on flowscape `_rotu` — the last because §16.37's headline +285.6% is
+also a non-Haar number and must be restated on the same footing as everything
+else.
+
+### 16.41 Haar controls land — the PanoFlow finding strengthens, and the polar penalty is a THRESHOLD, not a proportionality
+
+**Build drift ruled out on both arms.** OSLO's replica360 rerun on 5dcac0dc
+returns 1.5640 / 2.8760 / 1.2116, bit-identical to the old vintage, as RAFT's
+did. The article's `tab:h2h` replica360 column needs no restating.
+
+**§16.37's headline survives the proper control and gets bigger.** PanoFlow on
+flowscape:test, three conditions, same split and seed:
+
+| PanoFlow(CSFlow)+CFE | global | degradation | polar tax | poles/equator |
+| --- | --- | --- | --- | --- |
+| unrotated | 0.251 | — | 1.510 | 1.447 |
+| rotated, non-Haar | 0.968 | +285.6% | 1.799 | 2.173 |
+| **rotated, Haar** | **1.039** | **+313.9%** | **1.377** | **1.474** |
+
+Under a genuine Haar rotation PanoFlow loses **314%** while frozen RAFT-large
+loses 6.3%, and PanoFlow now sits clearly behind it (1.039 vs 0.927). The
+orientation-contingency of a published in-domain result is confirmed on the
+control it should have had from the start.
+
+**A second split inside that result, which the Haar leg separates cleanly:**
+
+| | global under rotation | polar tax under rotation |
+| --- | --- | --- |
+| PanoFlow | collapses (0.251 → 1.039) | **stable** (1.510 → 1.377) |
+| RAFT-large | **stable** (0.872 → 0.927) | collapses (4.186 → 1.099) |
+
+PanoFlow's cross-sphere uniformity is real and content-independent; its *global
+competence* is what depends on orientation. RAFT-large is the mirror image: it is
+genuinely orientation-robust, and its raw flowscape polar disaster (p/e 10.4) was
+almost entirely **placement**, not architecture.
+
+**The refinement: §16.33 said the ERP polar penalty is proportional to
+displacement. It is better described as a threshold.** Area-weighted mean
+$\sec\varphi$ is 3.908 over $|lat|>60$ and 1.047 over $|lat|<30$, so mean polar
+ERP displacement is $11.11 \times d$ pixels at 1024 columns. RAFT correlates at
+1/8 resolution with lookup radius 4, i.e. a **32 px reach** at full resolution:
+
+| dataset | p50 | polar ERP px | vs 32 px reach | RAFT polar tax |
+| --- | --- | --- | --- | --- |
+| flow360 | 0.132° | **1.5** | far inside | 1.28 (§16.31) |
+| flowscape, Haar | 2.469° | **27.4** | just inside | **1.099** |
+| replica360, native | 11.878° | **132.0** | **4.1× beyond** | **3.151** |
+
+Flat, flat, jump — not a slope. The penalty is nil while polar displacement fits
+the correlation reach and bites hard once it does not. flow360's 1.28 sits above
+flowscape's 1.099 despite 18× less motion because that row is *not*
+content-controlled: flow360's poles carry 25% less texture (§16.32).
+
+**This is what makes the two datasets agree instead of contradict.** The
+equal-area grid can only help where the raster method is actually failing, and
+that is a measurable threshold rather than a claim about spheres. replica360
+crosses it by 4×, flowscape does not cross it at all — so the geometric advantage
+must appear on the first and vanish on the second, which is exactly the pattern.
+The equatorial numbers corroborate: replica360's equator sits at 35.4 px, right
+at the reach boundary, and RAFT's equator error there (0.681) is double its
+flowscape equator (0.351) at 7.4 px.
+
+**Outstanding: OSLO on flowscape `_rotu`**, the last cell of the table.
+Pre-registered: the threshold argument predicts OSLO's Haar polar tax lands near
+RAFT's 1.099 rather than below it, because at 27.4 px there is no raster failure
+left to fix. A value clearly below 1.099 would mean the grid buys something the
+threshold model does not account for, and that would need its own explanation.
+
+### 16.42 TABLE CLOSED — the prediction held, the two-dataset replication did not
+
+flowscape:test under Haar rotation, all three arms, content uniform across
+latitude:
+
+| model | global | +% over zero | poles | equator | polar tax | poles/equator | normalised |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| frozen RAFT-large | **0.927** | **+72.6** | **1.019** | **0.919** | **1.099** | **1.108** | **1.122** |
+| PanoFlow+CFE | 1.039 | +69.3 | 1.431 | 0.970 | 1.377 | 1.474 | 1.492 |
+| OSLO-RAFT | 1.498 | +55.8 | 2.030 | 1.320 | 1.355 | 1.538 | 1.428 |
+
+(Normalised = poles/equator divided by that run's own zero poles/equator; the
+OSLO leg draws rotations from `seed 7` while the raster legs use
+`--val-so3-seed 1234`, so its zero band ratio is 1.077 against their 0.988 and
+the normalisation is required rather than cosmetic.)
+
+**§16.41's pre-registration held: OSLO's Haar polar tax is 1.355, near RAFT's
+1.099 and not below it.** The threshold model predicted the sign correctly. It
+did not predict the size — OSLO is 23% *worse*, so on flowscape under content
+control the polar advantage is not merely absent, it is reversed.
+
+**The consequence for the thesis is concrete and it is a demotion.** The article
+currently claims the uniformity result is *replicated on two independent
+datasets* (replica360 2.37 vs 5.36, flowscape 4.33 vs 10.4). The flowscape half
+of that replication is now measured to be **placement, not geometry**: that
+dataset concentrates its large motion at the poles (zero poles/equator 4.47),
+which is precisely where a raster method is penalised on its own terms. Remove
+the concentration and RAFT's polar tax falls 4.19 → 1.10 while OSLO's falls only
+2.72 → 1.36.
+
+**What is left standing, stated exactly:**
+
+| dataset, content-controlled | polar ERP displacement | OSLO tax | RAFT tax | winner |
+| --- | --- | --- | --- | --- |
+| replica360 (natively uniform) | **132 px** (4.1× reach) | **1.839** | 3.151 | OSLO, 1.71× |
+| flowscape (Haar-uniformised) | **27.4 px** (inside reach) | 1.355 | **1.099** | RAFT, 1.23× |
+
+One dataset, not two — plus a measured mechanism that says why the second does
+not show it, and a threshold that predicts where it would. The claim's honest
+form:
+
+> The equal-area grid reduces the polar error tax against a perspective
+> architecture **where polar ERP displacement exceeds that architecture's
+> correlation reach** (~32 px for RAFT-large at 1/8 resolution, radius 4).
+> Measured at 132 px: 1.84 vs 3.15. Measured at 27.4 px: no advantage, RAFT leads
+> 1.10 vs 1.36. The advantage is conditional on a regime, and the condition is
+> arithmetic.
+
+That is narrower than "spherical geometry buys polar accuracy and uniformity" and
+it is the version that survives its own controls. It is also more useful: it
+tells a reader when to reach for this architecture and when not to.
+
+**Also settled: PanoFlow degrades 313.9% under Haar, OSLO 29.3%, RAFT-large
+6.3%.** The orientation-contingency finding (§16.37) stands at full strength on
+the proper control, and it is now the strongest *new* claim this line produced.
+
+**The one test that would upgrade the threshold from two dataset-level points to
+a within-dataset crossover**: region × displacement-band cross-tabulation. The
+harness computes region masks and band masks as separate selections
+(`spherical_flow/metrics.py:166,177`), so "polar error restricted to nodes moving
+more than 2.9°" cannot be read from any existing JSON. It is a contained change —
+intersect the two mask families — and it would test the threshold *inside*
+flowscape, where every dataset-level confound is held fixed by construction.
+Pre-registered: OSLO's polar tax should cross below RAFT's in the bands above
+~2.9° (32 px / 11.11 px per degree) and sit above it below that.
+
+### 16.43 Literature check (2026-08-14) — four things we were treating as ours are already published
+
+Run before committing to a from-scratch RAFT. Full register in
+`docs/plans/LITERATURE_SCOPE.md`; partners and split comparability in
+`docs/plans/COMPARISON_PARTNERS.md`. What it changed:
+
+| we had been treating as ours | actually | consequence |
+| --- | --- | --- |
+| geodesic angular metric | **SEPE**, "the geodesic distance between endpoints on the unit sphere", is standard in 360-flow and PriOr-Flow reports it for every baseline | keep the metric, drop any novelty framing; ours is the area weighting + zero denominator |
+| polar/equatorial stratification | PriOr-Flow Table 6 publishes exactly this on FlowScape | claim nothing |
+| evaluating under random global rotation | established in panoramic vision — Sphere-Depth (2026, depth), Spherical-GOF (2026, reconstruction), SO3UFormer (2026, segmentation) | ours is the **application to flow** and the **in-domain/out-of-domain discriminator**, which Sphere-Depth explicitly does not analyse |
+| matched-backbone comparison across panoramic representations | PriOr-Flow Table 5 — SphereNet / TanImg / MPF-net / SLOF / PanoFlow / PriOr, all RAFT, all from the same pre-training, baselines re-run by the authors | **do not build it ourselves**; the missing cell is an OSLO row |
+
+**Sphere-Depth's headline is our §16.37 in a different task**, verbatim: "even
+models explicitly designed to process spherical images exhibit substantial
+performance degradation when variations in the camera pose are observed." Our
+PanoFlow result must be written as a replication in a new task plus a new
+discriminator, not as a discovery.
+
+**And one row of prior art argues against the thesis' premise.** PriOr-Flow's
+SphereNet+RAFT — the distortion-aware spherical-convolution family, the closest
+published relative of what we build — is **the worst row in their table** (13.2
+EPE on EFT vs PriOr's 3.30) under matched backbone and matched pre-training. It
+concerns a different mechanism than ours (adapted kernels, not estimation grid)
+and a different displacement regime, but related work must engage it.
+
+**Documentation action taken the same day.** Sixteen documents carried
+inverted-target FLOW360 conclusions with no void marker, including both
+thesis-facing notes and the reader-facing `EXPLICACAO_TECNICA.md`. All sixteen
+now carry a status banner pointing at `LITERATURE_SCOPE.md`, and the refuted
+"ERP methods structurally cannot win the SO(3) protocol" sentence in
+`THESIS_REGIME_ARGUMENT.md` §5 is struck through in place with the measurement
+that killed it.

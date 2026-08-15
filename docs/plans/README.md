@@ -1,5 +1,18 @@
 # Phase 2: from bounded thesis result to benchmark-grade paper
 
+<!-- SCOPE-BANNER -->
+> **STATUS 2026-08-14 — read `docs/plans/LITERATURE_SCOPE.md` before quoting anything here.**
+> Two independent corrections apply across this project's documents. (1) The FLOW360
+> forward-flow convention was inverted, so every FLOW360 result recorded before
+> 2026-08-04 is void. (2) A literature check on 2026-08-14 found that several things
+> treated here as ours already exist in print: the geodesic (SEPE) metric, polar/equatorial
+> stratification, rotation-robustness evaluation in panoramic vision, and matched-backbone
+> comparison across panoramic representations. `LITERATURE_SCOPE.md` is the register of what
+> we may and may not claim.
+>
+> **This file specifically:** The Gate R2 failure recorded here is VOID; the corrected retrain passes it by 11.6x.
+
+
 **Status: planning (2026-07-09).** Phase 1 (thesis campaign) concluded 2026-07-07 with
 DECISION = WRITE UP: Gate R1 passed (+88.4% real replica360; three-seed 1.74° ± 0.25),
 Gate R2 failed with the wall precisely bounded (real inter-frame appearance change at
