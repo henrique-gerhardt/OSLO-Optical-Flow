@@ -4074,3 +4074,72 @@ polar error than frozen RAFT-large for displacements above roughly 4° (about 74
 ERP px at the poles), covering 9.5% of the sphere's valid nodes, while losing at
 every displacement at the equator and at every displacement once the scene is
 randomly rotated.
+
+### 16.45 PriOr-RAFT under our protocol — vendoring validated, and the orientation finding generalises
+
+`--prior-checkpoint /outputs/prior_weights/FlowScape-final.pth`, flowscape:test,
+1386 pairs, acos, r6. Two runs: native orientation and Haar rotation.
+
+**The reproduction check, and my prediction was wrong.** §prev registered
+0.18–0.20° global from converting their published SEPE. Measured: **0.2415°**,
+21% outside the window. The prediction was built on a unit conversion that ignored
+the very mechanism this project documented a day earlier — their global is
+averaged over ERP pixels, ours over solid angle, and the poles are 1/3 of ERP rows
+against 13.4% of the sphere's area.
+
+**The vendoring is nonetheless validated, by the regional numbers:**
+
+| flowscape:test | PanoFlow (ours) | PriOr-RAFT (ours) | PriOr gain, ours | PriOr gain, published |
+| --- | --- | --- | --- | --- |
+| poles | 0.3766 | **0.2196** | **+41.7%** | **+39.7%** |
+| equator | 0.2612 | 0.2739 | −4.9% | −1.9% (0.52 → 0.53) |
+| global | 0.2512 | 0.2415 | +3.9% | +27.0% (SEPE 4.78 → 3.49) |
+
+**Their headline polar claim reproduces to two points** (+41.7 measured against
++39.7 published), and the equator reproduces in sign — both find PriOr marginally
+*worse* than PanoFlow there. The vendored network is the network.
+
+**The global gap is the weighting, and it is measurable.** Reconstructing the
+mid-latitude band from our three regions and re-averaging with ERP-row weights
+(1/3 each) moves PriOr's edge over PanoFlow from **+3.9% to +15.8%**, against
+their +27.0%. Weighting explains about half of the discrepancy on its own, and
+the remainder is plausibly their region boundaries, which the paper never defines
+numerically. **A published 27% improvement is, in area-weighted angular terms, a
+4% improvement** — the §16.33 mechanism operating inside a headline number rather
+than a supplementary table.
+
+**ROTATION: the §16.37 finding generalises across labs and architectures.**
+Pre-registered: degradation above 100% confirms, below 20% refutes.
+
+| model | domain | unrotated → Haar-rotated | degradation |
+| --- | --- | --- | --- |
+| **PriOr-RAFT** (ICCV 2025) | in-domain | 0.2415 → 1.2335 | **+410.7%** |
+| **PanoFlow** | in-domain | 0.2512 → 1.0388 | **+313.6%** |
+| OSLO-RAFT | in-domain | 1.1577 → 1.4977 | +29.4% |
+| frozen RAFT-large | **out-of-domain** | 0.8722 → 0.9268 | **+6.3%** |
+
+Confirmed, and not narrowly. Two methods, two labs, two architectures, both
+trained on this benchmark, both losing three to four times their error under an
+isometry that preserves every motion statistic. The one arm that never saw the
+benchmark moves 6.3%.
+
+**The ranking inverts completely:**
+
+| | unrotated | Haar-rotated |
+| --- | --- | --- |
+| 1st | PriOr-RAFT 0.2415 | frozen RAFT-large 0.9268 |
+| 2nd | PanoFlow 0.2512 | PanoFlow 1.0388 |
+| 3rd | frozen RAFT-large 0.8722 | PriOr-RAFT 1.2335 |
+| 4th | OSLO-RAFT 1.1577 | OSLO-RAFT 1.4977 |
+
+**The current ICCV state of the art falls from first to third, behind an
+out-of-domain perspective model with weights from 2020.** This is now the
+strongest new claim the project has, and it is about the field's evaluation
+protocol rather than about our estimator. Both halves of §16.37's reading survive
+the second method: the effect tracks *in-domain training on a benchmark with a
+canonical camera orientation*, not representation, and a one-line control
+separates the two.
+
+**Standing caveat.** OSLO also degrades (+29.4%), four times more than the
+out-of-domain arm. The control indicts our model too, which is why it is worth
+reporting.
