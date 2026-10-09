@@ -162,6 +162,68 @@ def _nearest_node(q: torch.Tensor, points: torch.Tensor) -> torch.Tensor:
     return idx.reshape(q.shape[:-1])
 
 
+def _barycentric_weights(
+    q: torch.Tensor, cand_pts: torch.Tensor, d: torch.Tensor
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Spherical barycentric weights over the candidate triangle containing ``q``.
+
+    The two nearest candidates fix an edge; the third vertex is the nearest remaining
+    candidate whose triangle contains ``q``. Weights are the planar barycentric
+    coordinates of ``q`` in that (chordal) triangle, so the interpolant is linear in the
+    query inside each triangle — unlike inverse-distance weights, whose first-order
+    term near a node depends only on the distance to it, not on the direction.
+
+    Falls back to the three nearest with negative weights clamped when no candidate
+    triangle contains ``q``, and to the nearest node when that triangle is degenerate.
+
+    Args:
+        q: ``[..., 3]`` query directions.
+        cand_pts: ``[..., K_c, 3]`` candidate node directions (``K_c >= 3``).
+        d: ``[..., K_c]`` query-candidate distances.
+
+    Returns:
+        ``(weights [..., 3], slot [..., 3])`` — ``slot`` indexes the candidate axis.
+    """
+    order = torch.argsort(d, dim=-1)                                   # [..., K_c]
+    pts = torch.gather(cand_pts, -2, order.unsqueeze(-1).expand_as(cand_pts)).float()
+    q = q.float()
+    p0, p1, rest = pts[..., 0, :], pts[..., 1, :], pts[..., 2:, :]     # rest [..., R, 3]
+
+    n01 = torch.cross(p0, p1, dim=-1)                                  # [..., 3]
+    vol = (n01.unsqueeze(-2) * rest).sum(dim=-1)                       # det[p0, p1, c]
+    a = (torch.cross(q, p1, dim=-1).unsqueeze(-2) * rest).sum(dim=-1)  # det[q, p1, c]
+    b = (torch.cross(p0, q, dim=-1).unsqueeze(-2) * rest).sum(dim=-1)  # det[p0, q, c]
+    c = (n01 * q).sum(dim=-1, keepdim=True).expand_as(vol)             # det[p0, p1, q]
+
+    # Height of c over the p0-p1 great circle, relative to the edge length: rejects
+    # (near-)collinear triples, which exact-node queries produce through distance ties.
+    edge = n01.norm(dim=-1, keepdim=True)
+    solid = vol.abs() > 0.1 * edge * edge
+    sign = torch.where(vol < 0, -torch.ones_like(vol), torch.ones_like(vol))
+    w = torch.stack([a, b, c], dim=-1) * sign.unsqueeze(-1)            # [..., R, 3]
+    total = w.sum(dim=-1, keepdim=True)
+    w = w / total.clamp_min(1e-20)
+    inside = solid & (total.squeeze(-1) > 0) & (w.min(dim=-1).values >= -1e-4)
+
+    # First (= nearest) containing candidate; candidate 0 clamped when none contains q.
+    r = rest.size(-2)
+    rank = torch.where(inside, torch.arange(r, device=d.device).expand_as(vol),
+                       torch.full_like(vol, r, dtype=torch.long).long())
+    pick = rank.min(dim=-1, keepdim=True).values
+    found = pick < r
+    pick = torch.where(found, pick, torch.zeros_like(pick))
+    w = torch.gather(w, -2, pick.unsqueeze(-1).expand(*pick.shape, 3)).squeeze(-2)
+    ok = torch.gather(solid & (total.squeeze(-1) > 0), -1, pick)
+    w = w.clamp_min(0.0)
+    w = w / w.sum(dim=-1, keepdim=True).clamp_min(1e-20)
+    nearest = torch.zeros_like(w)
+    nearest[..., 0] = 1.0
+    w = torch.where(ok, w, nearest)
+
+    slot = torch.cat([order[..., :2], torch.gather(order[..., 2:], -1, pick)], dim=-1)
+    return w, slot
+
+
 def interp_pyramid_lookup(
     f1: torch.Tensor,
     f2_levels: List[torch.Tensor],
@@ -169,6 +231,7 @@ def interp_pyramid_lookup(
     pyramid: SpherePyramid,
     offsets_per_level: torch.Tensor,
     k_interp: int = 3,
+    interp_mode: str = "idw",
 ) -> torch.Tensor:
     """Continuous-in-flow correlation lookup over the feature pyramid.
 
@@ -190,7 +253,9 @@ def interp_pyramid_lookup(
         flow: ``[B, N_est, 2]`` current tangent flow (already detached by the caller).
         pyramid: geometry bundle.
         offsets_per_level: ``[L, M, 2]`` stencils from :func:`build_lookup_offsets`.
-        k_interp: nodes per interpolated sample (3 ~ barycentric).
+        k_interp: nodes per interpolated sample (3 ~ barycentric); ``idw`` only.
+        interp_mode: ``idw`` (inverse-distance over the ``k_interp`` nearest) or
+            ``barycentric`` (:func:`_barycentric_weights`, RAFT's bilinear analogue).
 
     Returns:
         ``[B, N_est, L * M]`` correlation features, levels concatenated.
@@ -221,10 +286,17 @@ def interp_pyramid_lookup(
         cand_pts = level.points[cand]                                  # [B, N, M, K_c, 3]
 
         d = _chord_geodesic(q.unsqueeze(-2), cand_pts)                 # [B, N, M, K_c]
-        k_int = min(k_interp, d.size(-1))
-        d_sel, slot = torch.topk(d, k_int, dim=-1, largest=False)
-        w = 1.0 / d_sel.clamp_min(1e-8)
-        w = (w / w.sum(dim=-1, keepdim=True)).detach()                 # [B, N, M, K]
+        if interp_mode == "barycentric":
+            w, slot = _barycentric_weights(q, cand_pts, d)
+            w = w.to(f2_l.dtype).detach()                              # [B, N, M, 3]
+            k_int = 3
+        elif interp_mode == "idw":
+            k_int = min(k_interp, d.size(-1))
+            d_sel, slot = torch.topk(d, k_int, dim=-1, largest=False)
+            w = 1.0 / d_sel.clamp_min(1e-8)
+            w = (w / w.sum(dim=-1, keepdim=True)).detach()             # [B, N, M, K]
+        else:
+            raise ValueError(f"unknown interp_mode: {interp_mode!r} (want 'idw' or 'barycentric')")
         sel = torch.gather(cand, -1, slot)                             # [B, N, M, K]
 
         # Flat-index gather of f2 (the OSLORAFTLocal trick — no [B, N, N, C] transient).
@@ -355,6 +427,8 @@ class OSLORAFTRetina(nn.Module):
         lookup_ring_points: int = 8,
         k_interp: int = 3,
         use_checkpoint_encoder: bool = True,
+        interp_mode: str = "idw",
+        flow_unit: float = 1.0,
     ):
         super().__init__()
         if pyramid.retina_resolution is None:
@@ -373,6 +447,12 @@ class OSLORAFTRetina(nn.Module):
         self.context_dim = context_dim
         self.flow_scale = flow_scale
         self.k_interp = k_interp
+        self.interp_mode = interp_mode
+        # Radians per internal flow unit. RAFT's update block sees flow in estimation-grid
+        # cells (one cell = 1.0); 1.0 here keeps the tangent flow in radians end to end,
+        # the est node spacing reproduces RAFT's scale. The model's inputs and outputs
+        # (``flow_init``, predictions) stay in radians either way.
+        self.flow_unit = float(flow_unit)
         # Position channels and matching don't mix: xyz in the FEATURE encoder makes
         # every f1_i . f2_c logit peak at the spatially nearest candidate regardless of
         # texture (a built-in self-match bias — RAFT's fnet sees only image content for
@@ -472,11 +552,12 @@ class OSLORAFTRetina(nn.Module):
         est = pyramid.estimation_level
         idx, wgt, val = est.conv_index, est.conv_weight, est.conv_valid
         corr_feat = interp_pyramid_lookup(
-            f1, f2_levels, flow, pyramid, self.lookup_offsets, self.k_interp
+            f1, f2_levels, flow, pyramid, self.lookup_offsets, self.k_interp,
+            self.interp_mode,
         )
         if self.ablate_corr:
             corr_feat = torch.zeros_like(corr_feat)
-        motion = self.motion_encoder(corr_feat, flow, idx, wgt, val)
+        motion = self.motion_encoder(corr_feat, flow / self.flow_unit, idx, wgt, val)
         gru_in = torch.cat([motion, context, corr_feat], dim=-1)
         h = self.gru(h, gru_in, idx, wgt, val)
         delta = self.flow_conv2(F.relu(self.flow_conv1(h, idx, wgt, val)), idx, wgt, val)
@@ -546,7 +627,7 @@ class OSLORAFTRetina(nn.Module):
                 h, delta, weights = self._update_step(h, flow, f1, f2_levels, context, pyramid)
             if self.upsample_override is not None:
                 weights = override_upsample_weights(weights, self.upsample_override)
-            flow = flow + self.flow_scale * delta
+            flow = flow + self.flow_scale * self.flow_unit * delta
             predictions.append(convex_upsample(flow, weights, pyramid))
         if return_features and return_upsample_weights:
             return predictions, (f1, f2_levels[0]), weights

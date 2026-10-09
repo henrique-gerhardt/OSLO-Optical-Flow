@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import random
 import subprocess
@@ -121,6 +122,14 @@ def parse_args() -> argparse.Namespace:
                    help="Interp-lookup stencil rings per corr level (--retina).")
     p.add_argument("--lookup-ring-points", type=int, default=8,
                    help="Interp-lookup points per stencil ring (--retina).")
+    p.add_argument("--lookup-interp", default="idw", choices=["idw", "barycentric"],
+                   help="Interp-lookup weights (--retina): 'idw' = inverse distance over the 3 "
+                        "nearest nodes; 'barycentric' = linear inside the containing triangle "
+                        "(RAFT's bilinear analogue). Architecture: repeat it at eval.")
+    p.add_argument("--flow-unit", default="rad", choices=["rad", "node"],
+                   help="Unit the update block sees flow in (--retina): 'rad' = radians; "
+                        "'node' = estimation node spacings (RAFT's grid-cell units). "
+                        "Architecture: repeat it at eval.")
     p.add_argument("--feature-channels", default="",
                    help="Comma list overriding the retina encoder channel ramp, finest->est "
                         "(e.g. '16,32,48,64,96'). Empty = the depth-keyed default.")
@@ -444,6 +453,11 @@ def main() -> None:
             context_channels=feature_channels,
             lookup_rings=args.lookup_rings, lookup_ring_points=args.lookup_ring_points,
             use_checkpoint_encoder=not args.no_encoder_checkpoint,
+            interp_mode=args.lookup_interp,
+            flow_unit=(
+                math.sqrt(4.0 * math.pi / pyramid.num_estimation_nodes)
+                if args.flow_unit == "node" else 1.0
+            ),
         ).to(device)
         print(f"grid={args.grid} retina={args.retina_resolution} est={args.estimation_resolution} "
               f"sup={args.resolution} nodes_ret={pyramid.retina_level.num_nodes} "
