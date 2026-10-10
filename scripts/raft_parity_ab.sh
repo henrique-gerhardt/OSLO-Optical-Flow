@@ -5,6 +5,7 @@
 # matched-pair recipe (retina r7 / supervision r6 / estimation r4, 2000 steps,
 # one-cycle, haversine). Only --flow-unit and --lookup-interp differ between arms.
 #
+#   SHARDS_HOST=/path/to/sfprep/shards \
 #   docker compose -f docker-compose.oslo_raft.yml run --build --rm oslo-raft \
 #       bash scripts/raft_parity_ab.sh
 #
@@ -43,6 +44,8 @@ for seed in $SEEDS; do
       --estimation-resolution "${ESTIMATION_RESOLUTION:-4}" \
       --device cuda --amp --onecycle \
       --geodesic-metric haversine \
+      --shards "${OSLO_SHARDS:-/data/shards}" \
+      --pyramid-cache "${OUTPUT_DIR:-/outputs}/pyramid_cache" \
       --train-sources replica360:train --val-sources replica360:val \
       --steps "$STEPS" --seed "$seed" \
       --batch-size "${BATCH_SIZE:-2}" --num-workers "${NUM_WORKERS:-4}" \
