@@ -61,6 +61,7 @@ class PyramidEncoder(nn.Module):
         channels: Tuple[int, ...],
         kernel_size: int,
         resolutions: List[int],
+        blocks_per_level: int = 1,
     ):
         super().__init__()
         if len(channels) != len(resolutions):
@@ -74,6 +75,15 @@ class PyramidEncoder(nn.Module):
             blocks.append(ResidualSphereBlock(c_prev, c, kernel_size))
             c_prev = c
         self.blocks = nn.ModuleList(blocks)
+        # RAFT runs two residual units per scale; ``blocks_per_level - 1`` same-width
+        # blocks follow each level's first one. Empty at the default, so the state dict
+        # of every existing checkpoint is unchanged.
+        self.extra_blocks = nn.ModuleList(
+            nn.ModuleList(
+                ResidualSphereBlock(c, c, kernel_size) for _ in range(blocks_per_level - 1)
+            )
+            for c in channels
+        ) if blocks_per_level > 1 else nn.ModuleList()
         self.resolutions = list(resolutions)  # descending, e.g. [6, 5, 4]
         self.out_channels = c_prev
 
@@ -81,13 +91,15 @@ class PyramidEncoder(nn.Module):
         ckpt = self.use_checkpoint and torch.is_grad_enabled()
         for i, res in enumerate(self.resolutions):
             level = pyramid.levels[res]
-            if ckpt:
-                x = checkpoint(
-                    self.blocks[i], x, level.conv_index, level.conv_weight,
-                    level.conv_valid, use_reentrant=False,
-                )
-            else:
-                x = self.blocks[i](x, level.conv_index, level.conv_weight, level.conv_valid)
+            stage = [self.blocks[i], *(self.extra_blocks[i] if len(self.extra_blocks) else [])]
+            for block in stage:
+                if ckpt:
+                    x = checkpoint(
+                        block, x, level.conv_index, level.conv_weight,
+                        level.conv_valid, use_reentrant=False,
+                    )
+                else:
+                    x = block(x, level.conv_index, level.conv_weight, level.conv_valid)
             if i < len(self.resolutions) - 1:
                 # pool res -> res-1 (pool_index[res-1] holds the children at res)
                 x = pool_features(x, pyramid.pool_index[res - 1])

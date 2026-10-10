@@ -378,6 +378,49 @@ def stencil_match_loss(
 
 
 # --------------------------------------------------------------------------- #
+# RAFT-large update block (the ``update_block="raft"`` variant)
+# --------------------------------------------------------------------------- #
+class MotionEncoderRAFT(nn.Module):
+    """RAFT's BasicMotionEncoder on the sphere: two layers per branch, widths scaled
+    to the hidden size ``h`` as in RAFT-large at ``h=128`` (corr 2h -> 1.5h, flow
+    h -> h/2, fused h - 2), with the correlation entering through a 1x1."""
+
+    def __init__(self, corr_channels: int, kernel_size: int, hidden_channels: int):
+        super().__init__()
+        h = hidden_channels
+        c1, c2, f1, f2 = 2 * h, (3 * h) // 2, h, h // 2
+        self.corr_conv1 = SDPAConv(corr_channels, c1, kernel_size=1, node_dim=1)
+        self.corr_conv2 = SDPAConv(c1, c2, kernel_size=kernel_size, node_dim=1)
+        self.flow_conv1 = SDPAConv(2, f1, kernel_size=kernel_size, node_dim=1)
+        self.flow_conv2 = SDPAConv(f1, f2, kernel_size=kernel_size, node_dim=1)
+        self.out_conv = SDPAConv(c2 + f2, h - 2, kernel_size=kernel_size, node_dim=1)
+        self.out_channels = h
+
+    def forward(self, corr_feat, flow, index, weight, valid):
+        c = F.relu(self.corr_conv1(corr_feat))  # 1x1 — no neighbors needed
+        c = F.relu(self.corr_conv2(c, index, weight, valid))
+        f = F.relu(self.flow_conv1(flow, index, weight, valid))
+        f = F.relu(self.flow_conv2(f, index, weight, valid))
+        m = F.relu(self.out_conv(torch.cat([c, f], dim=-1), index, weight, valid))
+        return torch.cat([m, flow], dim=-1)
+
+
+class StackedGraphConvGRU(nn.Module):
+    """Two ConvGRU passes per iteration — the sphere analogue of RAFT's SepConvGRU
+    (1x5 then 5x1), which has no separable form on HEALPix: the second 1-hop pass
+    widens the per-iteration receptive field to 2 hops the way the second axis does."""
+
+    def __init__(self, hidden_channels: int, input_channels: int, kernel_size: int):
+        super().__init__()
+        self.gru1 = GraphConvGRU(hidden_channels, input_channels, kernel_size)
+        self.gru2 = GraphConvGRU(hidden_channels, input_channels, kernel_size)
+
+    def forward(self, h, x, index, weight, valid):
+        h = self.gru1(h, x, index, weight, valid)
+        return self.gru2(h, x, index, weight, valid)
+
+
+# --------------------------------------------------------------------------- #
 # The model (§6)
 # --------------------------------------------------------------------------- #
 def override_upsample_weights(weights: torch.Tensor, mode: str) -> torch.Tensor:
@@ -429,6 +472,9 @@ class OSLORAFTRetina(nn.Module):
         use_checkpoint_encoder: bool = True,
         interp_mode: str = "idw",
         flow_unit: float = 1.0,
+        corr_norm: str = "cosine",
+        update_block: str = "small",
+        encoder_blocks_per_level: int = 1,
     ):
         super().__init__()
         if pyramid.retina_resolution is None:
@@ -453,6 +499,15 @@ class OSLORAFTRetina(nn.Module):
         # the est node spacing reproduces RAFT's scale. The model's inputs and outputs
         # (``flow_init``, predictions) stay in radians either way.
         self.flow_unit = float(flow_unit)
+        if corr_norm not in ("cosine", "raw"):
+            raise ValueError(f"unknown corr_norm: {corr_norm!r} (want 'cosine' or 'raw')")
+        if update_block not in ("small", "raft"):
+            raise ValueError(f"unknown update_block: {update_block!r} (want 'small' or 'raft')")
+        # "raw" is RAFT's correlation: unnormalized dot products tempered by 1/sqrt(C),
+        # so feature magnitude carries matching confidence. "cosine" is the validated
+        # default (channel-normalized features, dots in [-1, 1]).
+        self.corr_norm = corr_norm
+        self.update_block = update_block
         # Position channels and matching don't mix: xyz in the FEATURE encoder makes
         # every f1_i . f2_c logit peak at the spatially nearest candidate regardless of
         # texture (a built-in self-match bias — RAFT's fnet sees only image content for
@@ -478,8 +533,12 @@ class OSLORAFTRetina(nn.Module):
 
         fnet_in = in_channels + (3 if self.include_xyz_fnet else 0)
         cnet_in = in_channels + (3 if self.include_xyz_cnet else 0)
-        self.fnet = PyramidEncoder(fnet_in, feature_channels, kernel_size, resolutions)
-        self.cnet = PyramidEncoder(cnet_in, context_channels, kernel_size, resolutions)
+        self.fnet = PyramidEncoder(
+            fnet_in, feature_channels, kernel_size, resolutions, encoder_blocks_per_level
+        )
+        self.cnet = PyramidEncoder(
+            cnet_in, context_channels, kernel_size, resolutions, encoder_blocks_per_level
+        )
         self.fnet.use_checkpoint = use_checkpoint_encoder
         self.cnet.use_checkpoint = use_checkpoint_encoder
         self.context_head = SDPAConv(
@@ -492,19 +551,24 @@ class OSLORAFTRetina(nn.Module):
             "lookup_offsets", build_lookup_offsets(pyramid, lookup_rings, lookup_ring_points)
         )
         corr_channels = self.lookup_offsets.size(0) * self.lookup_offsets.size(1)
-        self.motion_encoder = MotionEncoder(corr_channels, kernel_size)
+        raft_block = update_block == "raft"
+        self.motion_encoder = (
+            MotionEncoderRAFT(corr_channels, kernel_size, hidden_channels)
+            if raft_block else MotionEncoder(corr_channels, kernel_size)
+        )
         # The raw correlation features skip directly into the GRU input alongside the
         # encoded motion features. Measured necessity (2026-07-02): with matchable
         # features the corr stencil is LINEARLY decodable to flow (probe cos-sim 0.99),
         # yet through motion-encoder->GRU->head alone the decode never aligned within a
         # smoke budget — the skip shortens the corr->delta path to two hops.
-        self.gru = GraphConvGRU(
+        self.gru = (StackedGraphConvGRU if raft_block else GraphConvGRU)(
             hidden_channels,
             self.motion_encoder.out_channels + context_dim + corr_channels,
             kernel_size,
         )
-        self.flow_conv1 = SDPAConv(hidden_channels, hidden_channels, kernel_size=kernel_size, node_dim=1)
-        self.flow_conv2 = SDPAConv(hidden_channels, 2, kernel_size=kernel_size, node_dim=1)
+        head_mid = 2 * hidden_channels if raft_block else hidden_channels
+        self.flow_conv1 = SDPAConv(hidden_channels, head_mid, kernel_size=kernel_size, node_dim=1)
+        self.flow_conv2 = SDPAConv(head_mid, 2, kernel_size=kernel_size, node_dim=1)
         self._zero_init(self.flow_conv2)
 
         # Set to "pwc" or "uniform" to bypass the trained head at inference. The probe
@@ -590,12 +654,16 @@ class OSLORAFTRetina(nn.Module):
 
         # Channel-normalize once at the estimation grid (all-pairs parity), then pool
         # WITHOUT re-normalizing (see build_feature_pyramid).
-        f1 = F.normalize(
-            self.fnet(self._prep_input(frame1, retina, self.include_xyz_fnet), pyramid), dim=-1
-        )
-        f2 = F.normalize(
-            self.fnet(self._prep_input(frame2, retina, self.include_xyz_fnet), pyramid), dim=-1
-        )
+        f1 = self.fnet(self._prep_input(frame1, retina, self.include_xyz_fnet), pyramid)
+        f2 = self.fnet(self._prep_input(frame2, retina, self.include_xyz_fnet), pyramid)
+        # The matching loss always sees unit features (its temperature assumes cosines).
+        match_feats = (F.normalize(f1, dim=-1), F.normalize(f2, dim=-1))
+        if self.corr_norm == "cosine":
+            f1, f2 = match_feats
+        else:
+            # C^-1/4 on each side makes the dot f1 . f2 / sqrt(C), in fp32 for the lookup.
+            temper = f1.size(-1) ** -0.25
+            f1, f2 = f1.float() * temper, f2.float() * temper
         f2_levels = build_feature_pyramid(f2, pyramid)
 
         ctx = self.cnet(self._prep_input(frame1, retina, self.include_xyz_cnet), pyramid)
@@ -630,9 +698,9 @@ class OSLORAFTRetina(nn.Module):
             flow = flow + self.flow_scale * self.flow_unit * delta
             predictions.append(convex_upsample(flow, weights, pyramid))
         if return_features and return_upsample_weights:
-            return predictions, (f1, f2_levels[0]), weights
+            return predictions, match_feats, weights
         if return_upsample_weights:
             return predictions, weights
         if return_features:
-            return predictions, (f1, f2_levels[0])
+            return predictions, match_feats
         return predictions

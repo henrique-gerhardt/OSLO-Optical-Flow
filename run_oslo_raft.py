@@ -130,6 +130,18 @@ def parse_args() -> argparse.Namespace:
                    help="Unit the update block sees flow in (--retina): 'rad' = radians; "
                         "'node' = estimation node spacings (RAFT's grid-cell units). "
                         "Architecture: repeat it at eval.")
+    p.add_argument("--corr-norm", default="cosine", choices=["cosine", "raw"],
+                   help="Correlation (--retina): 'cosine' = channel-normalized features; "
+                        "'raw' = RAFT's unnormalized dot / sqrt(C). Architecture: repeat it "
+                        "at eval.")
+    p.add_argument("--update-block", default="small", choices=["small", "raft"],
+                   help="Update block (--retina): 'small' = one layer per motion-encoder "
+                        "branch, one ConvGRU; 'raft' = RAFT-large layout (two layers per "
+                        "branch, two GRU passes, 2x-wide flow head). Architecture: repeat it "
+                        "at eval.")
+    p.add_argument("--encoder-blocks-per-level", type=int, default=1,
+                   help="Residual blocks per encoder resolution (--retina); RAFT uses 2. "
+                        "Architecture: repeat it at eval.")
     p.add_argument("--feature-channels", default="",
                    help="Comma list overriding the retina encoder channel ramp, finest->est "
                         "(e.g. '16,32,48,64,96'). Empty = the depth-keyed default.")
@@ -175,6 +187,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--weight-decay", type=float, default=1e-5)
     p.add_argument("--grad-clip", type=float, default=1.0)
     p.add_argument("--onecycle", action="store_true", help="OneCycle LR schedule over --steps.")
+    p.add_argument("--onecycle-pct-start", type=float, default=0.3,
+                   help="OneCycle warm-up fraction (RAFT: 0.05).")
+    p.add_argument("--onecycle-anneal", default="cos", choices=["cos", "linear"],
+                   help="OneCycle anneal shape (RAFT: linear).")
     p.add_argument("--ema-decay", type=float, default=0.0,
                    help="Polyak/EMA weight averaging: shadow = d*shadow + (1-d)*weights after each "
                         "optimizer step (0 disables). Evals also report the shadow weights and the "
@@ -454,6 +470,9 @@ def main() -> None:
             lookup_rings=args.lookup_rings, lookup_ring_points=args.lookup_ring_points,
             use_checkpoint_encoder=not args.no_encoder_checkpoint,
             interp_mode=args.lookup_interp,
+            corr_norm=args.corr_norm,
+            update_block=args.update_block,
+            encoder_blocks_per_level=args.encoder_blocks_per_level,
             flow_unit=(
                 math.sqrt(4.0 * math.pi / pyramid.num_estimation_nodes)
                 if args.flow_unit == "node" else 1.0
@@ -629,7 +648,10 @@ def main() -> None:
 
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     sched = (
-        torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=args.lr, total_steps=args.steps)
+        torch.optim.lr_scheduler.OneCycleLR(
+            opt, max_lr=args.lr, total_steps=args.steps,
+            pct_start=args.onecycle_pct_start, anneal_strategy=args.onecycle_anneal,
+        )
         if args.onecycle else None
     )
     amp_enabled = args.amp and device.type == "cuda"

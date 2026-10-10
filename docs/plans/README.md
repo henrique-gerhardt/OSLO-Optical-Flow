@@ -39,6 +39,7 @@ and P2C-implementation can proceed in parallel with P2A; P2C-training needs both
 | plan | deliverable | est. cost |
 | --- | --- | --- |
 | [Universality table](UNIVERSALITY_TABLE.md) | published 360° methods vs zero-flow, one harness — **COMPLETE** | done |
+| [RAFT parity](RAFT_PARITY.md) | each OSLO-RAFT-R departure from RAFT behind a flag, measured one at a time on replica360 — round 1 (flow unit, lookup interpolation) done, round 2 pending | ~15 h GPU for round 2 |
 | [Roadmap — seminário de andamento](ROADMAP_SEMINARIO.md) | what to run *before writing* (A1–A4) vs what to *propose* (B1–B4) | ~8–11 h GPU for the blocking set |
 
 The P2A/P2B/P2C framing above is historical: P2A concluded, P2B shipped chairs360,
