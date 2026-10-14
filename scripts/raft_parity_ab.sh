@@ -18,6 +18,7 @@ TRAIN_SOURCES="${TRAIN_SOURCES:-replica360:train}"
 VAL_SOURCES="${VAL_SOURCES:-replica360:val}"
 # Space-separated extra val sources, each scored by an eval-only pass after training.
 EXTRA_VAL_SOURCES="${EXTRA_VAL_SOURCES:-}"
+# EXTRA_FLAGS: runner flags appended to every run of this invocation.
 # Arms that get a one-step run before anything else, so an out-of-memory arm fails in
 # the first minute instead of after the arms ahead of it have trained.
 PREFLIGHT_ARMS="${PREFLIGHT_ARMS:-}"
@@ -69,8 +70,10 @@ run() {
     --num-workers "${NUM_WORKERS:-4}" \
     --eval-every "${EVAL_EVERY:-500}" --log-every "${LOG_EVERY:-100}" \
     --output-dir "$dir" \
-    $(arm_flags "$arm") "$@"
+    ${EXTRA_FLAGS:-} $(arm_flags "$arm") "$@"
 }
+
+mkdir -p "$OUT"
 
 for arm in $PREFLIGHT_ARMS; do
   echo "=== preflight arm=$arm ==="

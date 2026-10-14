@@ -305,6 +305,8 @@ class ShardFlowDataset(IterableDataset):
         synth_edge_corrupt_delta: float = 0.0,
         real_resample_prob: float = 0.0,
         real_resample_flow_scale: float = 1.0,
+        patch_indices: Optional[List[Tuple[torch.Tensor, Optional[torch.Tensor]]]] = None,
+        patch_group: int = 1,
     ) -> None:
         if points.ndim != 2 or points.size(-1) != 3:
             raise ValueError("points must have shape [N, 3]")
@@ -361,6 +363,17 @@ class ShardFlowDataset(IterableDataset):
         # scaled field, so exact photometric constancy is preserved at every scale.
         self.real_resample_flow_scale = float(real_resample_flow_scale)
 
+        # Patch training: each sample covers one patch's nodes only. ``patch_indices``
+        # lists, per patch, the indices into ``points`` and into ``target_points``;
+        # ``patch_group`` consecutive samples share a patch so a batch stacks. The
+        # sample carries ``patch_id``.
+        self.patch_indices = patch_indices
+        self.patch_group = max(1, int(patch_group))
+        self._whole = (
+            self.points, self.basis_east, self.basis_north,
+            self.target_points, self.target_basis_east, self.target_basis_north,
+        )
+
         self._iter_shard, self._list_shards = _import_sfprep()
         self._shards: List[Path] = []
         for dataset, split in self.sources:
@@ -372,6 +385,18 @@ class ShardFlowDataset(IterableDataset):
 
     def set_epoch(self, epoch: int) -> None:
         self.epoch = int(epoch)
+
+    def _use_patch(self, patch_id: int) -> None:
+        """Point the sampling attributes at one patch's subset of the whole grids."""
+        frame_idx, target_idx = self.patch_indices[patch_id]
+        points, east, north, t_points, t_east, t_north = self._whole
+        self.points, self.basis_east, self.basis_north = (
+            points[frame_idx], east[frame_idx], north[frame_idx]
+        )
+        if t_points is not None:
+            self.target_points, self.target_basis_east, self.target_basis_north = (
+                t_points[target_idx], t_east[target_idx], t_north[target_idx]
+            )
 
     def _worker_shards(self) -> List[Path]:
         shards = list(self._shards)
@@ -417,31 +442,56 @@ class ShardFlowDataset(IterableDataset):
                     self.seed + self.epoch * 131 + worker_id + 777_000_000
                 )
 
+        patch_gen = None
+        if self.patch_indices is not None:
+            # Its own stream, so patch draws never shift the augmentation draws.
+            info = get_worker_info()
+            worker_id = info.id if info is not None else 0
+            patch_gen = torch.Generator().manual_seed(
+                self.seed + self.epoch * 131 + worker_id + 555_000_000
+            )
+
         yielded = 0
-        for record in stream:
+        for record in self._patched(stream, patch_gen):
             if self.max_pairs is not None and yielded >= self.max_pairs:
                 break
             if (
                 self.real_resample_prob > 0.0
                 and float(torch.rand((), generator=gen)) < self.real_resample_prob
             ):
-                yield self._real_resample_record(record, photo_gen)
+                sample = self._real_resample_record(record, photo_gen)
             elif (
                 self.synth_rot_prob > 0.0
                 and float(torch.rand((), generator=gen)) < self.synth_rot_prob
             ):
-                yield self._synth_record(record, gen, so3[0], photo_gen)
+                sample = self._synth_record(record, gen, so3[0], photo_gen)
             elif (
                 self.so3_prob > 0.0
                 and float(torch.rand((), generator=gen)) < self.so3_prob
             ):
-                yield self._augment_record(record, gen, so3)
+                sample = self._augment_record(record, gen, so3)
             else:
-                yield _sample_record(
+                sample = _sample_record(
                     record, self.points, self.basis_east, self.basis_north,
                     self.target_points, self.target_basis_east, self.target_basis_north,
                 )
+            if patch_gen is not None:
+                sample["patch_id"] = self._patch_id
+            yield sample
             yielded += 1
+
+    def _patched(self, stream, patch_gen):
+        """Pass records through, switching patch every ``patch_group`` records."""
+        if patch_gen is None:
+            yield from stream
+            return
+        for count, record in enumerate(stream):
+            if count % self.patch_group == 0:
+                self._patch_id = int(
+                    torch.randint(len(self.patch_indices), (), generator=patch_gen)
+                )
+                self._use_patch(self._patch_id)
+            yield record
 
     def _augment_record(self, record, gen, so3) -> Dict[str, object]:
         sample_rotation, so3_augment_pair = so3

@@ -306,12 +306,20 @@ def interp_pyramid_lookup(
         vals = f2_l.reshape(b * n_l, c).index_select(0, flat).reshape(b, n, m, k_int, c)
         f2_interp = (w.unsqueeze(-1) * vals).sum(dim=-2)               # [B, N, M, C]
 
+        corr = (f1.unsqueeze(2) * f2_interp).sum(dim=-1)              # [B, N, M]
+        if pyramid.full_nodes is not None:
+            # A query past the patch border has no second-image content: zero it, as
+            # RAFT's sampler does outside the frame. One whole-sphere node spacing is
+            # past the farthest any in-patch point sits from its own node.
+            spacing = math.sqrt(4.0 * math.pi / pyramid.full_nodes[res])
+            corr = corr * (d.min(dim=-1).values <= spacing).to(corr.dtype)
+
         # Cosine units, deliberately NOT the /sqrt(C) of AllPairsCorrelation: with
         # channel-normalized features the dot is already in [-1, 1]; shrinking it by
         # another sqrt(96) leaves the motion encoder a ~0.1-max whisper against O(1)
         # context features (RAFT's 1/sqrt(C) tempers RAW dots, whose scale grows with
         # C — normalized dots need no temper).
-        feats.append((f1.unsqueeze(2) * f2_interp).sum(dim=-1))       # [B, N, M]
+        feats.append(corr)
     return torch.cat(feats, dim=-1)
 
 
@@ -326,6 +334,7 @@ def stencil_match_loss(
     valid: Optional[torch.Tensor] = None,
     temperature: float = 0.1,
     sigma_nodes: float = 0.5,
+    spacing: Optional[float] = None,
 ) -> torch.Tensor:
     """Soft-target InfoNCE over each node's lookup window at the estimation grid.
 
@@ -349,6 +358,8 @@ def stencil_match_loss(
         valid: optional ``[B, N]`` mask.
         temperature: softmax temperature over cosine logits.
         sigma_nodes: soft-target width in units of the node spacing.
+        spacing: node spacing in radians; defaults to that of a whole sphere of
+            ``N`` nodes, so a patch level must pass its whole-sphere spacing.
 
     Returns:
         Scalar loss (0 when no node's endpoint lands inside its lookup window).
@@ -356,7 +367,8 @@ def stencil_match_loss(
     b, n, c = f1.shape
     cand = level.lookup_index                                       # [N, M]
     cand_pts = level.points[cand]                                   # [N, M, 3]
-    spacing = math.sqrt(4.0 * math.pi / n)
+    if spacing is None:
+        spacing = math.sqrt(4.0 * math.pi / n)
 
     d = _chord_geodesic(gt_endpoint.unsqueeze(2), cand_pts.unsqueeze(0))  # [B, N, M]
     # Usable only where the endpoint actually lies inside the window (supra-window

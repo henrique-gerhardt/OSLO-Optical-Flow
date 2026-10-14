@@ -28,6 +28,7 @@ Example (grid floor, GPU box):
 
 import argparse
 import json
+import math
 import time
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -100,13 +101,28 @@ def build_oslo(args: argparse.Namespace, device: torch.device):
     if not (args.estimation_resolution < args.resolution <= args.retina_resolution):
         raise SystemExit("need estimation < resolution (supervision) <= retina-resolution")
     pyramid = oslo_runner.load_or_build_pyramid(args).to(device)
-    model = OSLORAFTRetina(
-        pyramid, hidden_channels=args.hidden_channels, context_dim=args.context_dim,
-        flow_scale=args.flow_scale, feature_channels=None, context_channels=None,
-        lookup_rings=args.lookup_rings, lookup_ring_points=args.lookup_ring_points,
-        use_checkpoint_encoder=True,
-    ).to(device)
     payload = torch.load(args.init_checkpoint, map_location="cpu", weights_only=False)
+    # Architecture flags recorded by the training run win over this script's own
+    # defaults; checkpoints that predate a flag fall back to its default.
+    trained = payload.get("args", {}) if isinstance(payload, dict) else {}
+    model = OSLORAFTRetina(
+        pyramid,
+        hidden_channels=trained.get("hidden_channels", args.hidden_channels),
+        context_dim=trained.get("context_dim", args.context_dim),
+        flow_scale=trained.get("flow_scale", args.flow_scale),
+        feature_channels=None, context_channels=None,
+        lookup_rings=trained.get("lookup_rings", args.lookup_rings),
+        lookup_ring_points=trained.get("lookup_ring_points", args.lookup_ring_points),
+        use_checkpoint_encoder=True,
+        interp_mode=trained.get("lookup_interp", "idw"),
+        flow_unit=(
+            math.sqrt(4.0 * math.pi / pyramid.num_estimation_nodes)
+            if trained.get("flow_unit", "rad") == "node" else 1.0
+        ),
+        corr_norm=trained.get("corr_norm", "cosine"),
+        update_block=trained.get("update_block", "small"),
+        encoder_blocks_per_level=trained.get("encoder_blocks_per_level", 1),
+    ).to(device)
     model.load_state_dict(payload.get("model", payload), strict=True)
     model.ablate_corr = False
     model.ablate_context = False

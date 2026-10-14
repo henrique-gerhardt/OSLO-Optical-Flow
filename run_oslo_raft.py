@@ -130,6 +130,14 @@ def parse_args() -> argparse.Namespace:
                    help="Unit the update block sees flow in (--retina): 'rad' = radians; "
                         "'node' = estimation node spacings (RAFT's grid-cell units). "
                         "Architecture: repeat it at eval.")
+    p.add_argument("--patch-coarse-pixels", type=int, default=0,
+                   help="Patch training (--retina, healpix): train on spherical caps made of "
+                        "this many pixels of the coarsest correlation level (0 = whole "
+                        "sphere). With --estimation-resolution 4 --corr-pool-levels 3 that "
+                        "level has 48 pixels, so 12 is a quarter of the sphere. Validation "
+                        "always runs on the whole sphere.")
+    p.add_argument("--patch-bank", type=int, default=0,
+                   help="Number of distinct patch centers (0 = every coarsest-level pixel).")
     p.add_argument("--corr-norm", default="cosine", choices=["cosine", "raw"],
                    help="Correlation (--retina): 'cosine' = channel-normalized features; "
                         "'raw' = RAFT's unnormalized dot / sqrt(C). Architecture: repeat it "
@@ -609,6 +617,35 @@ def main() -> None:
               f"pole/equator weight ratio {float(node_weights.min() / node_weights.max()):.4f}",
               flush=True)
 
+    # Patch training: a bank of cropped pyramids, one per patch center. The dataset
+    # samples only a patch's nodes; the model runs on the matching cropped pyramid.
+    patch_bank, patch_indices = [], None
+    if args.patch_coarse_pixels > 0:
+        if not args.retina or args.grid != "healpix":
+            raise SystemExit("--patch-coarse-pixels requires --retina --grid healpix")
+        from spherical_flow.healpix_pyramid import crop_pyramid, patch_coarse_pixels
+
+        whole = geom.to(torch.device("cpu"))
+        n_coarse = whole.levels[min(whole.levels)].num_nodes
+        centers = list(range(n_coarse))
+        if 0 < args.patch_bank < n_coarse:
+            centers = random.Random(args.seed).sample(centers, args.patch_bank)
+        patch_indices = []
+        for center in centers:
+            patch, keep = crop_pyramid(
+                whole, patch_coarse_pixels(whole, center, args.patch_coarse_pixels)
+            )
+            patch_bank.append(patch)
+            patch_indices.append((keep[whole.retina_resolution], keep[whole.fine_resolution]))
+        print(f"patch training: {len(patch_bank)} patches of {args.patch_coarse_pixels}/"
+              f"{n_coarse} coarse pixels (nodes_ret={patch_bank[0].retina_level.num_nodes} "
+              f"nodes_est={patch_bank[0].num_estimation_nodes} "
+              f"nodes_sup={patch_bank[0].num_fine_nodes})", flush=True)
+    # Patches live on the CPU and move to the device on use; a quarter-sphere patch at
+    # retina r8 is tens of MB, so only the most recent ones are kept there.
+    patch_on_device: Dict[int, tuple] = {}
+    patch_device_cap = 32
+
     train_ds = ShardFlowDataset(
         args.shards, dataset_points, train_sources,
         shuffle_shards=True, shuffle_buffer=args.shuffle_buffer, seed=args.seed,
@@ -622,6 +659,7 @@ def main() -> None:
         synth_edge_corrupt_delta=args.synth_edge_corrupt_delta,
         real_resample_prob=args.real_resample_prob,
         real_resample_flow_scale=args.real_resample_flow_scale,
+        patch_indices=patch_indices, patch_group=args.batch_size,
     )
     val_ds = ShardFlowDataset(
         args.shards, dataset_points, val_sources, shuffle_shards=False, shuffle_buffer=0, seed=args.seed,
@@ -695,27 +733,45 @@ def main() -> None:
         warmup_only = aux_w > 0.0 and step <= args.aux_warmup_steps
         for _ in range(accum):
             batch = move_batch(next(stream), device)
+            # step_geom/step_sup are what this batch runs on: its patch, or the sphere.
+            step_geom, step_sup, step_masks = geom, sup_level, region_masks
+            if patch_bank:
+                patch_id = int(batch["patch_id"][0])
+                if not bool((batch["patch_id"] == patch_id).all()):
+                    raise RuntimeError("a batch mixed patches; patch_group must equal batch size")
+                if patch_id not in patch_on_device:
+                    if len(patch_on_device) >= patch_device_cap:
+                        patch_on_device.pop(next(iter(patch_on_device)))
+                    moved = patch_bank[patch_id].to(device)
+                    patch_on_device[patch_id] = (
+                        moved, build_region_masks(moved.fine_level.points)
+                    )
+                step_geom, step_masks = patch_on_device[patch_id]
+                step_sup = step_geom.fine_level
             with torch.amp.autocast(device_type="cuda", enabled=amp_enabled):
                 if aux_w > 0.0:
                     preds, (f1e, f2e) = model(
-                        batch["frame1"], batch["frame2"], geom, iters=args.iters,
+                        batch["frame1"], batch["frame2"], step_geom, iters=args.iters,
                         return_features=True,
                     )
                     est_end = F.normalize(
-                        batch["endpoint"][:, geom.descendant_index].mean(dim=2), dim=-1
+                        batch["endpoint"][:, step_geom.descendant_index].mean(dim=2), dim=-1
                     )
-                    est_valid = batch["valid"][:, geom.descendant_index].float().mean(dim=2) > 0.5
+                    est_valid = (
+                        batch["valid"][:, step_geom.descendant_index].float().mean(dim=2) > 0.5
+                    )
                     aux = stencil_match_loss(
-                        f1e, f2e, est_end, geom.estimation_level, valid=est_valid
+                        f1e, f2e, est_end, step_geom.estimation_level, valid=est_valid,
+                        spacing=math.sqrt(4.0 * math.pi / geom.num_estimation_nodes),
                     )
                 else:
-                    preds = model(batch["frame1"], batch["frame2"], geom, iters=args.iters)
+                    preds = model(batch["frame1"], batch["frame2"], step_geom, iters=args.iters)
                     aux = None
                 if warmup_only:
                     loss = aux / accum
                 else:
                     loss = sequence_geodesic_loss(
-                        preds, batch["endpoint"], sup_level, batch["valid"], gamma=args.gamma,
+                        preds, batch["endpoint"], step_sup, batch["valid"], gamma=args.gamma,
                         motion_weight=args.loss_motion_weight, motion_ref_deg=args.loss_motion_ref_deg,
                         min_target_deg=args.loss_min_target_deg,
                     ) / accum
@@ -741,8 +797,8 @@ def main() -> None:
 
         if step == 1 or step == total_steps or step % args.log_every == 0:
             with torch.no_grad():
-                maps = compute_maps(preds[-1], batch, sup_level.points, sup_level.basis_east, sup_level.basis_north)
-                tm = summarize_maps(maps, region_masks, active_thresholds, motion_bands,
+                maps = compute_maps(preds[-1], batch, step_sup.points, step_sup.basis_east, step_sup.basis_north)
+                tm = summarize_maps(maps, step_masks, active_thresholds, motion_bands,
                                     node_weights=node_weights, band_regions=band_regions)
             lr_now = opt.param_groups[0]["lr"]
             aux_txt = ""

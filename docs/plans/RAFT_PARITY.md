@@ -111,3 +111,170 @@ set is tested first; single items are ablated out of it only if it wins.
 
 One seed decides only a gap well outside the round-1 noise; a gap of a few points
 needs seeds 11 and 19 (`SEEDS="7 11 19"`, finished runs are skipped).
+
+### 5.1 Box result (2026-10-13, git `ccbaa8746`, seed 7, 10 000 steps)
+
+| Arm | Params | flowscape:val global | act₀.₅ | poles | equator | replica360:val global | s/step |
+|---|---|---|---|---|---|---|---|
+| `base` | 1,558,768 | **+75.8** | +77.4 | +72.8 | +64.5 | **+85.7** | 1.0 |
+| `raftfull` | 6,625,982 | +0.1 | +0.0 | +0.1 | +0.2 | 0.0 | 2.7 |
+
+`raftfull` never left the zero-flow predictor. Its train error repeats the zero-flow
+error of the same batches every 3100 steps (one pass over the data), while its aux
+matching loss fell normally (3.1 → 1.3): the features learned to match, but the flow
+head never moved. This is a bootstrap failure, not a capacity verdict. It fits in
+24 GB at batch 2.
+
+`base` was still improving at the end (69.9 → 74.1 → 75.8 over the last 4k steps),
+and its late train error (0.4–0.8°) is in the range of its val error (0.60°). There is
+no train/val gap that would indicate a data shortage at this size.
+
+### 5.2 Local bisection (CPU, replica360, ret5/sup4/est3, batch 2, 300 steps, seed 7)
+
+Reference: `base` at this configuration = 69.75 (§7.3).
+
+| Arm | Params | val@100 | val@200 | final |
+|---|---|---|---|---|
+| `sched` | 1.53M | 45.8 | 68.7 | 69.3 |
+| `raw` | 1.53M | 44.3 | 63.4 | 67.9 |
+| `raftblock` | 2.88M | 33.8 | 67.8 | 69.2 |
+| `iters12` | 1.53M | 22.7 | 66.2 | 69.3 |
+| `enc2` | 2.05M | 61.6 | 62.6 | 66.2 |
+| `rings4` | 1.75M | 1.0 | 62.7 | 68.0 |
+| `large` | 6.57M | 0.1 | 56.0 | 65.5 |
+| `large` + `sched` | 6.57M | 0.1 | 0.6 | 0.5 |
+| `large` + `raw` | 6.57M | 0.1 | 0.8 | 0.7 |
+| `large` + `iters12` | 6.57M | −0.4 | 0.8 | 0.6 |
+| `large` + `unit` | 6.57M | −4.6 | 63.2 | 65.0 |
+| `large` + `bary` | 6.57M | 14.5 | 57.6 | 64.4 |
+| `raftfull` | 6.57M | −0.1 | 0.0 | 0.0 |
+
+- The failure reproduces locally. Every component trains on its own, so it is not an
+  implementation defect in the round-2 code.
+- `large` trains but bootstraps late (still at zero at step 100). `rings4` is the only
+  single item with the same late start.
+- Three of the five recipe items each block the `large` bootstrap within 300 steps:
+  the RAFT schedule (`sched`), raw correlation (`raw`) and 12 iterations (`iters12`).
+  Flow unit and barycentric lookup do not.
+- Limit: 300 steps cannot separate "bootstraps later" from "never bootstraps" for the
+  three pairwise arms; only the full combination was observed for 10k steps.
+- Consequence: the capacity question is answered by `large` against `base`, not by
+  `raftfull`. The RAFT recipe items stay off for the large layout until a bootstrap
+  aid (longer warmup, iteration curriculum, warm start) is tested.
+
+## 6. EPE table against frozen RAFT-small and RAFT-large (pending)
+
+`scripts/raft_parity_epe.sh` scores, on the same pairs and in ERP pixels
+(`run_epe_eval.py`, the P2A readout): zero flow, the grid floor (`oracle`), frozen
+TorchVision `raft_small` and `raft_large`, and OSLO-RAFT-R checkpoints (default: the
+three round-1 `base` seeds, on `replica360:val`). `run_epe_eval.py` now rebuilds a
+checkpoint's architecture from the flags saved in it, so `raftfull` checkpoints score
+without extra arguments.
+
+What the table can and cannot show. The RAFT rows are zero-shot perspective models
+(TorchVision small = Chairs + Things; large = + Sintel/KITTI/HD1K fine-tuning); the
+OSLO rows are trained in-domain. The small/large ratio measured here against RAFT's own
+(Sintel clean 2.21 / 1.43 = 1.55×) says how much of a gap to RAFT-large is model size.
+It is not a matched-backbone comparison: that needs RAFT-small trained on the same
+ERP pairs for the same steps.
+
+## 7. Patch training (implemented 2026-10-10; local validation only)
+
+RAFT and OSLO-IC train on crops; OSLO-RAFT-R trained on the whole sphere, which pins
+the batch at 2 and the grids at retina r7 / estimation r4 / supervision r6. Against
+RAFT on a 1024×512 ERP (0.35°/px at the equator; shards are 1024×512 or 1280×640) that
+is 1.3× coarser at the input (0.46°), 1.3× coarser at the estimation grid (3.66° vs
+2.81°) and 2.6× coarser at the output (0.92°, ×4 upsampling where RAFT does ×8 back to
+native). Parity is retina r8 / estimation r5 / supervision r8, at 4× the nodes — the
+cost a quarter-sphere patch cancels.
+
+### 7.1 Mechanism
+
+- `crop_pyramid` (`healpix_pyramid.py`): a patch is a cap of pixels of the coarsest
+  correlation level plus all their descendants. Nested ordering keeps each parent's
+  four children contiguous, so the patch is a nested pyramid over re-indexed nodes and
+  the model runs on it unchanged (any architecture flag).
+- Border: out-of-patch conv neighbors are invalid slots (zero padding); lookup queries
+  farther than one whole-sphere node spacing from every patch node return zero
+  correlation (RAFT's out-of-frame behaviour); nearer ones interpolate with the border
+  node standing in for missing neighbors.
+- Dataset: samples only the patch's nodes; `batch-size` consecutive samples share a
+  patch. Flags `--patch-coarse-pixels K` (0 = whole sphere) and `--patch-bank N`.
+  Validation always runs on the whole sphere.
+
+### 7.2 Correctness (CPU, real HEALPix, ret6/sup5/est4, 12-of-48 patches at 5 centers)
+
+Structure identical to the whole sphere (nodes, valid neighbors, pooling, descendants).
+Error exactly 0 against the whole-sphere computation for: one SDPAConv at nodes with all
+8 neighbors inside; convex upsampling at the same nodes; the finest-level lookup at
+nodes more than 6 spacings from the border (both interpolation modes). No point on the
+sphere sits farther than 0.80 spacings from its nearest node, so the 1.0 cutoff has
+margin.
+
+Coarse correlation levels see little real context on a quarter-sphere patch — share of
+lookup entries equal to the whole-sphere value / zeroed as outside: r4 79.9% / 4.2%,
+r3 64.5% / 7.6%, r2 33.5% / 12.8%, r1 6.6% / 22.9%.
+
+### 7.3 Does a patch-trained model transfer to the whole sphere? (local, one seed)
+
+replica360, retina r5 / supervision r4 / estimation r3, 300 steps, one-cycle, seed 7,
+CPU; validation on the whole sphere (first 64 pairs). Same nodes per step in both arms.
+
+| Arm | val@100 | val@200 | final global | poles | equator |
+|---|---|---|---|---|---|
+| whole sphere, batch 2 | 59.25 | 66.79 | 69.75 | 53.13 | 73.85 |
+| patches of 1/3 sphere, batch 6 | 42.90 | 66.27 | 68.71 | 51.25 | 72.76 |
+
+Reading: the patch-trained model reaches the whole-sphere model's level on whole-sphere
+validation (−1.0 point, inside the 1–2.5 point seed noise of §3), after a slower start.
+The coarse-level context loss of §7.2 does not prevent transfer at this scale. One seed,
+300 steps, small grids: it shows the mechanism works, not that patches are better.
+(The two arms' zero baselines differ by 0.5% — 13.379 vs 13.315 — because the 64-pair
+cap lands on a batch boundary: 64 pairs at batch 2, 66 at batch 6.)
+
+### 7.4 What a patch costs: samples per step, not nodes (local, one seed)
+
+Same protocol as §7.3 (replica360, estimation r3, 300 steps, seed 7, whole-sphere
+validation on the first 64 pairs); patches are 1/3 of the sphere.
+
+| Retina / sup | Training | Batch | val@100 | val@200 | Final global | Poles | Equator |
+|---|---|---|---|---|---|---|---|
+| r5 / r4 | whole sphere | 2 | 59.25 | 66.79 | 69.75 | 53.13 | 73.85 |
+| r5 / r4 | patches | 6 | 42.90 | 66.27 | 68.71 | 51.25 | 72.76 |
+| r5 / r4 | patches | 2 | 0.83 | 22.68 | 24.81 | — | — |
+| r6 / r5 | patches | 2 | −0.26 | 0.36 | 0.50 | — | — |
+| r6 / r6 | patches | 2 | −0.17 | 0.43 | 1.05 | 0.69 | 1.17 |
+| r6 / r6 | whole sphere | 2 | 38.98 | 71.16 | 73.63 | 52.49 | 79.55 |
+| r6 / r6 | patches | 6 | 61.88 | 62.39 | 72.89 | 51.02 | 79.36 |
+
+Reading:
+
+- **Estimation nodes supervised per optimizer step decide the outcome at this budget.**
+  Whole sphere at batch 2 and third-sphere patches at batch 6 supervise the same 1536
+  estimation nodes per step and land within a point of each other at both resolutions;
+  patches at batch 2 supervise a third of that and reach 25% or ~1%.
+- **So patches buy memory, not compute.** For equal learning per step the batch must
+  grow by the inverse of the patch fraction; node count per step, and so time, is then
+  unchanged. What drops is the memory of one micro-batch (with `--grad-accum`) and the
+  largest tensor of a single sample — the room a larger model or a finer grid needs.
+- **Supervision = retina (×8 convex upsampling, 64 descendants) is validated.** r6/r5
+  and r6/r6 fail identically at batch 2 and r6/r6 learns on the whole sphere and on
+  patches at batch 6; the new path behaves like the old one.
+- **The finer grids helped here:** r6/r6 beats r5/r4 by about 4 points global and 6 at
+  the equator, on the whole sphere and on patches alike, with the estimation grid held
+  at r3. One seed each; retina and supervision changed together.
+
+### 7.5 Box run (pending) — `scripts/raft_parity_patch.sh`
+
+replica360, the §2 recipe at 2000 steps, seed 7; whole-sphere reference = the round-1
+`base` (79.96 ± 1.01 over three seeds).
+
+| Arm | Retina / est / sup | Training | Samples per step |
+|---|---|---|---|
+| `r7_patch` | r7 / r4 / r6 | patches 12 of 48 coarse pixels | batch 8 |
+| `r8_native` | r8 / r5 / r8 | patches 48 of 192, bank 24 | batch 4 × accum 2 |
+
+`r7_patch` costs what `base` costs and tests the transfer at production scale.
+`r8_native` is RAFT's resolution on a 1024×512 ERP at 4× the nodes per step (expect
+about 4× the time); a one-step preflight covers its two unknowns, training memory and
+whole-sphere validation at 786k nodes per frame.

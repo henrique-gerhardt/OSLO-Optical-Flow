@@ -312,6 +312,9 @@ class SpherePyramid:
     descendant_index: torch.Tensor
     upsample_neighbors: torch.Tensor
     retina_resolution: Optional[int] = None
+    # Node count of the whole sphere per level, set only on a :func:`crop_pyramid`
+    # patch (whose levels hold a subset). None means every level is a whole sphere.
+    full_nodes: Optional[Dict[int, int]] = None
 
     @property
     def estimation_level(self) -> SphereLevel:
@@ -345,7 +348,87 @@ class SpherePyramid:
             descendant_index=self.descendant_index.to(device),
             upsample_neighbors=self.upsample_neighbors.to(device),
             retina_resolution=self.retina_resolution,
+            full_nodes=self.full_nodes,
         )
+
+
+# --------------------------------------------------------------------------- #
+# Patches (RAFT trains on crops; this is the sphere's crop)
+# --------------------------------------------------------------------------- #
+def patch_coarse_pixels(pyramid: SpherePyramid, center: int, count: int) -> torch.Tensor:
+    """The ``count`` coarsest-level pixels nearest to pixel ``center`` (a spherical cap),
+    as sorted indices — the argument :func:`crop_pyramid` takes."""
+    coarse = pyramid.levels[min(pyramid.levels)].points
+    if not 0 < count <= coarse.size(0):
+        raise ValueError(f"patch needs 1..{coarse.size(0)} coarse pixels, got {count}")
+    nearest = (coarse @ coarse[center]).topk(count).indices
+    return nearest.sort().values
+
+
+def crop_pyramid(
+    pyramid: SpherePyramid, coarse_pixels: torch.Tensor
+) -> Tuple[SpherePyramid, Dict[int, torch.Tensor]]:
+    """Restrict a nested pyramid to the descendants of ``coarse_pixels``.
+
+    ``coarse_pixels`` are sorted pixel indices at the pyramid's coarsest level. Nested
+    ordering keeps every parent's four children contiguous, so the patch is itself a
+    nested pyramid over re-indexed nodes and the models run on it unchanged. Neighbors
+    that fall outside the patch become invalid convolution slots (zero padding, as at
+    an image border); lookup and upsampling neighborhoods fall back to the node itself.
+
+    Returns the patch pyramid and, per level, the whole-sphere indices of its nodes
+    (``keep[r]``, ascending) — what a dataset needs to sample only the patch.
+    """
+    if pyramid.full_nodes is not None:
+        raise ValueError("crop_pyramid expects a whole-sphere pyramid")
+    coarse_pixels = coarse_pixels.long()
+    if coarse_pixels.numel() > 1 and not bool((coarse_pixels[1:] > coarse_pixels[:-1]).all()):
+        raise ValueError("coarse_pixels must be sorted and unique")
+    base = min(pyramid.levels)
+
+    keep: Dict[int, torch.Tensor] = {}
+    inverse: Dict[int, torch.Tensor] = {}
+    levels: Dict[int, SphereLevel] = {}
+    for r, level in pyramid.levels.items():
+        span = 4 ** (r - base)
+        idx = (coarse_pixels.unsqueeze(1) * span + torch.arange(span)).reshape(-1)
+        inv = torch.full((level.num_nodes,), -1, dtype=torch.long)
+        inv[idx] = torch.arange(idx.numel())
+        keep[r], inverse[r] = idx, inv
+        own = torch.arange(idx.numel()).unsqueeze(1)
+
+        conv_index = inv[level.conv_index[idx]]
+        inside = conv_index >= 0
+        lookup_index = inv[level.lookup_index[idx]]
+        points = level.points[idx]
+        levels[r] = SphereLevel(
+            points=points,
+            basis_east=level.basis_east[idx],
+            basis_north=level.basis_north[idx],
+            conv_index=torch.where(inside, conv_index, own),
+            conv_weight=level.conv_weight[idx],
+            conv_valid=level.conv_valid[idx] & inside,
+            lookup_index=torch.where(lookup_index >= 0, lookup_index, own),
+            ang2pix=_make_ang2pix(points),
+        )
+
+    est, fine = pyramid.estimation_resolution, pyramid.fine_resolution
+    own_est = torch.arange(keep[est].numel()).unsqueeze(1)
+    upsample = inverse[est][pyramid.upsample_neighbors[keep[est]]]
+    patch = SpherePyramid(
+        levels=levels,
+        estimation_resolution=est,
+        fine_resolution=fine,
+        corr_resolutions=list(pyramid.corr_resolutions),
+        pool_index={
+            r: inverse[r + 1][children[keep[r]]] for r, children in pyramid.pool_index.items()
+        },
+        descendant_index=inverse[fine][pyramid.descendant_index[keep[est]]],
+        upsample_neighbors=torch.where(upsample >= 0, upsample, own_est),
+        retina_resolution=pyramid.retina_resolution,
+        full_nodes={r: level.num_nodes for r, level in pyramid.levels.items()},
+    )
+    return patch, keep
 
 
 def build_healpix_pyramid(
