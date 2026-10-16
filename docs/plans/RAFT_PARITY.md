@@ -162,6 +162,29 @@ Reference: `base` at this configuration = 69.75 (§7.3).
   `raftfull`. The RAFT recipe items stay off for the large layout until a bootstrap
   aid (longer warmup, iteration curriculum, warm start) is tested.
 
+### 5.3 Box result for `large` (2026-10-15, git `9b7a436a5`, seed 7, 10 000 steps)
+
+| Arm | Params | flowscape:val global | act₀.₅ | poles | equator | replica360:val global | replica poles | s/step |
+|---|---|---|---|---|---|---|---|---|
+| `base` | 1,558,768 | **+75.8** | **+77.4** | **+72.8** | +64.5 | **+85.7** | **+78.9** | 1.0 |
+| `large` | 6,625,982 | +72.9 | +74.2 | +67.8 | +63.2 | +76.3 | +63.3 | 2.1 |
+
+flowscape:val trajectory (global): `large` 54.9 / 65.1 / 67.5 / 71.6 / 72.9 at
+2k/4k/6k/8k/10k, `base` 52.8 / 63.8 / 69.9 / 74.1 / 75.8.
+
+- `large` bootstraps normally on the box and leads up to 4k steps; `base` overtakes it
+  by 6k and stays ahead.
+- At the end `large` is behind on every region of both val sets. The flowscape gap
+  (−2.9) is at the edge of the round-1 seed noise (1–2.5); the replica360 gap (−9.4
+  global, −15.6 poles) is well outside it.
+- Train loss on the same batches is slightly lower for `large` near the end (e.g.
+  0.696 vs 0.728 at step 10k), while its val error is higher. This is consistent with
+  a small generalization gap at 6.6M parameters on this data, but one seed does not
+  establish it.
+- Verdict at this budget (10k steps, batch 2, one seed): the RAFT-large layout does
+  not help, at equal steps and at 2.1× the cost per step. `base` stays the
+  architecture. Not tested: longer schedules, where a larger model may catch up.
+
 ## 6. EPE table against frozen RAFT-small and RAFT-large (pending)
 
 `scripts/raft_parity_epe.sh` scores, on the same pairs and in ERP pixels
@@ -264,7 +287,7 @@ Reading:
   the equator, on the whole sphere and on patches alike, with the estimation grid held
   at r3. One seed each; retina and supervision changed together.
 
-### 7.5 Box run (pending) — `scripts/raft_parity_patch.sh`
+### 7.5 Box run — `scripts/raft_parity_patch.sh`
 
 replica360, the §2 recipe at 2000 steps, seed 7; whole-sphere reference = the round-1
 `base` (79.96 ± 1.01 over three seeds).
@@ -278,3 +301,33 @@ replica360, the §2 recipe at 2000 steps, seed 7; whole-sphere reference = the r
 `r8_native` is RAFT's resolution on a 1024×512 ERP at 4× the nodes per step (expect
 about 4× the time); a one-step preflight covers its two unknowns, training memory and
 whole-sphere validation at 786k nodes per frame.
+
+Result (2026-10-16, git `9b7a436a5`, seed 7). Seed-7 whole-sphere reference from
+round 1 (derived from §3: `unit` seed-7 values minus the paired Δ).
+
+| Arm | Global | Poles | Equator | Time for 2000 steps |
+|---|---|---|---|---|
+| `base`, whole sphere r7/r4/r6 (round 1) | 78.6 | 60.4 | 82.8 | — |
+| `r7_patch` | 79.9 | 50.3 | 86.9 | 41 min |
+| `r8_native` | **81.3** | **64.6** | 85.9 | 107 min (+18 min one-time pyramid build) |
+
+- Both unknowns of `r8_native` clear: training fits at batch 4 and whole-sphere
+  validation at 786k nodes per frame fits on 24 GB.
+- Patch training transfers at production scale: `r7_patch` matches the whole-sphere
+  global score (+1.3, inside the round-1 spread of ±1.0).
+- `r7_patch` poles are 10 points below the seed-7 reference. Poles are the noisiest
+  region (round-1 std 3.1, single-seed drops of −12 seen in `both`); `r8_native`, also
+  patch-trained, does not show the drop. Unexplained on one seed.
+- `r8_native` is ahead in all three regions (+2.7 global, +4.3 poles, +3.1 equator),
+  at 2.6× the time of `r7_patch`. One seed; the global gap is about 2.7 std of the
+  round-1 spread.
+- Scope: replica360 is supra-node (target p50 11.9°). The finer estimation grid
+  (r5, 1.83°) and output grid (r8, 0.23°) are expected to matter most below the r4
+  node spacing, which is flowscape's regime (p50 1.28°).
+
+### 7.6 Next — native resolution on the top-down recipe (pending)
+
+`scripts/raft_parity_native_mix.sh`: `r8_native` settings on replica360 + flowscape,
+10 000 steps, seed 7, scored on flowscape:val and replica360:val. Reference:
+`raft_parity_large/base_s7` (+75.8 / +85.7). Expected time about 9 h (3.2 s/step).
+
