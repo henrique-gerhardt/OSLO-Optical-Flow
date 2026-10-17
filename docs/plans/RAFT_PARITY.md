@@ -325,9 +325,51 @@ round 1 (derived from §3: `unit` seed-7 values minus the paired Δ).
   (r5, 1.83°) and output grid (r8, 0.23°) are expected to matter most below the r4
   node spacing, which is flowscape's regime (p50 1.28°).
 
-### 7.6 Next — native resolution on the top-down recipe (pending)
+### 7.6 Native resolution on the top-down recipe
 
 `scripts/raft_parity_native_mix.sh`: `r8_native` settings on replica360 + flowscape,
 10 000 steps, seed 7, scored on flowscape:val and replica360:val. Reference:
 `raft_parity_large/base_s7` (+75.8 / +85.7). Expected time about 9 h (3.2 s/step).
+
+Result (2026-10-17, git `28bb83bae`, seed 7, 10 000 steps, 8.3 h = 3.0 s/step):
+
+| Arm | flowscape:val global | act₀.₅ | poles | equator | replica360:val global | replica poles | replica equator |
+|---|---|---|---|---|---|---|---|
+| r7/r4/r6 whole sphere (`raft_parity_large/base_s7`) | 75.8 | 77.4 | **72.8** | 64.5 | **85.7** | **78.9** | **87.8** |
+| r8/r5/r8 quarter-sphere patches | **78.2** | **79.3** | 63.5 | **75.4** | 81.7 | 69.2 | 85.6 |
+
+Absolute flowscape:val error: global 0.525° vs 0.598°, equator 0.293° vs 0.457°,
+poles 2.26° vs 1.68°.
+
+flowscape:val trajectory (global): r8 38.1 / 71.8 / 75.6 / 77.4 / 78.2 at 2k…10k,
+r7 52.8 / 63.8 / 69.9 / 74.1 / 75.8. r8 starts slower, leads from 4k, and the gap
+narrows (8.0 → 5.7 → 3.3 → 2.4).
+
+- r8 wins where motion is small: flowscape global +2.4, equator +10.9 points (error
+  −36%).
+- r8 loses where motion is large: poles −9.4 (flowscape) and −9.8 (replica360), and
+  replica360 global −4.1. Polar zero-flow error is 5× the equatorial on flowscape
+  (6.19° vs 1.19°); replica360 is large-motion throughout (p50 11.9°).
+- Patch coverage is not the cause. Measured on the seed-7 bank of 24: polar nodes are
+  covered by 30% of patches (equator 23%), none uncovered, mean depth from the patch
+  border 19° (equator 16°).
+- Two candidate mechanisms, both of which cut large displacements:
+  1. Search reach. With 3 pooling levels the coarsest correlation level is r1
+     (29.3° spacing) at est r4 but r2 (14.7°) at est r5, so the 2-ring lookup reaches
+     about 58° in the r7 configuration and about 29° in the r8 one.
+  2. Patch border. Mean depth from the border (16–19°) is of the order of the large
+     displacements, so their endpoints often fall outside the patch, where
+     correlation is zeroed.
+- Confound: resolution and patch training change together; the r8 run cannot
+  separate them.
+
+### 7.7 Next (pending)
+
+1. `scripts/raft_parity_bands.sh` (eval only, minutes): error per displacement band
+   crossed with poles/equator for both checkpoints, on flowscape:val and
+   replica360:val. If the r8 deficit sits in the large-displacement bands at every
+   latitude, the mechanism is reach or border; if it is at the poles in every band,
+   it is something polar.
+2. If reach/border: r8 with `--corr-pool-levels 4` (coarsest level r1, reach restored
+   to about 58°) and patches of 12/48 r1 pixels, same recipe.
 
