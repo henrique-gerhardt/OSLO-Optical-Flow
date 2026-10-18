@@ -122,6 +122,7 @@ def build_oslo(args: argparse.Namespace, device: torch.device):
         corr_norm=trained.get("corr_norm", "cosine"),
         update_block=trained.get("update_block", "small"),
         encoder_blocks_per_level=trained.get("encoder_blocks_per_level", 1),
+        encoder_est_blocks=trained.get("encoder_est_blocks", 0),
     ).to(device)
     model.load_state_dict(payload.get("model", payload), strict=True)
     model.ablate_corr = False

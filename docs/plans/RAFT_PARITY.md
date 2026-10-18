@@ -20,6 +20,11 @@ every existing checkpoint and number is untouched) and measured one at a time.
 | 5b | OneCycle 5% warm-up, linear; wd 1e-4 | 30%, cosine; wd 1e-5 | `--onecycle-pct-start 0.05 --onecycle-anneal linear --weight-decay 1e-4` | `sched` |
 | all | — | — | all of the above + hidden/context 128 | `raftfull` |
 
+Augmentation also departs from RAFT and is not measured: training pairs get a random
+SO(3) rotation with probability 1 (`--so3-prob 1.0`, up to 180°); there is no
+photometric jitter, eraser or scale augmentation on real pairs. Arm `noso3` =
+`--so3-prob 0`.
+
 Not implemented: crop/patch training with batch 12 (RAFT and OSLO-IC both train on
 patches; ours is the full sphere at batch 2), instance/batch norm split between the
 encoders, strided-conv downsampling, the 0.25 gradient scale on the upsample mask.
@@ -363,7 +368,7 @@ narrows (8.0 → 5.7 → 3.3 → 2.4).
 - Confound: resolution and patch training change together; the r8 run cannot
   separate them.
 
-### 7.7 Next (pending)
+### 7.7 Displacement bands, and next
 
 1. `scripts/raft_parity_bands.sh` (eval only, minutes): error per displacement band
    crossed with poles/equator for both checkpoints, on flowscape:val and
@@ -373,3 +378,96 @@ narrows (8.0 → 5.7 → 3.3 → 2.4).
 2. If reach/border: r8 with `--corr-pool-levels 4` (coarsest level r1, reach restored
    to about 58°) and patches of 12/48 r1 pixels, same recipe.
 
+Band result (2026-10-18, git `032a488b7`, `scripts/raft_parity_bands.sh`). Improvement
+over zero flow, %, r7 whole → r8 native; node fraction in parentheses.
+
+flowscape:val
+
+| Band (deg) | all | poles | equator |
+|---|---|---|---|
+| 0–0.25 (0.22) | −62.3 → −24.4 | −331 → −136 | −42.1 → −11.5 |
+| 0.25–0.5 (0.08) | 32.7 → 54.6 | 59.1 → 57.4 | 31.2 → 54.8 |
+| 0.5–1 (0.15) | 66.0 → 76.4 | 31.4 → 39.2 | 66.1 → 76.6 |
+| 1–2 (0.15) | 77.5 → 84.5 | 55.5 → 65.5 | 78.4 → 85.3 |
+| 2–4 (0.17) | 84.8 → 89.3 | 70.0 → 69.8 | 85.7 → 89.7 |
+| 4–8 (0.21) | 86.3 → 84.2 | **79.6 → 70.1** | 85.6 → 88.2 |
+| 8–16 (0.03) | 69.4 → 60.0 | **66.7 → 56.2** | 71.2 → 77.2 |
+
+replica360:val
+
+| Band (deg) | all | poles | equator |
+|---|---|---|---|
+| 1–2 (0.02) | 52.2 → 59.9 | 32.1 → 30.0 | 54.9 → 62.0 |
+| 2–4 (0.07) | 74.8 → 79.2 | 65.5 → 68.4 | 77.6 → 81.5 |
+| 4–8 (0.20) | 86.8 → 89.2 | 80.9 → 80.9 | 89.3 → 91.6 |
+| 8–16 (0.40) | 91.5 → 92.6 | 86.4 → 83.0 | 93.3 → 94.8 |
+| 16–32 (0.28) | 89.7 → 83.0 | **81.3 → 68.2** | **92.0 → 86.8** |
+| 32+ (0.03) | 51.6 → 29.0 | **50.1 → 24.4** | **48.9 → 33.0** |
+
+- r8 is better in every band below 4° (flowscape) or 16° (replica360), at every
+  latitude, including the static band (r8 predicts less spurious motion).
+- Above 16° r8 loses at the equator too (replica360 −5.2 and −15.9). This part is a
+  displacement effect, consistent with the halved search reach or the patch border.
+- At 4–16° r8 loses at the poles only (flowscape −9.5 and −10.5) while gaining at the
+  equator in the same bands (+2.6, +6.0). That part is latitude-specific, and neither
+  reach nor patch border explains it: both are latitude-uniform on HEALPix.
+  Candidate (not tested): the encoders keep their layer count, so their angular
+  receptive field halves at r8, which would hurt low-texture polar content most.
+- flowscape's global gain comes from the 0–4° bands (76% of nodes); its loss from
+  4–16° (24%), which is mostly polar.
+
+Next: the `--corr-pool-levels 4` run (item 2 above) tests the reach. Prediction: it
+recovers the bands above 16° at the equator. If the polar 4–16° deficit remains, the
+receptive-field candidate is next.
+
+Patch-border loss, measured (2026-10-18, local, replica360:train first 40 pairs,
+seed-7 banks of 24, r6 nodes): percentage of supervised nodes whose GT endpoint
+leaves the patch.
+
+| Band (deg) | cp3 bank (48/192 r2): poles / equator | cp4 bank (12/48 r1): poles / equator |
+|---|---|---|
+| 2–4 | 3.1 / 4.0 | 2.6 / 3.9 |
+| 4–8 | 6.5 / 6.9 | 9.1 / 9.0 |
+| 8–16 | 11.2 / 13.2 | 16.3 / 14.1 |
+| 16–32 | 13.6 / 18.6 | 24.3 / 21.3 |
+| 32+ | 22.1 / 98.9 | 21.2 / 95.5 |
+
+- Latitude-uniform at 4–16° (poles ≈ equator), so the border does not explain the
+  polar 4–16° deficit; the receptive-field candidate stands.
+- At 16–32° the border removes 15–19% of the supervision: a minority, so a
+  contributor, not the whole equatorial loss there. Above 32° nearly every
+  equatorial endpoint leaves the patch.
+- The cp4 bank's caps (12 r1 pixels, blockier) lose more at 8–32° than cp3's. The
+  cp4 run therefore tests reach with a slightly worse border: an improvement above
+  16° is attributable to reach; no improvement does not rule reach out.
+
+
+### 7.8 Encoder receptive field at r8 (flag implemented 2026-10-18; box run pending)
+
+`--encoder-est-blocks N` adds N residual blocks at the estimation level of both
+encoders (default 0; the state dict of existing checkpoints is unchanged). ab arm
+`estblocks` = `--encoder-est-blocks 2`.
+
+Geometric receptive field of the fnet output (gradient of one output node over the
+input, random init, GroupNorm statistics removed because they couple the whole
+sphere; local pyramids ret5/est3 and ret6/est4, the same one-resolution shift as
+r7/r4 → r8/r5):
+
+| Encoder | Max radius | 90% of gradient mass |
+|---|---|---|
+| ret5/est3 | 43.4° | 22.5° |
+| ret6/est4 | 21.8° | 11.4° |
+| ret6/est4 + 1 est block | 33.0° | 11.5° |
+| ret6/est4 + 2 est blocks | 44.3° | 11.5° |
+| ret6/est4 + 3 est blocks | 55.5° | 11.6° |
+
+- The one-resolution shift halves the receptive field exactly (HEALPix is
+  self-similar: same node counts, half the angle).
+- Two blocks at the estimation level restore the maximum radius (44.3° vs 43.4°).
+  The 90% radius does not move at initialization; whether training uses the wider
+  field is what the run measures.
+- Cost at the small local config: +666k parameters (1.53M → 2.20M).
+
+Run: `ARMS="base estblocks"` on `scripts/raft_parity_native_mix.sh` (`base` is
+skipped as done). Prediction: recovers the polar 4–16° bands of §7.7 and leaves the
+bands above 16° at the equator unchanged.

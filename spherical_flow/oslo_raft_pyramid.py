@@ -62,6 +62,7 @@ class PyramidEncoder(nn.Module):
         kernel_size: int,
         resolutions: List[int],
         blocks_per_level: int = 1,
+        coarse_blocks: int = 0,
     ):
         super().__init__()
         if len(channels) != len(resolutions):
@@ -84,6 +85,11 @@ class PyramidEncoder(nn.Module):
             )
             for c in channels
         ) if blocks_per_level > 1 else nn.ModuleList()
+        # Extra blocks at the coarsest (estimation) level only: each hop there spans the
+        # widest angle, so they widen the receptive field at the lowest cost.
+        self.coarse_blocks = nn.ModuleList(
+            ResidualSphereBlock(c_prev, c_prev, kernel_size) for _ in range(coarse_blocks)
+        )
         self.resolutions = list(resolutions)  # descending, e.g. [6, 5, 4]
         self.out_channels = c_prev
 
@@ -92,6 +98,8 @@ class PyramidEncoder(nn.Module):
         for i, res in enumerate(self.resolutions):
             level = pyramid.levels[res]
             stage = [self.blocks[i], *(self.extra_blocks[i] if len(self.extra_blocks) else [])]
+            if i == len(self.resolutions) - 1:
+                stage += list(self.coarse_blocks)
             for block in stage:
                 if ckpt:
                     x = checkpoint(

@@ -487,6 +487,7 @@ class OSLORAFTRetina(nn.Module):
         corr_norm: str = "cosine",
         update_block: str = "small",
         encoder_blocks_per_level: int = 1,
+        encoder_est_blocks: int = 0,
     ):
         super().__init__()
         if pyramid.retina_resolution is None:
@@ -546,10 +547,12 @@ class OSLORAFTRetina(nn.Module):
         fnet_in = in_channels + (3 if self.include_xyz_fnet else 0)
         cnet_in = in_channels + (3 if self.include_xyz_cnet else 0)
         self.fnet = PyramidEncoder(
-            fnet_in, feature_channels, kernel_size, resolutions, encoder_blocks_per_level
+            fnet_in, feature_channels, kernel_size, resolutions, encoder_blocks_per_level,
+            encoder_est_blocks,
         )
         self.cnet = PyramidEncoder(
-            cnet_in, context_channels, kernel_size, resolutions, encoder_blocks_per_level
+            cnet_in, context_channels, kernel_size, resolutions, encoder_blocks_per_level,
+            encoder_est_blocks,
         )
         self.fnet.use_checkpoint = use_checkpoint_encoder
         self.cnet.use_checkpoint = use_checkpoint_encoder

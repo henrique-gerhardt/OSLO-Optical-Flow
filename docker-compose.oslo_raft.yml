@@ -17,6 +17,9 @@ services:
         OSLO_GIT_SHA: ${OSLO_GIT_SHA:-unknown}
     image: oslo-raft:cuda
     shm_size: "16gb"
+    # Host-RAM cap for the container (e.g. OSLO_MEM_LIMIT=56g); unset = no cap. With a
+    # cap, running out of memory kills a process inside the container, not on the host.
+    mem_limit: ${OSLO_MEM_LIMIT:-0}
     environment:
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility

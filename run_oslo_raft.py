@@ -150,6 +150,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--encoder-blocks-per-level", type=int, default=1,
                    help="Residual blocks per encoder resolution (--retina); RAFT uses 2. "
                         "Architecture: repeat it at eval.")
+    p.add_argument("--encoder-est-blocks", type=int, default=0,
+                   help="Extra residual blocks at the estimation level of both encoders "
+                        "(--retina). Architecture: repeat it at eval.")
     p.add_argument("--feature-channels", default="",
                    help="Comma list overriding the retina encoder channel ramp, finest->est "
                         "(e.g. '16,32,48,64,96'). Empty = the depth-keyed default.")
@@ -481,6 +484,7 @@ def main() -> None:
             corr_norm=args.corr_norm,
             update_block=args.update_block,
             encoder_blocks_per_level=args.encoder_blocks_per_level,
+            encoder_est_blocks=args.encoder_est_blocks,
             flow_unit=(
                 math.sqrt(4.0 * math.pi / pyramid.num_estimation_nodes)
                 if args.flow_unit == "node" else 1.0

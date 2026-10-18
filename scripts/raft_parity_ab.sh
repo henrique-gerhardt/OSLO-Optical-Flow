@@ -36,8 +36,10 @@ arm_flags() {
     rings4) echo "--lookup-rings 4" ;;
     noaux) echo "--aux-match-weight 0" ;;
     enc2) echo "--encoder-blocks-per-level 2" ;;
+    estblocks) echo "--encoder-est-blocks 2" ;;
     raftblock) echo "--update-block raft" ;;
     iters12) echo "--iters 12" ;;
+    noso3) echo "--so3-prob 0" ;;
     sched) echo "--onecycle-pct-start 0.05 --onecycle-anneal linear --weight-decay 1e-4" ;;
     large) echo "--lookup-rings 4 --encoder-blocks-per-level 2 --update-block raft" \
                 "--hidden-channels 128 --context-dim 128" ;;
