@@ -41,7 +41,7 @@ REPORT="$STATE/report.txt"
   done < "$QUEUE"
   echo
   echo "## host"
-  free -g
+  grep -E "^(MemTotal|MemAvailable|SwapTotal|SwapFree):" /proc/meminfo 2>/dev/null
   nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv 2>/dev/null
   echo "OOM events (dmesg):"
   { dmesg -T 2>/dev/null || sudo -n dmesg -T 2>/dev/null; } | grep -i -E "out of memory|killed process" | tail -20

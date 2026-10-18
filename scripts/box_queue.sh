@@ -24,6 +24,8 @@
 # - A job that fails out of memory is retried once with NUM_WORKERS=2 (the first log is
 #   kept as <name>.attempt1.log).
 # - A job whose log has not changed for STALL_MIN=90 minutes is killed and marked failed.
+# - Two jobs in a row failing within 10 minutes each = a setup error (compose, image,
+#   paths), not a job error: the queue stops instead of failing every job.
 #
 # Before each job: waits for any running oslo-raft container to exit, then (PULL=1,
 # the default) runs git pull --ff-only, so pushed queue edits and code are picked up.
@@ -38,8 +40,14 @@ STALL_MIN="${STALL_MIN:-90}"
 COMPOSE="docker compose -f docker-compose.oslo_raft.yml"
 mkdir -p "$STATE"
 [ -e "$STATE/.started" ] || touch "$STATE/.started"
+# /proc/meminfo, not free: free's labels follow the locale ("Mem.:" in pt_BR).
+mem_gb() { awk -v k="$1:" '$1 == k {print int($2 / 1048576)}' "${MEMINFO:-/proc/meminfo}"; }
 if [ -z "${OSLO_MEM_LIMIT:-}" ]; then
-  total_gb=$(free -g | awk '/Mem:/ {print $2}')
+  total_gb="$(mem_gb MemTotal)"
+  if ! [ "${total_gb:-0}" -gt $((${MEM_RESERVE_GB:-6} + 8)) ] 2>/dev/null; then
+    echo "could not read total RAM (got '${total_gb:-}'); set OSLO_MEM_LIMIT, e.g. OSLO_MEM_LIMIT=56g" >&2
+    exit 1
+  fi
   OSLO_MEM_LIMIT="$((total_gb - ${MEM_RESERVE_GB:-6}))g"
 fi
 export OSLO_MEM_LIMIT
@@ -82,6 +90,7 @@ run_job() {
 }
 
 note "queue start: memory cap $OSLO_MEM_LIMIT, stall limit $STALL_MIN min"
+quick_fails=0
 while true; do
   while [ -n "$(running)" ]; do
     note "an oslo-raft container is running, waiting"
@@ -108,7 +117,8 @@ while true; do
   done
   log="$STATE/$name.log"
 
-  note "start $name ($script) at git $(git rev-parse --short HEAD); $(free -g | awk '/Mem:/ {print $7}') GB RAM available"
+  note "start $name ($script) at git $(git rev-parse --short HEAD); $(mem_gb MemAvailable) GB RAM available"
+  started=$(date +%s)
   run_job "$log" "$script" "${args[@]}"
   status=$?
   if [ $status -ne 0 ] && [ $status -ne 124 ] \
@@ -121,11 +131,22 @@ while true; do
   if [ $status -eq 0 ]; then
     touch "$STATE/$name.done"
     note "done $name"
+    quick_fails=0
   else
     echo "exit $status" > "$STATE/$name.failed"
     note "FAILED $name (exit $status): $(tail -1 "$log")"
+    if [ $(( $(date +%s) - started )) -lt 600 ]; then
+      quick_fails=$((quick_fails + 1))
+    else
+      quick_fails=0
+    fi
   fi
   bash scripts/box_queue_report.sh > /dev/null 2>&1 || note "report failed"
+  if [ $quick_fails -ge 2 ]; then
+    note "two jobs in a row failed within 10 minutes: setup error, stopping the queue"
+    note "fix it, delete the .failed markers in $STATE and start the queue again"
+    exit 1
+  fi
 done
 bash scripts/box_queue_report.sh > /dev/null 2>&1
 note "report: $STATE/report.txt and $STATE/report.tar.gz"
