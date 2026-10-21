@@ -296,6 +296,7 @@ class ShardFlowDataset(IterableDataset):
         so3_prob: float = 0.0,
         so3_max_angle_deg: float = 180.0,
         so3_uniform: bool = False,
+        so3_axis: str = "random",
         target_points: Optional[torch.Tensor] = None,
         synth_rot_prob: float = 0.0,
         synth_rot_min_deg: float = 1.0,
@@ -326,6 +327,7 @@ class ShardFlowDataset(IterableDataset):
         self.so3_prob = float(so3_prob)
         self.so3_max_angle_deg = float(so3_max_angle_deg)
         self.so3_uniform = bool(so3_uniform)
+        self.so3_axis = str(so3_axis)
         # OSLO-RAFT-R: frames at `points` (retina), targets at `target_points` (supervision).
         if target_points is not None:
             target_points = target_points.detach().cpu().float()
@@ -497,7 +499,8 @@ class ShardFlowDataset(IterableDataset):
         sample_rotation, so3_augment_pair = so3
         frame1_erp, frame2_erp, flow_erp, valid_erp = _record_tensors(record)
         rotation = sample_rotation(
-            gen, max_angle_deg=self.so3_max_angle_deg, uniform_so3=self.so3_uniform
+            gen, max_angle_deg=self.so3_max_angle_deg, uniform_so3=self.so3_uniform,
+                axis_mode=self.so3_axis,
         )
         sample = so3_augment_pair(
             frame1_erp, frame2_erp, flow_erp, valid_erp,
@@ -567,7 +570,8 @@ class ShardFlowDataset(IterableDataset):
         view_rotation = None
         if self.so3_prob > 0.0 and float(torch.rand((), generator=gen)) < self.so3_prob:
             view_rotation = sample_rotation(
-                gen, max_angle_deg=self.so3_max_angle_deg, uniform_so3=self.so3_uniform
+                gen, max_angle_deg=self.so3_max_angle_deg, uniform_so3=self.so3_uniform,
+                axis_mode=self.so3_axis,
             )
         if self.target_points is not None:
             t_points, t_east, t_north = (

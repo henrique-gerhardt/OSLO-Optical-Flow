@@ -40,6 +40,8 @@ arm_flags() {
     raftblock) echo "--update-block raft" ;;
     iters12) echo "--iters 12" ;;
     noso3) echo "--so3-prob 0" ;;
+    yaw) echo "--so3-axis vertical" ;;
+    so3small) echo "--so3-max-angle-deg 30" ;;
     sched) echo "--onecycle-pct-start 0.05 --onecycle-anneal linear --weight-decay 1e-4" ;;
     large) echo "--lookup-rings 4 --encoder-blocks-per-level 2 --update-block raft" \
                 "--hidden-channels 128 --context-dim 128" ;;

@@ -74,6 +74,7 @@ def sample_rotation(
     *,
     max_angle_deg: float = 180.0,
     uniform_so3: bool = False,
+    axis_mode: str = "random",
     device: Optional[torch.device] = None,
     dtype: torch.dtype = torch.float32,
 ) -> torch.Tensor:
@@ -86,8 +87,16 @@ def sample_rotation(
             [0, 180]" schedule (a configurable curriculum knob).
         uniform_so3: if True, draw from the Haar measure on SO(3) instead (angle
             density ``∝ 1 - cos θ``), ignoring ``max_angle_deg`` except as a clamp.
+        axis_mode: ``"random"`` (uniform axis) or ``"vertical"`` (the z axis, sign
+            random: a yaw, i.e. a horizontal roll of the ERP that keeps gravity). Both
+            draw the same random numbers, so the angle stream is shared.
     """
     axis = torch.randn(3, generator=generator, device=device, dtype=dtype)
+    if axis_mode == "vertical":
+        axis = torch.tensor([0.0, 0.0, 1.0 if float(axis[2]) >= 0 else -1.0],
+                            device=device, dtype=dtype)
+    elif axis_mode != "random":
+        raise ValueError(f"axis_mode must be 'random' or 'vertical', got {axis_mode!r}")
     axis = axis / axis.norm().clamp_min(1e-8)
     max_angle = math.radians(max_angle_deg)
     if uniform_so3:

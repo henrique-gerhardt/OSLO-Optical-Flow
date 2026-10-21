@@ -218,6 +218,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--so3-prob", type=float, default=1.0)
     p.add_argument("--so3-max-angle-deg", type=float, default=180.0)
     p.add_argument("--so3-uniform", action="store_true", help="Haar SO(3) angle density.")
+    p.add_argument("--so3-axis", default="random", choices=["random", "vertical"],
+                   help="SO(3) augmentation axis: 'random' (uniform), or 'vertical' (yaw "
+                        "only: a horizontal roll of the ERP, gravity kept).")
     p.add_argument("--val-so3-prob", type=float, default=0.0,
                    help="SO(3) rotation on the VAL stream (default 0 = grid axes fixed, which "
                         "every recorded number uses). Set to 1.0 for the A1 raster-alignment "
@@ -655,6 +658,7 @@ def main() -> None:
         shuffle_shards=True, shuffle_buffer=args.shuffle_buffer, seed=args.seed,
         max_pairs=args.max_train_pairs,
         so3_prob=args.so3_prob, so3_max_angle_deg=args.so3_max_angle_deg, so3_uniform=args.so3_uniform,
+        so3_axis=args.so3_axis,
         target_points=target_points,
         synth_rot_prob=args.synth_rot_prob,
         synth_rot_min_deg=args.synth_rot_min_deg, synth_rot_max_deg=args.synth_rot_max_deg,
@@ -669,7 +673,7 @@ def main() -> None:
         args.shards, dataset_points, val_sources, shuffle_shards=False, shuffle_buffer=0, seed=args.seed,
         target_points=target_points,
         so3_prob=args.val_so3_prob, so3_max_angle_deg=args.so3_max_angle_deg,
-        so3_uniform=args.so3_uniform,
+        so3_uniform=args.so3_uniform, so3_axis=args.so3_axis,
         synth_rot_prob=args.val_synth_rot_prob,
         synth_rot_min_deg=args.synth_rot_min_deg, synth_rot_max_deg=args.synth_rot_max_deg,
         synth_photo_scale=args.synth_photo_scale,

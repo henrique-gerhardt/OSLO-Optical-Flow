@@ -1,17 +1,22 @@
 # Box queue, read by scripts/box_queue.sh. name | script | VAR=value; ...
 # The A/B runner skips finished arms, so a job whose training already finished only
 # runs what is missing. Ordered by priority; estimated hours on the right.
+# Round 2 (2026-10-20): augmentation. Round 1 logs: outputs/_queue_round1.
+# r8 jobs start with NUM_WORKERS=2: with 4 workers both round-1 r8 runs hit the 25 GB cap.
 
-# r8 with 4 correlation pooling levels (search reach restored), RAFT_PARITY 7.7   ~8.5 h
-cp4 | scripts/raft_parity_native_mix.sh | RUN_NAME=raft_parity_native_mix_cp4; EXTRA_FLAGS=--corr-pool-levels 4 --patch-coarse-pixels 12 --patch-bank 24
-# r7 base with chairs360 added to the training mix, equal steps to raft_parity_large/base_s7   ~3 h
-r7_chairs360 | scripts/raft_parity_large.sh | RUN_NAME=raft_parity_chairs360; TRAIN_SOURCES=replica360:train,flowscape:train,chairs360:train; ARMS=base; PREFLIGHT_ARMS=
-# r7 without SO(3) augmentation (base is skipped as done)   ~3 h
-r7_noso3 | scripts/raft_parity_large.sh | ARMS=base noso3; PREFLIGHT_ARMS=
-# r8 with 2 extra encoder blocks at the estimation level, RAFT_PARITY 7.8   ~9 h
-estblocks | scripts/raft_parity_native_mix.sh | ARMS=base estblocks
-# displacement bands for every r7/r8 checkpoint (a missing one is left out)   ~1 h
-bands | scripts/raft_parity_bands.sh | RUNS=r7_whole|raft_parity_large/base_s7|--retina-resolution 7 --resolution 6 --estimation-resolution 4\nr8_native|raft_parity_native_mix/base_s7|--retina-resolution 8 --resolution 8 --estimation-resolution 5\nr8_cp4|raft_parity_native_mix_cp4/base_s7|--retina-resolution 8 --resolution 8 --estimation-resolution 5 --corr-pool-levels 4\nr8_estblocks|raft_parity_native_mix/estblocks_s7|--retina-resolution 8 --resolution 8 --estimation-resolution 5 --encoder-est-blocks 2
-# long schedule: chairs360 mix at 30k steps, then its control without chairs360   ~8.5 h each
-r7_chairs360_30k | scripts/raft_parity_large.sh | RUN_NAME=raft_parity_chairs360_30k; TRAIN_SOURCES=replica360:train,flowscape:train,chairs360:train; ARMS=base; PREFLIGHT_ARMS=; STEPS=30000; EVAL_EVERY=5000
-r7_base_30k | scripts/raft_parity_large.sh | RUN_NAME=raft_parity_base_30k; ARMS=base; PREFLIGHT_ARMS=; STEPS=30000; EVAL_EVERY=5000
+# matched backbone: planar RAFT-small trained from scratch on the same ERP pairs and
+# steps, with RAFT's augmentation and without any, plus the frozen pretrained RAFTs,
+# RAFT_PARITY 9   ~2 h
+planar | scripts/raft_parity_planar.sh |
+# r7, rotation about the vertical axis only (gravity kept), RAFT_PARITY 8   ~3 h
+r7_yaw | scripts/raft_parity_large.sh | ARMS=base yaw; PREFLIGHT_ARMS=
+# r7, random axis but at most 30 degrees   ~3 h
+r7_so3small | scripts/raft_parity_large.sh | ARMS=base so3small; PREFLIGHT_ARMS=
+# second seed for the noso3 effect, paired with a base at the same seed   ~6 h
+r7_noso3_s11 | scripts/raft_parity_large.sh | ARMS=base noso3; PREFLIGHT_ARMS=; SEEDS=11
+# rotation robustness of every r7 augmentation arm, upright vs rotated val   ~1 h
+rotval | scripts/raft_parity_rotval.sh | RUNS=base|raft_parity_large/base_s7|--retina-resolution 7 --resolution 6 --estimation-resolution 4\nnoso3|raft_parity_large/noso3_s7|--retina-resolution 7 --resolution 6 --estimation-resolution 4\nyaw|raft_parity_large/yaw_s7|--retina-resolution 7 --resolution 6 --estimation-resolution 4\nso3small|raft_parity_large/so3small_s7|--retina-resolution 7 --resolution 6 --estimation-resolution 4
+# r8 with 4 pooling levels and no SO(3): the two round-1 gains together   ~9 h
+r8_cp4_noso3 | scripts/raft_parity_native_mix.sh | RUN_NAME=raft_parity_native_mix_cp4; ARMS=base noso3; NUM_WORKERS=2; EXTRA_FLAGS=--corr-pool-levels 4 --patch-coarse-pixels 12 --patch-bank 24
+# later, after the small comparison: planar RAFT-large on the same pairs   ~2 h
+# planar_large | scripts/raft_parity_planar.sh | ARMS=raft_large|raft_large|; FROZEN=

@@ -112,6 +112,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--predictor", default="raft", choices=["raft", "oracle", "zero"])
     parser.add_argument("--model", default="raft_large", choices=["raft_large", "raft_small"])
     parser.add_argument("--weights", default="default", choices=["default", "none"])
+    parser.add_argument("--tv-checkpoint", default="",
+                        help="A TorchVision RAFT trained by run_erp_raft_train.py (its "
+                             "raft_erp.pt). --model must match; frames are fed as x/127.5-1, "
+                             "as in that training.")
     parser.add_argument("--checkpoint", default="",
                         help="Path to a princeton-tree RAFT checkpoint (SLOF etc.). When set, "
                              "the vendored princeton RAFT replaces the TorchVision model; "
@@ -321,8 +325,13 @@ def main() -> None:
             )
         else:
             model, transforms, weights_name, torchvision_version = load_raft_model(
-                args.model, args.weights, device
+                args.model, "none" if args.tv_checkpoint else args.weights, device
             )
+            if args.tv_checkpoint:
+                payload = torch.load(args.tv_checkpoint, map_location=device)
+                model.load_state_dict(payload["model"])
+                model.eval()
+                weights_name = f"trained:{args.tv_checkpoint}"
             print(
                 f"raft model={args.model} weights={weights_name} flow_transform={args.flow_transform} "
                 f"device={device} batch_size={args.batch_size} torchvision={torchvision_version}",

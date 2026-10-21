@@ -442,7 +442,7 @@ leaves the patch.
   16° is attributable to reach; no improvement does not rule reach out.
 
 
-### 7.8 Encoder receptive field at r8 (flag implemented 2026-10-18; box run pending)
+### 7.8 Encoder receptive field at r8 (flag implemented 2026-10-18; result in §8)
 
 `--encoder-est-blocks N` adds N residual blocks at the estimation level of both
 encoders (default 0; the state dict of existing checkpoints is unchanged). ab arm
@@ -471,3 +471,86 @@ r7/r4 → r8/r5):
 Run: `ARMS="base estblocks"` on `scripts/raft_parity_native_mix.sh` (`base` is
 skipped as done). Prediction: recovers the polar 4–16° bands of §7.7 and leaves the
 bands above 16° at the equator unchanged.
+
+## 8. Box queue round 1 (2026-10-18 → 2026-10-20, git `0ecbb4b`, seed 7)
+
+`scripts/box_queue.sh` ran 7 jobs in 51 h. Both r8 trainings hit the 25 GB container
+memory cap with 4 data workers at about step 6000 and finished on the automatic retry
+with 2 workers (about 5 h lost each). Every number is one seed; the round-1 seed noise
+is 1–2.5 points global and up to 5 points at the poles.
+
+| Run | Params | flowscape:val global | poles | equator | replica360:val global | replica poles |
+|---|---|---|---|---|---|---|
+| r7 `base`, 10k (reference, §5.1) | 1.56M | 75.8 | 72.8 | 64.5 | 85.7 | 78.9 |
+| r7 `noso3`, 10k | 1.56M | **83.2** | **88.8** | **69.1** | 81.8 | 71.4 |
+| r7 `base`, 30k | 1.56M | 78.3 | 77.5 | 65.7 | **89.9** | **85.7** |
+| r7 + chairs360, 10k | 1.56M | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 |
+| r7 + chairs360, 30k | 1.56M | 69.7 | 61.0 | 61.3 | 88.7 | 77.1 |
+| r8 `base` (§7.6) | 1.61M | 78.2 | 63.5 | 75.4 | 81.7 | 69.2 |
+| r8 `--corr-pool-levels 4` | 1.67M | 80.3 | 69.0 | 75.1 | 79.7 | 62.8 |
+| r8 `estblocks` | 2.28M | 75.8 | 59.4 | 74.1 | 68.7 | 57.6 |
+
+- **SO(3) augmentation is the largest lever found in this workstream, and it is
+  domain-dependent.** Without it, flowscape:val gains +7.4 global and +16.0 at the
+  poles at equal steps, and beats `base` at 3× the steps. replica360:val loses 3.9
+  (poles −7.5). flowscape is a gravity-aligned car rig: SO(3) at probability 1 and up
+  to 180° removes the up/down regularity the val set has. RAFT does not rotate. The
+  robustness cost (rotated val) is not measured yet.
+- **Steps help modestly.** 30k vs 10k: +2.5 flowscape, +4.1 replica360 (poles +6.8).
+  The flowscape curve is flat between 10k and 15k and rises again in the anneal.
+- **chairs360 as a plain addition hurts.** At 10k the mix never bootstraps (zero flow
+  throughout, as chairs360 alone in the earlier campaign). At 30k it bootstraps (a
+  longer warm-up: lower lr early) but ends −8.6 on flowscape vs `base` 30k and −1.2 on
+  replica360. Confound: chairs360 is about 3/4 of the samples, so flowscape is seen
+  about 4× less often. Not a lever as is.
+- **`--corr-pool-levels 4` at r8:** flowscape +2.1 global and +5.6 poles vs r8
+  `base`; replica360 −2.0 (poles −6.4). The §7.7 prediction (it recovers the bands
+  above 16° at the equator) failed: replica360 equator 16–32° 86.8 → 85.3, 32°+
+  33.0 → 34.9. Instead it recovered most of the flowscape polar 4–8° band (70.1 → 77.1,
+  r7 79.6) and part of 8–16° (56.2 → 59.6, r7 66.7), the deficit §7.7 had called
+  latitude-specific.
+- **`estblocks` at r8 is negative everywhere**: flowscape −2.4, replica360 −13.0, and
+  the large-displacement bands collapse (replica360 16–32° 83.0 → 59.7, 32°+ 29.0 →
+  8.7, both latitudes). The §7.8 prediction (it recovers the polar 4–16° bands)
+  failed: flowscape poles 4–8° 70.1 → 65.5. The receptive-field explanation is
+  rejected in this form. Behind r8 `base` at every eval (25.6 / 69.7 / 73.4 / 75.3 /
+  75.8 vs 38.1 / 71.8 / 75.6 / 77.4 / 78.2), consistent with extra capacity costing
+  steps, as for `large` (§5.3).
+
+Best flowscape:val so far: r7 `noso3` 10k, +83.2 global / +88.8 poles (one seed).
+
+### 8.1 Round 2 (queued)
+
+`--so3-axis vertical` (new): rotations about the vertical axis only, i.e. a horizontal
+roll of the ERP, which keeps gravity. Arms `yaw` (`--so3-axis vertical`) and `so3small`
+(`--so3-max-angle-deg 30`). `scripts/raft_parity_rotval.sh` scores each r7 arm upright
+and with every val pair rotated (same rotations for every checkpoint).
+
+Queue: `yaw`, `so3small`, seed 11 of `base` + `noso3`, rotated val, then r8 cp4 +
+`noso3`. Predictions: `yaw` keeps most of the `noso3` flowscape gain and less of its
+replica360 loss; `noso3` loses the most under rotated val; seed 11 reproduces a
+flowscape gain of at least +4.
+
+## 9. Matched backbone: planar RAFT trained on the same pairs (queued)
+
+§6 compares against frozen, pretrained RAFTs, which is not parity. `run_erp_raft_train.py`
+trains TorchVision RAFT-small (0.99M) or RAFT-large (5.3M) from scratch on the ERP
+frames of the same shards (replica360 + flowscape train), 10k steps at 2 pairs per
+step, as the OSLO r7 runs. RAFT keeps its own recipe adapted to ERP: 384×768 crops,
+photometric jitter, random horizontal ERP roll (an exact yaw), horizontal flip 0.5;
+sequence loss, AdamW, one-cycle 5% linear, 12 iterations. `run_raft_shard_baseline.py
+--tv-checkpoint` scores it on full ERP frames with the same spherical metrics, grid (r6)
+and val pairs as the OSLO rows (the zero-flow column must match).
+
+`scripts/raft_parity_planar.sh` trains the arms, scores them and the frozen pretrained
+RAFTs on flowscape:val and replica360:val, and prints them next to OSLO r7 `base` and
+`noso3`. Arms: `raft_small` (RAFT's recipe) and `raft_small_noaug` (no color jitter,
+flip or roll; 512×1024 crop = a whole flowscape frame), which matches the OSLO `noso3`
+recipe and separates architecture from augmentation. RAFT-large comes after the small
+comparison (queue line `planar_large`, commented out). Local check (CPU, replica360):
+both arms train and score through the spherical evaluator; 400 steps of `raft_small`
+reach +31% on 8 replica360:val pairs.
+
+Differences left on purpose: RAFT sees crops (56% of a flowscape frame per pair) and
+photometric augmentation; OSLO sees whole spheres without photometric augmentation.
+Each method keeps its own recipe; the data, steps and pairs per step are equal.
