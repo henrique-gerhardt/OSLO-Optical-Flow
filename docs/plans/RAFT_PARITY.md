@@ -531,7 +531,7 @@ Queue: `yaw`, `so3small`, seed 11 of `base` + `noso3`, rotated val, then r8 cp4 
 replica360 loss; `noso3` loses the most under rotated val; seed 11 reproduces a
 flowscape gain of at least +4.
 
-## 9. Matched backbone: planar RAFT trained on the same pairs (queued)
+## 9. Matched backbone: planar RAFT trained on the same pairs
 
 §6 compares against frozen, pretrained RAFTs, which is not parity. `run_erp_raft_train.py`
 trains TorchVision RAFT-small (0.99M) or RAFT-large (5.3M) from scratch on the ERP
@@ -554,3 +554,82 @@ reach +31% on 8 replica360:val pairs.
 Differences left on purpose: RAFT sees crops (56% of a flowscape frame per pair) and
 photometric augmentation; OSLO sees whole spheres without photometric augmentation.
 Each method keeps its own recipe; the data, steps and pairs per step are equal.
+
+### 9.1 Result (box, 2026-10-20, seed 7, 10k steps, job 57 min)
+
+Improvement over zero flow, % (r6 nodes, haversine). The zero-flow column matched in
+every row (2.4726° flowscape, 13.5340° replica360), so all rows score the same pairs.
+
+| row | params | flowscape global | act0.5 | poles | equator | replica global | poles | equator |
+|---|---|---|---|---|---|---|---|---|
+| OSLO base (SO(3)) | 1.56M | 75.8 | 77.4 | 72.8 | 64.5 | **85.7** | **78.9** | 87.8 |
+| OSLO noso3 | 1.56M | 83.2 | 84.5 | 88.8 | 69.1 | 81.8 | 71.4 | 84.5 |
+| RAFT-small, RAFT aug | 0.99M | 85.5 | 86.4 | 88.7 | 72.8 | 77.8 | 54.8 | 84.4 |
+| RAFT-small, no aug | 0.99M | **86.5** | **87.6** | **94.7** | 71.7 | 83.9 | 70.7 | 87.4 |
+| frozen RAFT-small (C+T) | 0.99M | 68.3 | 68.9 | 59.6 | 63.1 | 87.3 | 59.8 | 93.8 |
+| frozen RAFT-large (C+T+S+K+H) | 5.3M | 74.1 | 74.7 | 60.0 | 73.4 | 91.5 | 73.9 | 94.9 |
+
+Readings:
+
+1. Clean pair (no augmentation on either side): RAFT-small trained on ERP beats OSLO
+   noso3 on both sources (flowscape +3.3, replica +2.1) with 37% fewer parameters.
+   flowscape poles go to RAFT (94.7 vs 88.8); replica poles tie (70.7 vs 71.4).
+2. Each method with its own augmentation: OSLO base wins replica360 by 7.9 (poles by
+   24.1); RAFT wins flowscape by 9.7. SO(3) is a better augmentation for replica360 than
+   RAFT's recipe; neither augmentation helps flowscape.
+3. Best of each: flowscape RAFT 86.5 vs OSLO 83.2; replica OSLO 85.7 vs RAFT 83.9.
+4. The polar advantage of §6 came from comparing against a frozen perspective-trained
+   RAFT (poles 59.6 / 60.0). A planar RAFT trained on ERP learns the polar stretch
+   (flowscape poles 94.7). The polar claim holds only against frozen RAFT.
+5. RAFT's recipe loses to no augmentation at this budget: flowscape −1.0, replica −6.1,
+   replica poles −15.9. The arm changed two things at once: augmentation (jitter, flip,
+   roll) and the crop (384×768 vs 512×1024). A 384-row crop leaves out up to 128 of 512
+   rows, mostly polar, which fits the poles loss. Queue job `planar_fullcrop`
+   (RAFT augmentation, 512×1024 crop) separates the two.
+6. Pretraining still dominates replica360: frozen RAFT-large 91.5 beats every row
+   trained here, and frozen RAFT-small beats RAFT-small trained here (87.3 vs 83.9).
+   On flowscape, training on the domain beats both frozen RAFTs by 12+ points.
+7. Resolution is a confound in RAFT's favour: RAFT predicts at full ERP resolution and
+   is sampled onto r6; OSLO r7 estimates at r4. OSLO r8 (§7.6) already beats RAFT at
+   the flowscape equator (75.4 vs 72.8) but loses its poles (63.5). Queue job
+   `r8_cp4_noso3` tests whether r8 + 4 pooling levels + no SO(3) reaches RAFT on
+   flowscape. Prediction: flowscape global ≥ 86.5 is needed to tie the best RAFT row;
+   r7 noso3 gained +16 poles from dropping SO(3), so r8 poles should recover above 80.
+
+One seed per row. Seed spread on replica360 at 2k was about ±1–2.5 points (§3), so
+readings 1 and 3 on replica (gaps of 2.1 and 1.8) are within noise; flowscape gaps of
+3.3 and more are not.
+
+
+### 9.2 Round 2b: architecture or augmentation? (queued 2026-10-20)
+
+The only OSLO wins in §9.1 are on replica360 with SO(3) augmentation. Two questions
+decide whether any of it belongs to the spherical architecture:
+
+1. **Does SO(3) augmentation give planar RAFT the same replica360 gain?**
+   `run_erp_raft_train.py --so3-prob` re-renders both ERP frames as seen by a randomly
+   rotated camera (axis uniform, angle uniform in [0, 180°], as OSLO base) and
+   recomputes the flow from the rotated endpoints. Arm `raft_small_so3` = no other
+   augmentation, 512×1024 crop, `--so3-prob 1`. Local check against the node path
+   (`so3_augment_pair`) on a replica360 pair: endpoint error p50 0.02°, p90 0.07° for
+   motion p50 5.2°, validity agrees on 99.8% of nodes. Pixels whose stored flow wraps
+   across the seam the long way (|du| > W/2) come out as the short way; the other arms
+   drop them through `max_flow`, this arm supervises them. Rotation costs 0.18 s per
+   pair on one CPU thread.
+2. **Does planar RAFT survive a rotated camera?** Job `planar_rot` scores every planar
+   row (trained and frozen) with `--val-so3-prob 1` next to the OSLO rotated rows from
+   `rotval`. The two evaluators draw rotations from different generators (OSLO: the
+   dataset RNG; RAFT: `--val-so3-seed`), so the rotated rows share the rotation
+   distribution, not the per-pair rotations, and their zero-flow columns differ slightly.
+
+Also queued: `raft_small_fullcrop` (RAFT augmentation on 512×1024) separates the crop
+from jitter/flip/roll in reading 5 of §9.1.
+
+Pre-registered readings:
+- `raft_small_so3` replica360 ≥ 85 (OSLO base 85.7) ⇒ OSLO's replica win is the
+  augmentation, not the architecture.
+- OSLO base keeps its upright numbers under rotation (trained with SO(3)) while
+  `raft_small_noaug` drops by more than 10 points ⇒ orientation robustness is the
+  claim. If `raft_small_so3` also holds under rotation, the robustness is the
+  augmentation's too, and the remaining architectural claim is only cost (what it takes
+  to get it).

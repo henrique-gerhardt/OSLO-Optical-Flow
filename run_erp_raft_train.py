@@ -10,7 +10,10 @@ adapted to ERP:
 - horizontal ERP roll by a random integer shift, which is an exact yaw rotation of the
   sphere (the flow values do not change);
 - horizontal flip with probability 0.5 (a mirror of the sphere: du negated);
-- no scaling, no vertical flip (both change the ERP geometry or gravity).
+- no scaling, no vertical flip (both change the ERP geometry or gravity);
+- optional SO(3) rotation of the whole sphere (``--so3-prob``), OSLO's augmentation:
+  both frames are re-rendered as seen by a rotated camera and the flow is recomputed
+  from the rotated endpoints, with the convention of ``so3_augment_pair``.
 
 Loss: RAFT's sequence loss (L1, gamma 0.8, pixels with |flow| < max_flow and valid).
 Optimizer: AdamW + OneCycle (RAFT: 5% warm-up, linear). Frames enter as x/127.5 - 1,
@@ -31,7 +34,11 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, IterableDataset, get_worker_info
 
+from spherical_flow.flow360 import bilinear_sample_erp
+from spherical_flow.geometry import (equirectangular_pixels_to_unit_vectors,
+                                     points_to_equirectangular_pixels)
 from spherical_flow.shard_dataset import _import_sfprep
+from spherical_flow.so3_augment import sample_rotation
 
 
 def parse_sources(text: str) -> List[Tuple[str, str]]:
@@ -44,18 +51,55 @@ def parse_sources(text: str) -> List[Tuple[str, str]]:
     return out
 
 
+def rotate_erp_pair(f1: torch.Tensor, f2: torch.Tensor, flow: torch.Tensor,
+                    valid: torch.Tensor, rotation: torch.Tensor):
+    """Re-render an ERP pair as seen by a camera rotated by ``R``.
+
+    Same convention as ``so3_augment_pair``: the rotated raster at direction ``d``
+    shows the real raster at ``d @ R``; the real endpoint ``e`` becomes ``e @ R.T``.
+    Frames are ``[3, H, W]`` uint8, flow ``[2, H, W]`` pixels, valid ``[H, W]`` bool.
+    A pixel is valid if its source is valid and its real endpoint stays inside the
+    frame vertically, as in the node path.
+    """
+    _, height, width = f1.shape
+    v, u = torch.meshgrid(torch.arange(height, dtype=torch.float32),
+                          torch.arange(width, dtype=torch.float32), indexing="ij")
+    u, v = u.reshape(-1), v.reshape(-1)
+    dirs = equirectangular_pixels_to_unit_vectors(u, v, height, width)
+    su, sv = points_to_equirectangular_pixels(dirs @ rotation, height, width)
+
+    def sample(img_chw: torch.Tensor) -> torch.Tensor:
+        out = bilinear_sample_erp(img_chw.permute(1, 2, 0).float(), su, sv)
+        return out.reshape(height, width, -1).permute(2, 0, 1)
+
+    g1 = sample(f1).round().clamp(0, 255).to(torch.uint8)
+    g2 = sample(f2).round().clamp(0, 255).to(torch.uint8)
+    sflow = sample(flow).reshape(2, -1)
+    svalid = sample(valid.float().unsqueeze(0)).reshape(-1) > 0.999
+    eu, ev = su + sflow[0], sv + sflow[1]
+    inside = (ev >= 0.0) & (ev <= float(height - 1))
+    end = equirectangular_pixels_to_unit_vectors(eu, ev, height, width) @ rotation.T
+    ru, rv = points_to_equirectangular_pixels(end, height, width)
+    du = torch.remainder(ru - u + width / 2, width) - width / 2
+    new_flow = torch.stack([du, rv - v]).reshape(2, height, width)
+    new_valid = (svalid & inside & torch.isfinite(new_flow).all(0).reshape(-1))
+    return g1, g2, torch.nan_to_num(new_flow), new_valid.reshape(height, width)
+
+
 class ERPPairStream(IterableDataset):
     """Endless, shuffled, augmented ERP crops from the shards."""
 
     def __init__(self, shards_dir: str, sources: List[Tuple[str, str]], crop: Tuple[int, int],
                  seed: int, shuffle_buffer: int = 64, photo_prob: float = 1.0,
-                 roll: bool = True, hflip_prob: float = 0.5) -> None:
+                 roll: bool = True, hflip_prob: float = 0.5, so3_prob: float = 0.0,
+                 so3_max_angle_deg: float = 180.0) -> None:
         self._iter_shard, list_shards = _import_sfprep()
         self.shards = [s for d, sp in sources for s in list_shards(Path(shards_dir), d, sp)]
         if not self.shards:
             raise RuntimeError(f"no shards for {sources} under {shards_dir}")
         self.crop, self.seed, self.buffer = crop, seed, shuffle_buffer
         self.photo_prob, self.roll, self.hflip_prob = photo_prob, roll, hflip_prob
+        self.so3_prob, self.so3_max_angle_deg = so3_prob, so3_max_angle_deg
 
     def _records(self, rng: random.Random) -> Iterator[dict]:
         info = get_worker_info()
@@ -91,6 +135,9 @@ class ERPPairStream(IterableDataset):
         if ch > height or cw > width:
             raise ValueError(f"crop {self.crop} larger than frame {height}x{width}")
 
+        if self.so3_prob > 0 and rng.random() < self.so3_prob:
+            rotation = sample_rotation(gen, max_angle_deg=self.so3_max_angle_deg)
+            f1, f2, flow, valid = rotate_erp_pair(f1, f2, flow, valid, rotation)
         if rng.random() < self.photo_prob:
             if rng.random() < 0.2:  # asymmetric: each frame its own jitter
                 torch.manual_seed(rng.randrange(2**31))
@@ -154,6 +201,9 @@ def main() -> None:
     p.add_argument("--photo-prob", type=float, default=1.0)
     p.add_argument("--no-roll", action="store_true", help="Disable the random ERP yaw roll.")
     p.add_argument("--hflip-prob", type=float, default=0.5)
+    p.add_argument("--so3-prob", type=float, default=0.0,
+                   help="Probability of rotating each pair by a random SO(3) element.")
+    p.add_argument("--so3-max-angle-deg", type=float, default=180.0)
     p.add_argument("--seed", type=int, default=7)
     p.add_argument("--num-workers", type=int, default=4)
     p.add_argument("--device", default="cuda")
@@ -187,7 +237,8 @@ def main() -> None:
 
     ds = ERPPairStream(args.shards, parse_sources(args.train_sources), crop, args.seed,
                        photo_prob=args.photo_prob, roll=not args.no_roll,
-                       hflip_prob=args.hflip_prob)
+                       hflip_prob=args.hflip_prob, so3_prob=args.so3_prob,
+                       so3_max_angle_deg=args.so3_max_angle_deg)
     loader = DataLoader(ds, batch_size=args.batch_size, num_workers=args.num_workers,
                         pin_memory=device.type == "cuda", persistent_workers=args.num_workers > 0)
     print(f"erp raft model={args.model} params={n_params:,} crop={crop} "

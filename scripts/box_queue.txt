@@ -10,13 +10,22 @@
 planar | scripts/raft_parity_planar.sh |
 # r7, rotation about the vertical axis only (gravity kept), RAFT_PARITY 8   ~3 h
 r7_yaw | scripts/raft_parity_large.sh | ARMS=base yaw; PREFLIGHT_ARMS=
+# Round 2b (2026-10-20, after the planar result, RAFT_PARITY 9.1-9.2): is OSLO's edge the
+# architecture or the SO(3) augmentation, and does planar RAFT survive a rotated camera?
+# planar arms: + RAFT aug on whole 512x1024 frames (crop control) and + SO(3) only   ~1 h
+planar_more | scripts/raft_parity_planar.sh | ARMS=raft_small|raft_small|\nraft_small_noaug|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024\nraft_small_fullcrop|raft_small|--crop 512x1024\nraft_small_so3|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024 --so3-prob 1
+# rotation robustness of the r7 arms done so far (missing checkpoints are skipped)   ~45 min
+rotval | scripts/raft_parity_rotval.sh | RUNS=base|raft_parity_large/base_s7|--retina-resolution 7 --resolution 6 --estimation-resolution 4\nnoso3|raft_parity_large/noso3_s7|--retina-resolution 7 --resolution 6 --estimation-resolution 4\nyaw|raft_parity_large/yaw_s7|--retina-resolution 7 --resolution 6 --estimation-resolution 4\nso3small|raft_parity_large/so3small_s7|--retina-resolution 7 --resolution 6 --estimation-resolution 4
+# every planar RAFT row (trained and frozen) on rotated val, next to the OSLO rotated rows   ~20 min
+planar_rot | scripts/raft_parity_planar.sh | ARMS=raft_small|raft_small|\nraft_small_noaug|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024\nraft_small_fullcrop|raft_small|--crop 512x1024\nraft_small_so3|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024 --so3-prob 1; EVAL_TAG=rot; EVAL_FLAGS=--val-so3-prob 1; OSLO_RUNS=oslo_base|raft_parity_rotval/base_{tag}_rotated.json\noslo_noso3|raft_parity_rotval/noso3_{tag}_rotated.json\noslo_yaw|raft_parity_rotval/yaw_{tag}_rotated.json\noslo_so3small|raft_parity_rotval/so3small_{tag}_rotated.json
+# r8 with 4 pooling levels and no SO(3): the two round-1 gains together   ~9 h
+r8_cp4_noso3 | scripts/raft_parity_native_mix.sh | RUN_NAME=raft_parity_native_mix_cp4; ARMS=base noso3; NUM_WORKERS=2; EXTRA_FLAGS=--corr-pool-levels 4 --patch-coarse-pixels 12 --patch-bank 24
 # r7, random axis but at most 30 degrees   ~3 h
 r7_so3small | scripts/raft_parity_large.sh | ARMS=base so3small; PREFLIGHT_ARMS=
 # second seed for the noso3 effect, paired with a base at the same seed   ~6 h
 r7_noso3_s11 | scripts/raft_parity_large.sh | ARMS=base noso3; PREFLIGHT_ARMS=; SEEDS=11
-# rotation robustness of every r7 augmentation arm, upright vs rotated val   ~1 h
-rotval | scripts/raft_parity_rotval.sh | RUNS=base|raft_parity_large/base_s7|--retina-resolution 7 --resolution 6 --estimation-resolution 4\nnoso3|raft_parity_large/noso3_s7|--retina-resolution 7 --resolution 6 --estimation-resolution 4\nyaw|raft_parity_large/yaw_s7|--retina-resolution 7 --resolution 6 --estimation-resolution 4\nso3small|raft_parity_large/so3small_s7|--retina-resolution 7 --resolution 6 --estimation-resolution 4
-# r8 with 4 pooling levels and no SO(3): the two round-1 gains together   ~9 h
-r8_cp4_noso3 | scripts/raft_parity_native_mix.sh | RUN_NAME=raft_parity_native_mix_cp4; ARMS=base noso3; NUM_WORKERS=2; EXTRA_FLAGS=--corr-pool-levels 4 --patch-coarse-pixels 12 --patch-bank 24
+# rotval again once so3small exists (finished views are skipped)   ~15 min
+rotval_late | scripts/raft_parity_rotval.sh | RUNS=base|raft_parity_large/base_s7|--retina-resolution 7 --resolution 6 --estimation-resolution 4\nnoso3|raft_parity_large/noso3_s7|--retina-resolution 7 --resolution 6 --estimation-resolution 4\nyaw|raft_parity_large/yaw_s7|--retina-resolution 7 --resolution 6 --estimation-resolution 4\nso3small|raft_parity_large/so3small_s7|--retina-resolution 7 --resolution 6 --estimation-resolution 4
+planar_rot_late | scripts/raft_parity_planar.sh | ARMS=raft_small|raft_small|\nraft_small_noaug|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024\nraft_small_fullcrop|raft_small|--crop 512x1024\nraft_small_so3|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024 --so3-prob 1; EVAL_TAG=rot; EVAL_FLAGS=--val-so3-prob 1; OSLO_RUNS=oslo_base|raft_parity_rotval/base_{tag}_rotated.json\noslo_noso3|raft_parity_rotval/noso3_{tag}_rotated.json\noslo_yaw|raft_parity_rotval/yaw_{tag}_rotated.json\noslo_so3small|raft_parity_rotval/so3small_{tag}_rotated.json
 # later, after the small comparison: planar RAFT-large on the same pairs   ~2 h
-# planar_large | scripts/raft_parity_planar.sh | ARMS=raft_large|raft_large|; FROZEN=
+# planar_large | scripts/raft_parity_planar.sh | ARMS=raft_large|raft_large|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024; FROZEN=
