@@ -633,3 +633,81 @@ Pre-registered readings:
   claim. If `raft_small_so3` also holds under rotation, the robustness is the
   augmentation's too, and the remaining architectural claim is only cost (what it takes
   to get it).
+
+### 9.3 Round 2b result (box, 2026-10-21, seed 7 unless noted)
+
+Improvement over zero flow, %, global (poles). Upright = §9.1 protocol; rotated =
+`--val-so3-prob 1` (§9.2; OSLO and RAFT share the rotation distribution, not the
+per-pair rotations).
+
+| row | params | train time | flowscape upright | flowscape rotated | replica upright | replica rotated |
+|---|---|---|---|---|---|---|
+| OSLO base (SO(3)), seeds 7/11 | 1.56M | 2.8 h | 76.2±0.4 (73.2) | 74.7 (71.9) | **86.3±0.6** (**79.0**) | 86.5 (**80.4**) |
+| OSLO noso3, seeds 7/11 | 1.56M | 2.8 h | 83.5±0.4 (89.6) | 64.7 (60.6) | 81.3±0.5 (71.3) | 80.8 (69.5) |
+| OSLO yaw | 1.56M | 2.8 h | 82.4 (86.9) | 66.2 (62.2) | 82.0 (70.6) | 81.0 (71.1) |
+| OSLO so3small (30°) | 1.56M | 2.9 h | 79.6 (79.2) | 69.6 (67.1) | 83.0 (74.0) | 81.6 (73.2) |
+| RAFT-small noaug | 0.99M | ~0.5 h | **86.5** (94.7) | 53.4 (51.6) | 83.9 (70.7) | 80.0 (69.8) |
+| RAFT-small RAFT aug, 384×768 | 0.99M | ~0.5 h | 85.5 (88.7) | 67.4 (59.1) | 77.8 (54.8) | 76.3 (58.1) |
+| RAFT-small RAFT aug, 512×1024 | 0.99M | ~0.5 h | 86.0 (94.4) | 66.5 (57.5) | 82.1 (66.0) | 80.5 (66.1) |
+| **RAFT-small SO(3)** | 0.99M | 0.5 h | 81.7 (81.6) | **79.7** (**77.5**) | **87.1** (73.5) | **87.9** (75.3) |
+| frozen RAFT-large | 5.3M | — | 74.1 (60.0) | 74.2 (67.4) | 91.5 (73.9) | 92.0 (71.9) |
+
+Pre-registered readings (§9.2), both fired against the architecture:
+- `raft_small_so3` replica360 87.1 ≥ 85 ⇒ OSLO's replica360 win was the SO(3)
+  augmentation, not the architecture.
+- `raft_small_so3` holds under rotation (81.7→79.7, 87.1→87.9) as OSLO base does ⇒
+  orientation robustness belongs to the augmentation. The cost reading also goes
+  against OSLO: RAFT-small trains 5.6× faster (1784 s vs 10043 s) with 37% fewer
+  parameters.
+
+Other readings:
+1. Planar RAFT-small + SO(3) matches or beats OSLO base globally in all four cells.
+   OSLO keeps one edge: replica360 poles, +5.5 upright and +5.1 rotated (RAFT one seed;
+   OSLO base poles are seed-tight, 78.94/78.98).
+2. The crop explained most of RAFT's augmentation loss (§9.1 reading 5): 512×1024
+   recovers replica360 +4.3 global, +11.2 poles. Jitter/flip/roll still cost −1.8.
+3. Without SO(3) both architectures learn the upright prior and pay for it under
+   rotation: flowscape RAFT noaug −33.1, OSLO noso3 −18.5, OSLO yaw −16.2. The noso3
+   flowscape gain reproduces at seed 11 (+7.4 ± 0.5 over base; prediction ≥ +4 met)
+   and so does its replica360 cost (−5.0).
+4. Frozen RAFT-large is rotation-robust (74.1→74.2, 91.5→92.0): ERP distortion under
+   rotation is not what breaks planar models; the upright prior learned from
+   gravity-aligned training data is.
+5. `yaw` keeps the noso3 flowscape gain (82.4) but not replica360 (82.0 ≈ noso3), so it
+   has no advantage over noso3. §8.1 prediction: half met.
+6. `r8_cp4_noso3` diverged: val −1003% at 2k (26° error), NaN from step 7600. The run
+   never trained; the r8 resolution question (§9.1 reading 7) is untested. Cause not
+   diagnosed (r8 cp4 base trained normally with SO(3)).
+
+Verdict at this budget (10k steps, ~6.2k pairs): at matched data, steps and pairs per
+step, the spherical architecture does not beat a planar RAFT-small trained on ERP with
+spherical rotation augmentation, except replica360 poles (~5 points, to be checked with
+a second RAFT seed). The lever is the augmentation. Before any novelty claim about SO(3)
+augmentation of ERP for planar flow, check `literature-scope-register`.
+
+## 10. Round 3: full RAFT scale on more data (queued 2026-10-21)
+
+Question: is OSLO's loss at matched parity (§9.3) a small-scale effect? Both sides go to
+RAFT-large scale on 32% more data, with SO(3) and weight decay 1e-4, 10k steps, seed 7.
+
+| row | params | recipe |
+|---|---|---|
+| OSLO `large` | 6.6M | §5.2 `large` arm + `--weight-decay 1e-4` (base used 1e-5) |
+| RAFT-small SO(3) | 0.99M | §9.2 arm (RAFT trainer default weight decay is already 1e-4) |
+| RAFT-large SO(3) | 5.3M | same recipe, `--model raft_large` |
+
+Train = replica360 + flowscape + mpf (train splits; mpf frames 512×1024, so the RAFT
+crop fits). Left out: chairs360 (plain mix never bootstrapped at 10k, §8, and `large`
+bootstraps late, so the run could produce nothing) and flow360 (box shard convention
+not re-verified after the forward-flow fix). Not added: photometric augmentation (cost
+−1.8 for RAFT at this budget, §9.3 reading 2); EMA (the RAFT trainer has none, so it
+would break the match).
+
+Pre-registered readings:
+- OSLO `large` here vs `large` in §5.2 (same arch, less data, wd 1e-5): replica360
+  ≥ 85.7 (base) ⇒ capacity lost to memorization before, and more data plus decay fixes it.
+- Parity: OSLO `large` vs RAFT-large SO(3), global, replica360 upright and rotated. OSLO
+  wins both ⇒ scale was the bottleneck and the architecture question reopens. Otherwise
+  the §9.3 verdict extends to RAFT-large scale and the architecture question closes.
+- My prediction: RAFT-large SO(3) wins global on both sources; OSLO keeps at most the
+  replica360 polar edge.
