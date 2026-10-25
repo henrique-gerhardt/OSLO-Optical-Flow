@@ -47,3 +47,20 @@ rotval_scale | scripts/raft_parity_rotval.sh | RUNS=large_scale|raft_parity_scal
 planar_scale_rot | scripts/raft_parity_planar.sh | RUN_NAME=raft_parity_planar_scale; TRAIN_SOURCES=replica360:train,flowscape:train,mpf:train; ARMS=raft_small_so3|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024 --so3-prob 1 --weight-decay 1e-4\nraft_large_so3|raft_large|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024 --so3-prob 1 --weight-decay 1e-4; EVAL_TAG=rot; EVAL_FLAGS=--val-so3-prob 1; OSLO_RUNS=oslo_large_scale|raft_parity_rotval/large_scale_{tag}_rotated.json\noslo_base_old|raft_parity_rotval/base_{tag}_rotated.json
 # upright table again, now with the OSLO large row (everything skips)   ~1 min
 planar_scale_table | scripts/raft_parity_planar.sh | RUN_NAME=raft_parity_planar_scale; TRAIN_SOURCES=replica360:train,flowscape:train,mpf:train; ARMS=raft_small_so3|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024 --so3-prob 1 --weight-decay 1e-4\nraft_large_so3|raft_large|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024 --so3-prob 1 --weight-decay 1e-4; OSLO_RUNS=oslo_large_scale|raft_parity_scale/large_s7\noslo_large_old|raft_parity_large/large_s7\noslo_base_old|raft_parity_large/base_s7
+
+# Published benchmark (2026-10-25): FlowScape test in PriOr-Flow's own protocol (EPE px +
+# SEPE, all pixels, poles at 45 deg). PriOr-RAFT and PanoFlow released checkpoints are the
+# reproduction check (published 2.33 / 3.38 px). 5-pair smoke first   ~5 min
+benchmark_smoke | scripts/benchmark_flowscape.sh | TAG=smoke; EVAL_FLAGS=--max-pairs 5
+# all rows, 1386 pairs each   ~2 h
+benchmark_flowscape | scripts/benchmark_flowscape.sh |
+
+# Ablation closers (2026-10-21), cheap, after round 3   ~45 min
+# flow360 shards on the box: is the forward-sign fix in? Decides whether real-data parity
+# can be run next   ~10 min
+flow360_check | scripts/flow360_convention_check.sh |
+# third seed of the RAFT-small SO(3) arm (round-2 data), upright and rotated: settles the
+# replica360 polar edge with 3 RAFT seeds   ~35 min
+planar_s19 | scripts/raft_parity_planar.sh | SEED=19; ARMS=raft_small_so3|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024 --so3-prob 1
+planar_s19_rot | scripts/raft_parity_planar.sh | SEED=19; ARMS=raft_small_so3|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024 --so3-prob 1; EVAL_TAG=rot; EVAL_FLAGS=--val-so3-prob 1; OSLO_RUNS=oslo_base|raft_parity_rotval/base_{tag}_rotated.json
+

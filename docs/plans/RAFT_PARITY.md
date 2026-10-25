@@ -711,3 +711,51 @@ Pre-registered readings:
   the §9.3 verdict extends to RAFT-large scale and the architecture question closes.
 - My prediction: RAFT-large SO(3) wins global on both sources; OSLO keeps at most the
   replica360 polar edge.
+
+### 10.1 Results: round 2c (seed 11) and round 3 (box, 2026-10-22, git `7573db4`)
+
+Round 2c, seed 11 reproduces §9.3. Global, upright / rotated:
+
+| cell | RAFT-small SO(3) s7, s11 | OSLO base s7, s11 |
+|---|---|---|
+| flowscape upright | 81.7, 80.5 | 75.8, 76.6 |
+| flowscape rotated | 79.7, 78.2 | 74.7, 75.1 |
+| replica360 upright | 87.1, 87.8 | 85.7, 86.9 |
+| replica360 rotated | 87.9, 89.2 | 86.5, 87.7 |
+| replica360 poles upright | 73.5, 75.5 | 78.9, 79.0 |
+| replica360 poles rotated | 75.3, 78.4 | 80.4, 80.0 |
+
+RAFT-small SO(3) wins all four global cells on both seeds. OSLO base wins replica360
+poles on both seeds, upright (+4.5) and rotated (+3.3); it loses flowscape poles (−7).
+The no-augmentation pair also repeats (RAFT noaug 85.6 / 82.3 vs OSLO noso3 83.9 / 80.8).
+
+Round 3, train = replica360 + flowscape + mpf, wd 1e-4, seed 7:
+
+| row | params | flowscape up / rot | replica360 up / rot | replica poles up / rot |
+|---|---|---|---|---|
+| RAFT-large SO(3) | 5.3M | **83.5** / **81.9** | **90.7** / **90.9** | **80.3** / **81.4** |
+| RAFT-small SO(3) | 0.99M | 80.5 / 77.8 | 85.5 / 84.3 | 71.0 / 71.5 |
+| OSLO `large` (new data) | 6.6M | 72.4 / 70.5 | 70.0 / 70.4 | 57.8 / 58.9 |
+| OSLO `large` (§5.2) | 6.6M | 72.9 / – | 76.3 / – | 63.3 / – |
+| OSLO base (§9.3, s7) | 1.56M | 75.8 / 74.7 | 85.7 / 86.5 | 78.9 / 80.4 |
+| frozen RAFT-large | 5.3M | 74.1 / 74.2 | 91.5 / 92.0 | 73.9 / 71.9 |
+
+Readings against the pre-registration:
+- Memorization reading fails. OSLO `large` on more data with wd 1e-4 scores 70.0 on
+  replica360, below §5.2 (76.3) and far below the 85.7 bar. Its flowscape val rose
+  48.8 → 65.1 → 62.4 → 71.0 → 72.4 over 2k–10k, so it is under-trained, not overfit.
+  The new mix also costs RAFT-small ~1.5 on replica360 (replica is a third of the
+  sources instead of half), but OSLO `large` lost 6.3.
+- Parity reading: RAFT-large SO(3) beats OSLO `large` by ~20 points on replica360,
+  upright and rotated. The §9.3 verdict extends to RAFT-large scale. The architecture
+  question is closed.
+- Prediction held, and went further: RAFT-large SO(3) also beats OSLO base at the
+  replica360 poles (80.3 vs 78.9 upright, 81.4 vs 80.4 rotated). The polar edge survives
+  only against RAFT-small at matched small capacity.
+- Capacity scales for RAFT (small → large: +3.0 flowscape, +5.2 replica360, +9 poles) and
+  not for OSLO (base → `large`: −3.4 flowscape, −15.7 replica360). RAFT-large trained from
+  scratch on 360 data, with SO(3), matches the frozen pretrained RAFT-large on replica360
+  and beats it by 9 on flowscape.
+
+Not run: the ablation closers (`flow360_check`, `planar_s19`, `planar_s19_rot`) were not
+pushed before the queue started.

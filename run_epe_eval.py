@@ -48,6 +48,8 @@ from spherical_flow.erp_readout import (
     nodes_to_erp_flow,
     pixel_coslat,
 )
+from spherical_flow.panoflow_adapter import load_panoflow_checkpoint, predict_panoflow_cfe_flow
+from spherical_flow.prior_adapter import load_prior_checkpoint, predict_prior_flow
 from spherical_flow.raft_adapter import (
     FLOW_TRANSFORMS,
     erp_flow_to_tangent,
@@ -61,6 +63,45 @@ from run_raft_shard_baseline import get_device, iter_source_records, parse_sourc
 NODE_PREDICTORS = ("oracle", "raft_nodes", "oslo")
 
 
+# Published protocol (PriOr-Flow ``evaluate.py``, validate_FlowScape[_regions]):
+# every pixel counts (no validity mask); GT du is wrapped to [-W/2, W/2), the
+# difference is not; SEPE is the haversine great-circle distance between the
+# predicted and GT endpoints in radians (endpoint x wrapped, y clamped to the
+# raster); "Poles" are the rows outside the central 90-degree band.
+def official_region_masks(height: int, width: int) -> Dict[str, torch.Tensor]:
+    min_n = int(np.round((0.5 - 0.25) * height - 0.5))
+    max_n = int(np.round((0.5 + 0.25) * height - 0.5))
+    center = torch.zeros(height, width, dtype=torch.bool)
+    center[min_n:max_n] = True
+    return {"all": torch.ones(height, width, dtype=torch.bool),
+            "equator": center, "poles": ~center}
+
+
+def official_maps(pred: torch.Tensor, gt: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    """pred, gt [H, W, 2] ERP pixel flow -> (EPE px, SEPE rad), both [H, W]."""
+    height, width = gt.shape[:2]
+    pred = pred.double()
+    gt = gt.double().clone()
+    gt[..., 0] = torch.remainder(gt[..., 0] + width / 2, width) - width / 2
+    epe = (pred - gt).norm(dim=-1)
+    xx = torch.arange(width, dtype=torch.float64).view(1, -1).expand(height, width)
+    yy = torch.arange(height, dtype=torch.float64).view(-1, 1).expand(height, width)
+
+    def sphere(flow):
+        x = torch.remainder(xx + flow[..., 0] + 0.5, width) - 0.5
+        y = (yy + flow[..., 1]).clamp(-0.5, height - 0.5)
+        lon = (x + 0.5) / width * 2.0 * math.pi
+        lat = (0.5 - (y + 0.5) / height) * math.pi
+        return lon, lat
+
+    lon_p, lat_p = sphere(pred)
+    lon_g, lat_g = sphere(gt)
+    hav = torch.sin((lat_g - lat_p) / 2) ** 2 + \
+        torch.cos(lat_p) * torch.cos(lat_g) * torch.sin((lon_g - lon_p) / 2) ** 2
+    sepe = 2.0 * torch.arcsin(hav.clamp(0.0, 1.0).sqrt())
+    return epe, sepe
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="ERP-pixel EPE evaluation on sfprep shards.")
     parser.add_argument("--shards", default="/data/shards")
@@ -72,7 +113,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", default="raft_large", choices=["raft_large", "raft_small"])
     parser.add_argument("--weights", default="default", choices=["default", "none"])
     parser.add_argument("--flow-transform", default="identity", choices=FLOW_TRANSFORMS)
+    parser.add_argument("--tv-checkpoint", default="",
+                        help="raft predictor: a run_erp_raft_train.py checkpoint (raft_erp.pt)")
+    parser.add_argument("--prior-checkpoint", default="",
+                        help="raft predictor: a released PriOr-RAFT checkpoint")
+    parser.add_argument("--prior-eval-iters", type=int, default=12)
+    parser.add_argument("--panoflow-checkpoint", default="",
+                        help="raft predictor: a released PanoFlow(CSFlow) checkpoint (CFE)")
+    parser.add_argument("--panoflow-eval-iters", type=int, default=12)
     parser.add_argument("--init-checkpoint", default="", help="oslo predictor checkpoint (.pt)")
+    parser.add_argument("--grid", default="healpix", choices=["healpix", "equiangular"])
     parser.add_argument("--retina-resolution", type=int, default=7)
     parser.add_argument("--estimation-resolution", type=int, default=4)
     parser.add_argument("--corr-pool-levels", type=int, default=3)
@@ -134,8 +184,28 @@ def build_oslo(args: argparse.Namespace, device: torch.device):
     return model, pyramid
 
 
+# Grid and pyramid settings an OSLO checkpoint records; they override this script's
+# defaults so every checkpoint is scored on the grids it was trained with.
+CHECKPOINT_GRID_ARGS = ("grid", "retina_resolution", "estimation_resolution", "resolution",
+                        "corr_pool_levels", "conv_neighbors", "lookup_neighbors")
+
+
+def adopt_checkpoint_grids(args: argparse.Namespace) -> None:
+    payload = torch.load(args.init_checkpoint, map_location="cpu", weights_only=False)
+    trained = payload.get("args", {}) if isinstance(payload, dict) else {}
+    for key in CHECKPOINT_GRID_ARGS:
+        if key in trained and trained[key] != getattr(args, key):
+            print(f"checkpoint sets {key}={trained[key]} (was {getattr(args, key)})", flush=True)
+            setattr(args, key, trained[key])
+
+
 def main() -> None:
     args = parse_args()
+    if args.predictor == "oslo" and args.init_checkpoint:
+        adopt_checkpoint_grids(args)
+        if args.grid != "healpix":
+            raise SystemExit("the ERP readout is built for HEALPix nodes; equiangular "
+                             "checkpoints are not supported here")
     if args.batch_size < 1:
         raise ValueError("--batch-size must be >= 1")
     output_dir = Path(args.output_dir)
@@ -148,10 +218,31 @@ def main() -> None:
     basis_east, basis_north = tangent_basis(points)
 
     raft = raft_transforms = weights_name = torchvision_version = None
-    if args.predictor in ("raft", "raft_nodes"):
+    external = [x for x in (args.tv_checkpoint, args.prior_checkpoint, args.panoflow_checkpoint) if x]
+    if len(external) > 1:
+        raise SystemExit("--tv-checkpoint, --prior-checkpoint and --panoflow-checkpoint "
+                         "are mutually exclusive")
+    if external and args.predictor != "raft":
+        raise SystemExit("checkpoint flags need --predictor raft")
+    if args.prior_checkpoint:
+        raft, meta = load_prior_checkpoint(args.prior_checkpoint, device,
+                                           eval_iters=args.prior_eval_iters)
+        weights_name, torchvision_version = f"prior:{args.prior_checkpoint}", None
+        print(f"prior_raft loaded {meta}", flush=True)
+    elif args.panoflow_checkpoint:
+        raft, meta = load_panoflow_checkpoint(args.panoflow_checkpoint, device,
+                                              eval_iters=args.panoflow_eval_iters)
+        weights_name, torchvision_version = f"panoflow:{args.panoflow_checkpoint}", None
+        print(f"panoflow(csflow) loaded {meta}", flush=True)
+    elif args.predictor in ("raft", "raft_nodes"):
         raft, raft_transforms, weights_name, torchvision_version = load_raft_model(
-            args.model, args.weights, device
+            args.model, "none" if args.tv_checkpoint else args.weights, device
         )
+        if args.tv_checkpoint:
+            payload = torch.load(args.tv_checkpoint, map_location=device)
+            raft.load_state_dict(payload["model"])
+            raft.eval()
+            weights_name = f"trained:{args.tv_checkpoint}"
         print(f"raft model={args.model} weights={weights_name} "
               f"flow_transform={args.flow_transform} torchvision={torchvision_version}", flush=True)
     oslo_model = pyramid = None
@@ -180,6 +271,8 @@ def main() -> None:
 
     totals: Dict[str, float] = {}
     counts: Dict[str, float] = {}
+    official_totals: Dict[str, float] = {}
+    official_counts: Dict[str, float] = {}
     sample_chunks: List[torch.Tensor] = []
     seen = 0
     start_time = time.time()
@@ -206,12 +299,19 @@ def main() -> None:
                 )["flow"]
                 preds.append(readout(node_gt, cache, height, width))
         elif args.predictor in ("raft", "raft_nodes"):
-            raft_flow = predict_raft_flow(
-                raft, raft_transforms,
-                torch.stack([it["frame1_u8"] for it in items], dim=0),
-                torch.stack([it["frame2_u8"] for it in items], dim=0),
-                device, args.flow_transform,
-            )
+            frames1 = torch.stack([it["frame1_u8"] for it in items], dim=0)
+            frames2 = torch.stack([it["frame2_u8"] for it in items], dim=0)
+            if args.prior_checkpoint:
+                raft_flow = predict_prior_flow(raft, frames1, frames2, device,
+                                               args.flow_transform,
+                                               eval_iters=args.prior_eval_iters)
+            elif args.panoflow_checkpoint:
+                raft_flow = predict_panoflow_cfe_flow(raft, frames1, frames2, device,
+                                                      args.flow_transform)
+            else:
+                raft_flow = predict_raft_flow(raft, raft_transforms, frames1, frames2,
+                                              device, args.flow_transform)
+            raft_flow = raft_flow.detach().float().cpu()
             preds = []
             for i in range(len(items)):
                 erp = raft_flow[i].permute(1, 2, 0).contiguous()
@@ -229,9 +329,17 @@ def main() -> None:
             preds = [readout(node_pred[i].float(), cache, height, width)
                      for i in range(len(items))]
 
+        if "official" not in cache:
+            cache["official"] = official_region_masks(height, width)
         for it, pred in zip(items, preds):
             maps = compute_epe_maps(pred, it["flow_erp"], it["valid_erp"], width)
             accumulate_epe(maps, cache["masks"], cache["coslat"], totals, counts, sample_chunks)
+            epe, sepe = official_maps(pred.cpu(), it["flow_erp"])
+            for region, mask in cache["official"].items():
+                for name, vals in (("epe", epe), ("sepe", sepe)):
+                    key = f"{region}_{name}"
+                    official_totals[key] = official_totals.get(key, 0.0) + vals[mask].sum().item()
+                    official_counts[key] = official_counts.get(key, 0.0) + mask.sum().item()
 
     pending: List[dict] = []
     for record in tqdm(iter_source_records(Path(args.shards), sources), desc="pairs", unit="pair"):
@@ -269,6 +377,8 @@ def main() -> None:
     if seen == 0:
         raise RuntimeError("no pairs evaluated")
     metrics = finalize_epe(totals, counts, sample_chunks)
+    for key, total in official_totals.items():
+        metrics[f"official_{key}"] = total / official_counts[key]
     metrics["elapsed_s"] = time.time() - start_time
     metrics["pairs"] = seen
     print(f"{args.predictor}_epe " + json.dumps(
@@ -283,6 +393,8 @@ def main() -> None:
             "torchvision": torchvision_version,
         },
         "metrics": metrics,
+        "official_protocol": "PriOr-Flow evaluate.py: all pixels, GT du wrapped, "
+                             "SEPE = haversine endpoint distance (rad), poles = |lat| > 45 deg",
     }
     metrics_out = output_dir / "epe_metrics.json"
     with open(metrics_out, "w", encoding="utf-8") as handle:
