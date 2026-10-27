@@ -33,7 +33,9 @@ arm_flags() {
     bary) echo "--lookup-interp barycentric" ;;
     both) echo "--flow-unit node --lookup-interp barycentric" ;;
     raw) echo "--corr-norm raw" ;;
+    rings1) echo "--lookup-rings 1" ;;
     rings4) echo "--lookup-rings 4" ;;
+    rings4dense) echo "--lookup-rings 4 --lookup-ring-points 16" ;;
     noaux) echo "--aux-match-weight 0" ;;
     enc2) echo "--encoder-blocks-per-level 2" ;;
     estblocks) echo "--encoder-est-blocks 2" ;;

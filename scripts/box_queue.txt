@@ -64,3 +64,21 @@ flow360_check | scripts/flow360_convention_check.sh |
 planar_s19 | scripts/raft_parity_planar.sh | SEED=19; ARMS=raft_small_so3|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024 --so3-prob 1
 planar_s19_rot | scripts/raft_parity_planar.sh | SEED=19; ARMS=raft_small_so3|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024 --so3-prob 1; EVAL_TAG=rot; EVAL_FLAGS=--val-so3-prob 1; OSLO_RUNS=oslo_base|raft_parity_rotval/base_{tag}_rotated.json
 
+# Search reach (2026-10-26, professor's question: does a larger search area close the gap?).
+# OSLO reach = rings x coarsest corr spacing (r1, 29.3 deg): base 2 rings = 59 deg; RAFT = 90.
+# 1) every benchmark row again with EPE per GT-displacement bin: where is OSLO's error?   ~2 h
+benchmark_bins | scripts/benchmark_flowscape.sh | TAG=bins
+# 2) reach dose-response at the base recipe (r7/r4/r6, replica360+flowscape, 10k, seed 7):
+#    1 ring = 29 deg, 4 rings = 117 deg, 4 rings x 16 points = 117 deg with dense sampling   ~9 h
+reach_arms | scripts/raft_parity_large.sh | ARMS=rings1 rings4 rings4dense; PREFLIGHT_ARMS=rings4dense
+# Improvement probes (2026-10-26). Rows in benchmark_bins above, free: oracle_r7/r8 (EPE
+# floor if the output grid were r7/r8) and oslo_base at 24/32 update iterations (does
+# OSLO keep improving with more iterations at test time, as RAFT does?).
+# 3) supervision at r7: r4 -> r7 convex upsampling (64 children per node, RAFT's 8x8),
+#    attacks the r6 output floor (4.12 px) directly   ~4 h
+sup_r7 | scripts/raft_parity_large.sh | RUN_NAME=raft_parity_sup7; ARMS=base; PREFLIGHT_ARMS=base; RESOLUTION=7
+# 4) training budget: base at 30k steps instead of 10k. The gap to PriOr-Flow is blamed
+#    on budget; this measures how much 3x more steps buys   ~9 h
+budget_30k | scripts/raft_parity_large.sh | RUN_NAME=raft_parity_budget; ARMS=base; STEPS=30000; EVAL_EVERY=5000
+# 5) same table with every new row (finished rows are skipped)   ~1 h
+benchmark_bins_final | scripts/benchmark_flowscape.sh | TAG=bins

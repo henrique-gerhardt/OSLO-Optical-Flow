@@ -15,15 +15,24 @@ PANOFLOW="${PANOFLOW_CKPT:-$(find "$OUT" -maxdepth 3 -name 'PanoFlow(CSFlow)*.pt
 # ROWS: "name|predictor|checkpoint (empty = none)|run_epe_eval.py flags"
 ROWS="${ROWS:-zero|zero||
 oracle_r6|oracle||--resolution 6
+oracle_r7|oracle||--resolution 7
+oracle_r8|oracle||--resolution 8
 prior_raft|raft|$PRIOR|--prior-checkpoint $PRIOR
 panoflow|raft|$PANOFLOW|--panoflow-checkpoint $PANOFLOW
 frozen_raft_large|raft||--model raft_large --weights default
 raft_small_so3|raft|$OUT/raft_parity_planar/raft_small_so3_s7/raft_erp.pt|--model raft_small --tv-checkpoint $OUT/raft_parity_planar/raft_small_so3_s7/raft_erp.pt
 raft_large_so3_scale|raft|$OUT/raft_parity_planar_scale/raft_large_so3_s7/raft_erp.pt|--model raft_large --tv-checkpoint $OUT/raft_parity_planar_scale/raft_large_so3_s7/raft_erp.pt
 oslo_base|oslo|$OUT/raft_parity_large/base_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_large/base_s7/oslo_raft.pt
+oslo_base_it24|oslo|$OUT/raft_parity_large/base_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_large/base_s7/oslo_raft.pt --eval-iters 24
+oslo_base_it32|oslo|$OUT/raft_parity_large/base_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_large/base_s7/oslo_raft.pt --eval-iters 32
 oslo_noso3|oslo|$OUT/raft_parity_large/noso3_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_large/noso3_s7/oslo_raft.pt
 oslo_large_scale|oslo|$OUT/raft_parity_scale/large_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_scale/large_s7/oslo_raft.pt
-oslo_r8_cp4|oslo|$OUT/raft_parity_native_mix_cp4/base_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_native_mix_cp4/base_s7/oslo_raft.pt}"
+oslo_r8_cp4|oslo|$OUT/raft_parity_native_mix_cp4/base_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_native_mix_cp4/base_s7/oslo_raft.pt
+oslo_reach29|oslo|$OUT/raft_parity_large/rings1_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_large/rings1_s7/oslo_raft.pt
+oslo_reach117|oslo|$OUT/raft_parity_large/rings4_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_large/rings4_s7/oslo_raft.pt
+oslo_reach117_dense|oslo|$OUT/raft_parity_large/rings4dense_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_large/rings4dense_s7/oslo_raft.pt
+oslo_sup_r7|oslo|$OUT/raft_parity_sup7/base_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_sup7/base_s7/oslo_raft.pt
+oslo_base_30k|oslo|$OUT/raft_parity_budget/base_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_budget/base_s7/oslo_raft.pt}"
 mkdir -p "$DEST"
 
 names=()
@@ -68,6 +77,25 @@ for n in names:
     if n in published:
         row += f"   {published[n][0]:.2f} / {published[n][1]:.2f}"
     print(row)
+bins = ("0-5", "5-15", "15-30", "30-60", "60-90", "90-180")
+print("\nEPE (px) by GT displacement (degrees); OSLO reach 59 deg at 2 rings (29 / 117 at 1 / 4), "
+      "RAFT 90 deg")
+print(f"{'row':<22}" + "".join(f"{b:>9}" for b in bins))
+frac_row = None
+for n in names:
+    path = root / n / "epe_metrics.json"
+    if not path.exists():
+        continue
+    m = json.loads(path.read_text())["metrics"]
+    if "official_disp0-5_epe" not in m:
+        print(f"{n:<22}  (no displacement bins: evaluated before they existed)")
+        continue
+    print(f"{n:<22}" + "".join(
+        f"{m.get('official_disp' + b + '_epe', float('nan')):>9.2f}" for b in bins))
+    frac_row = frac_row or m
+if frac_row:
+    print(f"{'% of pixels':<22}" + "".join(
+        f"{100 * frac_row.get('official_disp' + b + '_fraction', 0.0):>9.1f}" for b in bins))
 print("\nPublished (PriOr-Flow Table, FlowScape all weathers, EPE / SEPE): TanImg 18.3 / 25.3, "
       "SLOF 7.59 / 5.79, PanoFlow 3.38 / 4.78, PriOr-Flow 2.33 / 3.49")
 PY

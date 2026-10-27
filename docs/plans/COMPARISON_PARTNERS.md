@@ -277,3 +277,39 @@ when the convention defect surfaced. The cheap version of that check is ERP-pixe
 EPE on flowscape:test against their published 2.33 px "All". Our split holds 1386
 of their 1400 pairs and our readout is at r6 nodes, so a few per cent of
 disagreement is expected and a large gap is not.
+
+## 9. Published-protocol benchmark on FlowScape test (box, 2026-10-25, git `2538b3b`)
+
+`scripts/benchmark_flowscape.sh`: `run_epe_eval.py` with the protocol of PriOr-Flow's
+`evaluate.py` (every pixel, GT du wrapped, SEPE = haversine endpoint distance in 1e-3 rad,
+poles = |lat| > 45 deg). 1386 of the official 1400 test pairs.
+
+| row | EPE all | EPE eq | EPE poles | SEPE all | SEPE eq | SEPE poles | published EPE / SEPE |
+|---|---|---|---|---|---|---|---|
+| zero flow | 23.39 | 5.72 | 41.07 | 48.07 | 31.40 | 64.74 | |
+| oracle r6 (floor of any r6-output model) | 4.12 | 0.63 | 7.60 | 1.99 | 2.92 | 1.06 | |
+| PriOr-RAFT (released) | **2.33** | 0.53 | 4.14 | **3.49** | 2.94 | 4.03 | 2.33 / 3.49 |
+| PanoFlow (released) | 3.32 | 0.51 | 6.13 | 4.45 | 2.85 | 6.04 | 3.38 / 4.78 |
+| frozen RAFT-large | 12.73 | 1.05 | 24.41 | 20.20 | 5.74 | 34.66 | |
+| RAFT-small SO(3), ours, 10k | 13.46 | 1.27 | 25.65 | 18.16 | 7.01 | 29.32 | |
+| RAFT-large SO(3), ours, 10k, round-3 data | 11.33 | 1.04 | 21.62 | 15.28 | 5.82 | 24.74 | |
+| OSLO base r7 | 16.29 | 1.61 | 30.97 | 21.00 | 8.90 | 33.10 | |
+| OSLO noso3 r7 | 16.55 | 1.44 | 31.66 | **12.87** | 7.95 | **17.79** | |
+| OSLO large (round-3 data) | 17.00 | 1.73 | 32.27 | 22.88 | 9.59 | 36.17 | |
+| OSLO r8 cp4 | 16.95 | 1.22 | 32.69 | 19.92 | 6.78 | 33.05 | |
+
+Readings:
+- **Reproduction exact**: PriOr-RAFT 2.33 / 3.49 equals the published row to two
+  decimals; PanoFlow within 2% EPE / 7% SEPE. The harness, split and SEPE unit are
+  the published ones, so every row above sits in their table.
+- OSLO (16.3 px) lies between TanImg (18.3) and SLOF (7.59); 7× PriOr-Flow's EPE.
+  Our trained RAFT-large (11.3) is 4.9× PriOr: the budget gap (10k steps from scratch
+  vs Things pre-training + 100k × batch 6) dominates for both architectures.
+- **EPE floor**: any model read out from r6 nodes cannot go below 4.12 px (poles 7.60),
+  above PriOr-Flow and PanoFlow. In ERP-pixel EPE the r6 output grid caps OSLO; in SEPE
+  the floor (1.99) is below every published row.
+- **SEPE ranks differently**: OSLO noso3 (12.87) beats every RAFT trained or frozen here
+  (best 15.28), driven by the poles (17.8 vs 24.7). The EPE all/poles column is
+  dominated by polar ERP-pixel inflation (sec phi).
+- flow360_check: frozen RAFT-large +43.6 identity / -70.6 negated, both directions ⇒
+  stored flow360 convention correct; real-data parity can run.

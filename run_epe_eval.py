@@ -102,6 +102,20 @@ def official_maps(pred: torch.Tensor, gt: torch.Tensor) -> Tuple[torch.Tensor, t
     return epe, sepe
 
 
+# Bins of GT great-circle displacement (degrees) for the per-magnitude breakdown. OSLO's
+# search reach is rings x the coarsest corr level's node spacing: 29 / 59 / 117 degrees
+# for 1 / 2 / 4 rings at r4..r1. RAFT's is 4 cells x 64 px = 90 degrees at 1024 px width.
+DISP_BINS_DEG = (0, 5, 15, 30, 60, 90, 180)
+
+
+def displacement_bin_masks(gt: torch.Tensor) -> Dict[str, torch.Tensor]:
+    """gt [H, W, 2] ERP pixel flow -> {"disp{lo}-{hi}": mask} by GT angular displacement."""
+    _, disp = official_maps(torch.zeros_like(gt), gt)
+    deg = torch.rad2deg(disp)
+    return {f"disp{lo}-{hi}": (deg >= lo) & (deg < hi)
+            for lo, hi in zip(DISP_BINS_DEG[:-1], DISP_BINS_DEG[1:])}
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="ERP-pixel EPE evaluation on sfprep shards.")
     parser.add_argument("--shards", default="/data/shards")
@@ -335,7 +349,9 @@ def main() -> None:
             maps = compute_epe_maps(pred, it["flow_erp"], it["valid_erp"], width)
             accumulate_epe(maps, cache["masks"], cache["coslat"], totals, counts, sample_chunks)
             epe, sepe = official_maps(pred.cpu(), it["flow_erp"])
-            for region, mask in cache["official"].items():
+            regions = dict(cache["official"])
+            regions.update(displacement_bin_masks(it["flow_erp"]))
+            for region, mask in regions.items():
                 for name, vals in (("epe", epe), ("sepe", sepe)):
                     key = f"{region}_{name}"
                     official_totals[key] = official_totals.get(key, 0.0) + vals[mask].sum().item()
@@ -378,7 +394,12 @@ def main() -> None:
         raise RuntimeError("no pairs evaluated")
     metrics = finalize_epe(totals, counts, sample_chunks)
     for key, total in official_totals.items():
-        metrics[f"official_{key}"] = total / official_counts[key]
+        if official_counts[key] > 0:
+            metrics[f"official_{key}"] = total / official_counts[key]
+    all_px = official_counts.get("all_epe", 0.0)
+    for key, count in official_counts.items():
+        if key.startswith("disp") and key.endswith("_epe") and all_px > 0:
+            metrics[f"official_{key[:-4]}_fraction"] = count / all_px
     metrics["elapsed_s"] = time.time() - start_time
     metrics["pairs"] = seen
     print(f"{args.predictor}_epe " + json.dumps(
