@@ -313,3 +313,30 @@ Readings:
   dominated by polar ERP-pixel inflation (sec phi).
 - flow360_check: frozen RAFT-large +43.6 identity / -70.6 negated, both directions ⇒
   stored flow360 convention correct; real-data parity can run.
+
+### 9.1 Where the error is: displacement bins, output floors, iterations (box, 2026-10-27, git `5a66883`)
+
+FlowScape test, same protocol. EPE (px) by GT great-circle displacement; last row = share of pixels.
+
+| row | 0-5° | 5-15° | 15-30° | 30-60° | EPE all |
+|---|---|---|---|---|---|
+| zero | 12.57 | 55.13 | 190.7 | 329.4 | 23.39 |
+| oracle_r6 / r7 / r8 | 4.79 / 3.27 / 1.49 | 1.44 / 0.75 / 0.79 | 10.3 / 6.9 / 6.7 | 84 / 90 / 74 | 4.12 / 2.78 / 1.41 |
+| prior_raft | 2.32 | 1.68 | 19.2 | 94.7 | 2.33 |
+| raft_large_so3_scale | 8.55 | 17.44 | 115.9 | 274.7 | 11.33 |
+| oslo_base | 11.97 | 26.83 | 147.4 | 309.8 | 16.29 |
+| oslo_noso3 | 15.00 | 20.13 | 66.3 | 164.1 | 16.55 |
+| oslo_r8_cp4 | 12.30 | 28.58 | 151.1 | 315.0 | 16.95 |
+| % of pixels | 76.8 | 22.5 | 0.6 | 0.04 | |
+
+- **Search reach is not the bottleneck.** Pixels beyond 30° are 0.04% of the test set and add
+  0.12 px to OSLO base's 16.29. Of OSLO's 14.0 px gap to PriOr-Flow, 7.4 px come from the
+  0-5° bin and 5.7 px from 5-15°, all well inside the 59° reach.
+- **The output grid is not the current bottleneck.** The r8 model (oracle floor 1.41) scores
+  the same as r6 (16.95 vs 16.29). The trained models sit 4x above the r6 floor. The floor
+  only binds near PriOr's level: r6 4.12 and r7 2.78 are above PriOr's 2.33; r8 1.41 is below.
+- **More update iterations make OSLO worse**: 12 → 24 → 32 gives 16.29 → 16.59 → 17.32. The
+  update operator does not converge to a fixed point (trained with 8 iterations).
+- **SO(3) augmentation costs FlowScape's larger motions**: noso3 halves the 15-60° error
+  (66 vs 147, 164 vs 310) and the polar SEPE, at a cost in the 0-5° bin.
+- 95% of OSLO base's EPE comes from the poles (31.0 px vs 1.6 at the equator).

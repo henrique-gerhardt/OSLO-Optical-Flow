@@ -12,6 +12,13 @@ OUTPUT_DIR="${OUTPUT_DIR:-./outputs}"
 STATE="$OUTPUT_DIR/_queue"
 REPORT="$STATE/report.txt"
 
+# Job log without progress bars (tqdm pairs, downloads), docker build steps and the
+# torch.load FutureWarning; tqdm's carriage returns become line breaks first.
+clean_log() {
+  tr '\r' '\n' < "$1" | grep -v -E \
+    'pair/s\]|s/pair\]|B/s\]|^#[0-9]+ |^ (Image|Container) |FutureWarning: You are using `torch.load`|payload = torch.load|^[[:space:]]*$'
+}
+
 {
   echo "# box queue report, $(date '+%F %T'), git $(git rev-parse --short HEAD)"
   echo
@@ -35,9 +42,9 @@ REPORT="$STATE/report.txt"
       tail -5 "$STATE/$name.attempt1.log"
     }
     echo "--- setup, validation and errors"
-    grep -E "^(=== |skip |grid=|params=|patch training|pyramid|val@|metric node)|Error|error:|Traceback|Killed" "$log"
+    clean_log "$log" | grep -E "^(=== |skip |grid=|params=|patch training|pyramid|val@|metric node)|Error|error:|Traceback|Killed"
     echo "--- last 60 lines"
-    tail -60 "$log"
+    clean_log "$log" | tail -60
   done < "$QUEUE"
   echo
   echo "## host"

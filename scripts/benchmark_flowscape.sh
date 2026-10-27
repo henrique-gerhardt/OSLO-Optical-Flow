@@ -23,6 +23,8 @@ frozen_raft_large|raft||--model raft_large --weights default
 raft_small_so3|raft|$OUT/raft_parity_planar/raft_small_so3_s7/raft_erp.pt|--model raft_small --tv-checkpoint $OUT/raft_parity_planar/raft_small_so3_s7/raft_erp.pt
 raft_large_so3_scale|raft|$OUT/raft_parity_planar_scale/raft_large_so3_s7/raft_erp.pt|--model raft_large --tv-checkpoint $OUT/raft_parity_planar_scale/raft_large_so3_s7/raft_erp.pt
 oslo_base|oslo|$OUT/raft_parity_large/base_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_large/base_s7/oslo_raft.pt
+oslo_base_it4|oslo|$OUT/raft_parity_large/base_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_large/base_s7/oslo_raft.pt --eval-iters 4
+oslo_base_it8|oslo|$OUT/raft_parity_large/base_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_large/base_s7/oslo_raft.pt --eval-iters 8
 oslo_base_it24|oslo|$OUT/raft_parity_large/base_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_large/base_s7/oslo_raft.pt --eval-iters 24
 oslo_base_it32|oslo|$OUT/raft_parity_large/base_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_large/base_s7/oslo_raft.pt --eval-iters 32
 oslo_noso3|oslo|$OUT/raft_parity_large/noso3_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_large/noso3_s7/oslo_raft.pt
