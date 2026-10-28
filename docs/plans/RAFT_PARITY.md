@@ -759,3 +759,114 @@ Readings against the pre-registration:
 
 Not run: the ablation closers (`flow360_check`, `planar_s19`, `planar_s19_rot`) were not
 pushed before the queue started.
+
+## 11. Operator sanity checks and the professor's isolation runs (2026-10-27)
+
+The professor asked for known-answer tests of every operator: a white image must stay
+white, a dot must give a centered blob. He also asked for a comparison at matched pixels
+and parameters, to separate architecture from input size. `run_sanity_checks.py` runs 34
+such checks on CPU, with no data and no weights. Run it with `--checkpoint` for a trained
+encoder, or through `scripts/sanity_checks.sh` on the box.
+
+### 11.1 What passes (production grids r7 / r6 / r4)
+
+These operators reproduce the known answer:
+
+- **Constant image through a random SDPAConv:** stays constant, deviation 1e-6.
+- **4-to-1 pooling:** keeps a constant.
+- **Box blur of a dot:** a centered, round blob (centroid within 0.22 spacings, anisotropy at most 1.32).
+- **ERP → node sampling:** a constant and a linear field come out exact (error 7e-6).
+- **Training targets for a rigid rotation:** median error 0.000 px, max 0.10 px, poles included.
+- **ERP readout of an exact rotation field:** EPE 0.001 px.
+- **Convex upsampling:** a rotation field comes back with 1.6% error, and zero stays zero.
+- **Correlation lookup:** with zero flow it peaks at the stencil point of the true motion (95% of equator nodes, east and west). With the true flow it peaks at the center (100%).
+
+The data path, the targets, the readout and the lookup are therefore not where the error comes from.
+
+### 11.2 Two defects in the neighbor graph
+
+**Slot orientation flips at the equator.** SDPAConv applies weight k to neighbor slot k,
+and slots are sorted by `atan2` of the neighbor's tangent angle, starting at -180 deg.
+On HEALPix the same-ring west neighbor sits just north of west in the north hemisphere
+and just south of west in the south hemisphere. It therefore sorts last in one hemisphere
+and first in the other, and every slot points 45 deg apart between the hemispheres
+(slot 1: +90 deg north, +47 deg south). This holds at every level, r4 to r7.
+
+A planar CNN has one kernel orientation everywhere. OSLO has two, with a seam at the
+equator, so the encoder cannot learn one directional filter that works on the whole
+sphere. Starting the sort at -157.5 deg, between two neighbor directions, gives one
+orientation: the worst north/south mismatch drops from 46-49 deg to 0-3 deg.
+Flag: `--neighbor-sort-cut-deg -157.5`.
+
+**Fixed pattern around the 24 r7 pixels with 7 neighbors.** The r7 retina graph is
+HEALPix topology. There, 24 pixels (3 at each of the 8 base-pixel corners) have an empty
+slot, and a white image no longer gives a constant feature map.
+
+- Random init: 17% of est nodes deviate by more than 1%.
+- Trained Stage A encoder: the pattern persists. At its worst node it is 3x the typical
+  feature contrast of a textured image, and on 6.5% of est nodes it exceeds half of that
+  contrast.
+
+The pattern is identical in both frames, so at those places the correlation favors zero
+motion. The lower levels (r4-r6) use the kNN graph and have no empty slots.
+Flag: `--fill-missing-neighbors`, which puts the nearest other node in the empty slot.
+
+With both flags, 34/34 checks pass. With neither flag the graph is identical to the
+previous one (checked tensor by tensor against HEAD), so every existing checkpoint keeps
+its meaning.
+
+### 11.3 Queued (box queue, after `reach_arms`)
+
+| job | what it isolates |
+|---|---|
+| `sanity` | the checks above on the box: default graph, fixed graph, trained `base_s7` encoder |
+| `overfit`, `overfit_planar` | capacity/optimization: 4 fixed batches (8 pairs) for 3000 steps (`--overfit-batches`). The train error must go to ~0 for OSLO base and for RAFT-small. If only OSLO fails, its architecture or optimization is broken; if both fit, the gap is generalization (data/recipe) |
+| `gridfix` | the base recipe with both graph fixes (arm `gridfix`) |
+| `oslo_small` | OSLO with RAFT-small's parameter count: hidden 72, context 48, 1.03M (base 1.56M, RAFT-small 0.99M) |
+| `raft_small_320` | RAFT-small SO(3) arm fed 320x640 (`--resize`, eval `--infer-size`): 204,800 input px and a 40x80 = 3,200-cell corr grid, against OSLO's 196,608 retina nodes and 3,072 est nodes. Table rows: oslo_base, oslo_small, oslo_gridfix |
+
+Benchmark rows `oslo_gridfix`, `oslo_small` and `raft_small_so3_320` are in
+`scripts/benchmark_flowscape.sh` and run in `benchmark_bins_final`.
+
+Reading `raft_small_320` against `raft_small_so3` (512x1024):
+
+- If RAFT-small at 320x640 still beats OSLO small, input pixels do not explain the gap.
+  The architecture does.
+- If RAFT-small at 320x640 drops to OSLO's level, the gap was the pixel count.
+
+### 11.4 Pipeline checks on real data (`run_pipeline_checks.py`)
+
+These checks use real shards and a trained checkpoint. Locally they ran on replica360:val
+with Stage A (r7/r6/r4). On the box they run in the `sanity` job with flowscape,
+replica360, mpf and flow360, using `base_s7`.
+
+All of the following passed locally:
+
+- **GT warp:** frame 2 sampled at the GT endpoint matches frame 1 far better than at zero
+  flow (residual ratio 0.16) and than at the sign-flipped endpoint (0.12).
+- **OSLO training loader:** the same holds without and with SO(3), at 0.180 and 0.179.
+  The rotation keeps frames and targets paired.
+- **Planar RAFT loader:** plain, roll+flip, SO(3) and `--resize 320x640` all keep frames
+  and flow paired (0.12–0.17).
+- **Batch independence:** a pair's prediction does not change with the other pairs in the batch (diff 0).
+- **Gradient checkpointing:** on and off give the same output (diff 0) and the same gradients (7e-6).
+- **Gradient reach:** 102/102 parameter tensors receive a gradient.
+- **Yaw equivariance:** rotating the input 90° about z rotates the prediction. The
+  difference is 0.5% of |flow|, so the model is a convolution, not a function of
+  absolute position. This symmetry keeps the hemispheres, so it does not see the §11.2
+  slot flip.
+- **Static input:** frame 2 = frame 1 gives |pred| of 0.095° against a mean GT motion of 10.7°.
+- **vs zero:** +90.5% over the zero-flow baseline (4 pairs), consistent with the +88% recorded for Stage A.
+- **Error per iteration:** 4.81, 2.36, 1.18, 1.03, 1.02, 1.03 and 1.06° at iterations
+  1, 2, 4, 8, 12, 16 and 24. The best is at 12–13, and the error drifts up after that
+  (trained with 8). This matches the FlowScape benchmark, where 24 and 32 iterations hurt.
+
+Open items. The local shards date from 2026-06-14, so both affect them only; the box job
+checks the current shards.
+
+- **flow360:** the sign-flipped endpoint warps better than the GT (ratio 1.8–2.5). This is
+  the known pre-fix convention defect (2026-08-04).
+- **mpf:** the GT barely beats zero flow on the `EFTs_Car2000` sequences (0.92–0.99, even
+  at 15 px of motion), but clearly beats it on the City sequences (0.43–0.89). Neither
+  negation, swapping, a backward direction nor a 2× scale does better. mpf was in the
+  round 3 training mix.

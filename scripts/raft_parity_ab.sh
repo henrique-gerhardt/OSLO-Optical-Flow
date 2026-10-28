@@ -42,6 +42,14 @@ arm_flags() {
     raftblock) echo "--update-block raft" ;;
     iters12) echo "--iters 12" ;;
     noso3) echo "--so3-prob 0" ;;
+    # same SDPAConv neighbor orientation in both hemispheres (atan2 order differs by 45 deg)
+    slotfix) echo "--neighbor-sort-cut-deg -157.5" ;;
+    # slotfix + an 8th neighbor for the 24 retina pixels that have 7 (no fixed pattern)
+    gridfix) echo "--neighbor-sort-cut-deg -157.5 --fill-missing-neighbors" ;;
+    # about RAFT-small's 0.99M parameters (base is 1.56M)
+    small) echo "--hidden-channels 72 --context-dim 48" ;;
+    # 4 fixed batches repeated: can the model fit 8 pairs? (train_global must go to ~0)
+    overfit) echo "--overfit-batches 4" ;;
     yaw) echo "--so3-axis vertical" ;;
     so3small) echo "--so3-max-angle-deg 30" ;;
     sched) echo "--onecycle-pct-start 0.05 --onecycle-anneal linear --weight-decay 1e-4" ;;

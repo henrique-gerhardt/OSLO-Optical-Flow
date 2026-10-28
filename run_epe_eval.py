@@ -127,6 +127,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", default="raft_large", choices=["raft_large", "raft_small"])
     parser.add_argument("--weights", default="default", choices=["default", "none"])
     parser.add_argument("--flow-transform", default="identity", choices=FLOW_TRANSFORMS)
+    parser.add_argument("--infer-size", default="",
+                        help="raft predictor (TorchVision): run the net at HxW, flow resampled "
+                             "back to shard size (for checkpoints trained with --resize).")
     parser.add_argument("--tv-checkpoint", default="",
                         help="raft predictor: a run_erp_raft_train.py checkpoint (raft_erp.pt)")
     parser.add_argument("--prior-checkpoint", default="",
@@ -141,6 +144,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--estimation-resolution", type=int, default=4)
     parser.add_argument("--corr-pool-levels", type=int, default=3)
     parser.add_argument("--conv-neighbors", type=int, default=8)
+    parser.add_argument("--neighbor-sort-cut-deg", type=float, default=None)
+    parser.add_argument("--fill-missing-neighbors", action="store_true")
     parser.add_argument("--lookup-neighbors", type=int, default=24)
     parser.add_argument("--lookup-rings", type=int, default=2)
     parser.add_argument("--lookup-ring-points", type=int, default=8)
@@ -154,6 +159,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-pairs", type=int, default=None)
     parser.add_argument("--output-dir", default="/outputs/epe_eval")
     return parser.parse_args()
+
+
+def _parse_size(text: str):
+    if not text:
+        return None
+    h, w = (int(x) for x in text.lower().split("x"))
+    if h % 8 or w % 8:
+        raise SystemExit(f"--infer-size {text} must be divisible by 8")
+    return (h, w)
 
 
 def build_oslo(args: argparse.Namespace, device: torch.device):
@@ -201,7 +215,8 @@ def build_oslo(args: argparse.Namespace, device: torch.device):
 # Grid and pyramid settings an OSLO checkpoint records; they override this script's
 # defaults so every checkpoint is scored on the grids it was trained with.
 CHECKPOINT_GRID_ARGS = ("grid", "retina_resolution", "estimation_resolution", "resolution",
-                        "corr_pool_levels", "conv_neighbors", "lookup_neighbors")
+                        "corr_pool_levels", "conv_neighbors", "lookup_neighbors",
+                        "neighbor_sort_cut_deg", "fill_missing_neighbors")
 
 
 def adopt_checkpoint_grids(args: argparse.Namespace) -> None:
@@ -324,7 +339,8 @@ def main() -> None:
                                                       args.flow_transform)
             else:
                 raft_flow = predict_raft_flow(raft, raft_transforms, frames1, frames2,
-                                              device, args.flow_transform)
+                                              device, args.flow_transform,
+                                              _parse_size(args.infer_size))
             raft_flow = raft_flow.detach().float().cpu()
             preds = []
             for i in range(len(items)):

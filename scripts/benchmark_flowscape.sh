@@ -34,7 +34,10 @@ oslo_reach29|oslo|$OUT/raft_parity_large/rings1_s7/oslo_raft.pt|--init-checkpoin
 oslo_reach117|oslo|$OUT/raft_parity_large/rings4_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_large/rings4_s7/oslo_raft.pt
 oslo_reach117_dense|oslo|$OUT/raft_parity_large/rings4dense_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_large/rings4dense_s7/oslo_raft.pt
 oslo_sup_r7|oslo|$OUT/raft_parity_sup7/base_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_sup7/base_s7/oslo_raft.pt
-oslo_base_30k|oslo|$OUT/raft_parity_budget/base_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_budget/base_s7/oslo_raft.pt}"
+oslo_base_30k|oslo|$OUT/raft_parity_budget/base_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_budget/base_s7/oslo_raft.pt
+oslo_gridfix|oslo|$OUT/raft_parity_large/gridfix_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_large/gridfix_s7/oslo_raft.pt
+oslo_small|oslo|$OUT/raft_parity_large/small_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_large/small_s7/oslo_raft.pt
+raft_small_so3_320|raft|$OUT/raft_parity_planar/raft_small_so3_320_s7/raft_erp.pt|--model raft_small --tv-checkpoint $OUT/raft_parity_planar/raft_small_so3_320_s7/raft_erp.pt --infer-size 320x640}"
 mkdir -p "$DEST"
 
 names=()

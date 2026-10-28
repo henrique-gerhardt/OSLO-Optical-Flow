@@ -23,12 +23,13 @@ script scores the checkpoint with the same spherical metrics as ``run_oslo_raft.
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import math
 import random
 import time
 from pathlib import Path
-from typing import Iterator, List, Tuple
+from typing import Iterator, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -92,7 +93,8 @@ class ERPPairStream(IterableDataset):
     def __init__(self, shards_dir: str, sources: List[Tuple[str, str]], crop: Tuple[int, int],
                  seed: int, shuffle_buffer: int = 64, photo_prob: float = 1.0,
                  roll: bool = True, hflip_prob: float = 0.5, so3_prob: float = 0.0,
-                 so3_max_angle_deg: float = 180.0) -> None:
+                 so3_max_angle_deg: float = 180.0,
+                 resize: Optional[Tuple[int, int]] = None) -> None:
         self._iter_shard, list_shards = _import_sfprep()
         self.shards = [s for d, sp in sources for s in list_shards(Path(shards_dir), d, sp)]
         if not self.shards:
@@ -100,6 +102,7 @@ class ERPPairStream(IterableDataset):
         self.crop, self.seed, self.buffer = crop, seed, shuffle_buffer
         self.photo_prob, self.roll, self.hflip_prob = photo_prob, roll, hflip_prob
         self.so3_prob, self.so3_max_angle_deg = so3_prob, so3_max_angle_deg
+        self.resize = resize
 
     def _records(self, rng: random.Random) -> Iterator[dict]:
         info = get_worker_info()
@@ -130,6 +133,8 @@ class ERPPairStream(IterableDataset):
         f2 = torch.from_numpy(np.ascontiguousarray(record["frame2"])).permute(2, 0, 1)
         flow = torch.from_numpy(np.ascontiguousarray(record["flow"])).float().permute(2, 0, 1)
         valid = torch.from_numpy(np.ascontiguousarray(record["valid"])).bool()
+        if self.resize is not None:
+            f1, f2, flow, valid = resize_erp_pair(f1, f2, flow, valid, self.resize)
         height, width = valid.shape
         ch, cw = self.crop
         if ch > height or cw > width:
@@ -162,6 +167,30 @@ class ERPPairStream(IterableDataset):
             "flow": flow[:, sl[0], sl[1]].contiguous(),
             "valid": valid[sl[0], sl[1]].contiguous(),
         }
+
+
+def resize_erp_pair(f1: torch.Tensor, f2: torch.Tensor, flow: torch.Tensor,
+                    valid: torch.Tensor, size: Tuple[int, int]):
+    """Resample a whole ERP pair to ``size`` (H, W): frames area-antialiased, flow
+    bilinear with each component scaled by its size ratio, valid kept where the
+    resampled mask is (almost) fully valid. Same convention as ``--infer-size``."""
+    import torch.nn.functional as F
+
+    height, width = valid.shape
+    if (height, width) == tuple(size):
+        return f1, f2, flow, valid
+
+    def frame(x: torch.Tensor) -> torch.Tensor:
+        y = F.interpolate(x[None].float(), size=size, mode="bilinear", align_corners=False,
+                          antialias=True)[0]
+        return y.round().clamp(0, 255).to(torch.uint8)
+
+    new_flow = F.interpolate(flow[None], size=size, mode="bilinear", align_corners=False,
+                             antialias=True)[0]
+    new_flow = torch.stack([new_flow[0] * (size[1] / width), new_flow[1] * (size[0] / height)])
+    new_valid = F.interpolate(valid[None, None].float(), size=size, mode="bilinear",
+                              align_corners=False, antialias=True)[0, 0] > 0.999
+    return frame(f1), frame(f2), new_flow, new_valid
 
 
 def _color_jitter():
@@ -198,6 +227,13 @@ def main() -> None:
     p.add_argument("--max-flow", type=float, default=400.0)
     p.add_argument("--clip", type=float, default=1.0)
     p.add_argument("--crop", default="384x768", help="HxW, must fit every source frame.")
+    p.add_argument("--resize", default="",
+                   help="HxW: resample every whole frame to this size before augmentation "
+                        "(e.g. 320x640, about as many pixels as OSLO's r7 retina). The crop "
+                        "must fit it. Evaluate with run_raft_shard_baseline.py --infer-size.")
+    p.add_argument("--overfit-batches", type=int, default=0,
+                   help="Draw this many batches once and repeat them for every step "
+                        "(augmentation frozen). Capacity check: train EPE must go to ~0.")
     p.add_argument("--photo-prob", type=float, default=1.0)
     p.add_argument("--no-roll", action="store_true", help="Disable the random ERP yaw roll.")
     p.add_argument("--hflip-prob", type=float, default=0.5)
@@ -223,6 +259,9 @@ def main() -> None:
     crop = tuple(int(x) for x in args.crop.lower().split("x"))
     if crop[0] % 8 or crop[1] % 8:
         raise SystemExit("--crop must be divisible by 8")
+    resize = tuple(int(x) for x in args.resize.lower().split("x")) if args.resize else None
+    if resize is not None and (resize[0] < crop[0] or resize[1] < crop[1]):
+        raise SystemExit(f"--crop {args.crop} does not fit --resize {args.resize}")
 
     model = (raft_small if args.model == "raft_small" else raft_large)(weights=None).to(device)
     model.train()
@@ -238,14 +277,17 @@ def main() -> None:
     ds = ERPPairStream(args.shards, parse_sources(args.train_sources), crop, args.seed,
                        photo_prob=args.photo_prob, roll=not args.no_roll,
                        hflip_prob=args.hflip_prob, so3_prob=args.so3_prob,
-                       so3_max_angle_deg=args.so3_max_angle_deg)
+                       so3_max_angle_deg=args.so3_max_angle_deg, resize=resize)
     loader = DataLoader(ds, batch_size=args.batch_size, num_workers=args.num_workers,
                         pin_memory=device.type == "cuda", persistent_workers=args.num_workers > 0)
     print(f"erp raft model={args.model} params={n_params:,} crop={crop} "
-          f"batch={args.batch_size}x{args.grad_accum} steps={steps} lr={args.lr} "
+          f"resize={resize or 'none'} batch={args.batch_size}x{args.grad_accum} steps={steps} lr={args.lr} "
           f"sources={args.train_sources} device={device}", flush=True)
 
     batches = iter(loader)
+    if args.overfit_batches > 0:
+        batches = itertools.cycle([next(batches) for _ in range(args.overfit_batches)])
+        print(f"overfit: repeating {args.overfit_batches} fixed batches", flush=True)
     t0 = time.time()
     for step in range(1, steps + 1):
         opt.zero_grad(set_to_none=True)

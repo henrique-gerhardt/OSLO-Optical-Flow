@@ -32,6 +32,7 @@ core to exercise the whole loop before moving to the GPU.
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import math
 import os
@@ -91,6 +92,14 @@ def parse_args() -> argparse.Namespace:
                    help="HEALPix order (grid=healpix); the FINE/supervision order when --multi-res.")
     p.add_argument("--nodes", type=int, default=3072, help="Fibonacci node count (grid=fibonacci).")
     p.add_argument("--conv-neighbors", type=int, default=8)
+    p.add_argument("--neighbor-sort-cut-deg", type=float, default=None,
+                   help="Start angle of the SDPAConv neighbor order (retina HEALPix pyramid). "
+                        "Unset = atan2 order, whose slot directions differ by 45 deg between "
+                        "hemispheres; -157.5 gives one orientation on the whole sphere.")
+    p.add_argument("--fill-missing-neighbors", action="store_true",
+                   help="Retina HEALPix levels above 100k nodes: give the 24 pixels with 7 "
+                        "topological neighbors an 8th (nearest other node) instead of an "
+                        "empty slot.")
     p.add_argument("--lookup-neighbors", type=int, default=24)
     # multi-resolution (estimate coarse, supervise fine via the convex upsampler)
     p.add_argument("--multi-res", action="store_true",
@@ -265,6 +274,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--shuffle-buffer", type=int, default=512)
     p.add_argument("--num-workers", type=int, default=4)
     p.add_argument("--max-train-pairs", type=int, default=None, help="Cap train pairs/epoch (debug/overfit).")
+    p.add_argument("--overfit-batches", type=int, default=0,
+                   help="Draw this many train batches once and repeat them for every step "
+                        "(augmentation frozen). Capacity check: the train error must go to ~0.")
     p.add_argument("--max-val-pairs", type=int, default=None)
     p.add_argument("--active-thresholds-deg", default="0.25,0.5,1.0")
     p.add_argument("--motion-bands-deg", default="",
@@ -343,6 +355,9 @@ def load_or_build_pyramid(args: argparse.Namespace):
 
     equiangular = args.grid == "equiangular"
     build = build_equiangular_pyramid if equiangular else build_healpix_pyramid
+    if equiangular and _grid_fix_kwargs(args):
+        raise SystemExit("--neighbor-sort-cut-deg / --fill-missing-neighbors apply to the "
+                         "HEALPix pyramid only")
 
     cache_path = None
     if args.pyramid_cache:
@@ -351,7 +366,8 @@ def load_or_build_pyramid(args: argparse.Namespace):
         name = (f"pyramid{'_eq' if equiangular else ''}"
                 f"_ret{args.retina_resolution}_sup{args.resolution}"
                 f"_est{args.estimation_resolution}_cp{args.corr_pool_levels}"
-                f"_cn{args.conv_neighbors}_ln{args.lookup_neighbors}.pt")
+                f"_cn{args.conv_neighbors}_ln{args.lookup_neighbors}"
+                f"{_sort_cut_suffix(args)}.pt")
         cache_path = Path(args.pyramid_cache) / name
         if cache_path.exists():
             try:
@@ -369,6 +385,7 @@ def load_or_build_pyramid(args: argparse.Namespace):
         conv_neighbors=args.conv_neighbors,
         lookup_neighbors=args.lookup_neighbors,
         retina_resolution=args.retina_resolution,
+        **({} if equiangular else _grid_fix_kwargs(args)),
     )
     print(f"pyramid built in {time.time() - t0:.1f}s", flush=True)
     if cache_path is not None:
@@ -413,6 +430,22 @@ def evaluate(model, loader, geom, sup_level, region_masks, active_thresholds, de
         if max_pairs is not None and seen >= max_pairs:
             break
     return finalize_metrics(totals, counts, active_counts, target_chunks)
+
+
+def _grid_fix_kwargs(args: argparse.Namespace) -> dict:
+    """Neighbor-graph options that differ from the default (empty = default graph)."""
+    out = {}
+    if getattr(args, "neighbor_sort_cut_deg", None) is not None:
+        out["sort_cut_deg"] = args.neighbor_sort_cut_deg
+    if getattr(args, "fill_missing_neighbors", False):
+        out["fill_missing_neighbors"] = True
+    return out
+
+
+def _sort_cut_suffix(args: argparse.Namespace) -> str:
+    kw = _grid_fix_kwargs(args)
+    return ((f"_cut{kw['sort_cut_deg']:g}" if "sort_cut_deg" in kw else "")
+            + ("_fill" if "fill_missing_neighbors" in kw else ""))
 
 
 def cycling_loader(dataset: ShardFlowDataset, loader: DataLoader):
@@ -731,6 +764,10 @@ def main() -> None:
         return m
 
     stream = cycling_loader(train_ds, train_loader)
+    if args.overfit_batches > 0:
+        fixed = [next(stream) for _ in range(args.overfit_batches)]
+        print(f"overfit: repeating {len(fixed)} fixed train batches", flush=True)
+        stream = itertools.cycle(fixed)
     start = time.time()
     model.train()
     accum = max(1, args.grad_accum)

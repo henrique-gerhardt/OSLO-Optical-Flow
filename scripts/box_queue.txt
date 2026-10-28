@@ -71,6 +71,23 @@ benchmark_bins | scripts/benchmark_flowscape.sh | TAG=bins
 # 2) reach dose-response at the base recipe (r7/r4/r6, replica360+flowscape, 10k, seed 7):
 #    1 ring = 29 deg, 4 rings = 117 deg, 4 rings x 16 points = 117 deg with dense sampling   ~9 h
 reach_arms | scripts/raft_parity_large.sh | ARMS=rings1 rings4 rings4dense; PREFLIGHT_ARMS=rings4dense
+# Professor's points (2026-10-27): sanity of the operators, capacity, matched pixels.
+# 1) operator checks with known answers (white image stays white, a dot gives a centered
+#    blob, a rotation gives its flow). Found locally: SDPAConv slot k points 45 deg apart
+#    in the two hemispheres, and the 24 r7 pixels with 7 neighbors leave a fixed feature
+#    pattern (also in a trained encoder). Default, fixed graph, trained base   ~5 min
+sanity | scripts/sanity_checks.sh |
+# 2) capacity: 4 fixed batches (8 pairs) repeated, 3000 steps. If the train error does not
+#    go to ~0, capacity or optimization is broken, not data. OSLO base and RAFT-small   ~1.5 h
+overfit | scripts/raft_parity_ab.sh | RUN_NAME=raft_parity_overfit; ARMS=overfit; SEEDS=7; STEPS=3000; EVAL_EVERY=0; TRAIN_SOURCES=replica360:train,flowscape:train; VAL_SOURCES=flowscape:val; EXTRA_FLAGS=--max-val-pairs 20
+overfit_planar | scripts/raft_parity_planar.sh | ARMS=raft_small_overfit|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024 --overfit-batches 4; STEPS=3000; VAL_SOURCES=flowscape:val
+# 3) the base recipe on the fixed graph (one slot orientation, no empty slots)   ~3 h
+gridfix | scripts/raft_parity_large.sh | ARMS=gridfix; PREFLIGHT_ARMS=gridfix
+# 4) matched pixels and parameters: OSLO at RAFT-small's size (1.03M vs 0.99M) and
+#    RAFT-small fed 320x640 (204,800 px, corr grid 40x80 = 3,200 cells) against OSLO's
+#    r7 retina (196,608 nodes, est r4 = 3,072 nodes). Same SO(3) recipe   ~3.5 h
+oslo_small | scripts/raft_parity_large.sh | ARMS=small; PREFLIGHT_ARMS=
+raft_small_320 | scripts/raft_parity_planar.sh | ARMS=raft_small_so3_320|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --resize 320x640 --crop 320x640 --so3-prob 1; OSLO_RUNS=oslo_base|raft_parity_large/base_s7\noslo_small|raft_parity_large/small_s7\noslo_gridfix|raft_parity_large/gridfix_s7
 # Improvement probes (2026-10-26). Rows in benchmark_bins above, free: oracle_r7/r8 (EPE
 # floor if the output grid were r7/r8) and oslo_base at 24/32 update iterations (does
 # OSLO keep improving with more iterations at test time, as RAFT does?).

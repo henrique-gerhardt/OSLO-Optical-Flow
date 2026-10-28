@@ -28,6 +28,7 @@ increment; it will reuse the building blocks already in `oslo_raft.py`.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -97,6 +98,7 @@ def chunked_directional_knn_graph(
     num_neighbors: int = 8,
     chunk_size: int = 2048,
     dtype: torch.dtype = torch.float32,
+    sort_cut_deg: Optional[float] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Blocked twin of :func:`geometry.directional_knn_graph` (identical contract/result).
 
@@ -129,7 +131,7 @@ def chunked_directional_knn_graph(
         tangent = _normalize(tangent)
         east_coord = (tangent * east[start:stop].unsqueeze(1)).sum(dim=-1)
         north_coord = (tangent * north[start:stop].unsqueeze(1)).sum(dim=-1)
-        order = torch.atan2(north_coord, east_coord).argsort(dim=1)
+        order = _tangent_angle_order(east_coord, north_coord, sort_cut_deg)
         index_rows.append(nbr.gather(1, order))
 
     index = torch.cat(index_rows, dim=0).long()
@@ -156,11 +158,29 @@ def chunked_nearest(points: torch.Tensor, k: int, chunk_size: int = 2048) -> tor
     return torch.cat(rows, dim=0).long()
 
 
+def _tangent_angle_order(
+    east_coord: torch.Tensor, north_coord: torch.Tensor, sort_cut_deg: Optional[float]
+) -> torch.Tensor:
+    """Argsort of the neighbors' tangent angles, starting at ``sort_cut_deg``.
+
+    ``None`` starts at -180 deg (plain ``atan2`` order). On HEALPix that start sits on
+    the same-ring west neighbor, whose tangent angle is just above +180 deg in the north
+    hemisphere and just below -180 deg in the south, so slot k points 45 deg apart in
+    the two hemispheres. A start between two neighbor directions (-157.5 deg) gives
+    both hemispheres the same slot directions.
+    """
+    angle = torch.atan2(north_coord, east_coord)
+    if sort_cut_deg is None:
+        return angle.argsort(dim=1)
+    return torch.remainder(angle - math.radians(sort_cut_deg), 2 * math.pi).argsort(dim=1)
+
+
 def _sort_neighbors_by_tangent_angle(
     points: torch.Tensor,
     nbr: torch.Tensor,
     east: torch.Tensor,
     north: torch.Tensor,
+    sort_cut_deg: Optional[float] = None,
 ) -> torch.Tensor:
     """Sort each node's neighbor indices by their local tangent angle (SDPAConv order).
 
@@ -176,7 +196,7 @@ def _sort_neighbors_by_tangent_angle(
     tangent = _normalize(tangent)
     east_coord = (tangent * east.unsqueeze(1)).sum(dim=-1)
     north_coord = (tangent * north.unsqueeze(1)).sum(dim=-1)
-    order = torch.atan2(north_coord, east_coord).argsort(dim=1)
+    order = _tangent_angle_order(east_coord, north_coord, sort_cut_deg)
     return nbr.gather(1, order)
 
 
@@ -184,6 +204,8 @@ def healpix_neighbor_graph(
     resolution: int,
     points: Optional[torch.Tensor] = None,
     dtype: torch.dtype = torch.float32,
+    sort_cut_deg: Optional[float] = None,
+    fill_missing: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """O(N) SDPAConv graph from HEALPix pixel topology (astropy-healpix ``neighbours``).
 
@@ -196,7 +218,10 @@ def healpix_neighbor_graph(
 
     Pixels with only 7 topological neighbors (``neighbours`` returns -1 there) get the
     node's own index in the missing slot with ``valid=False`` — SDPAConv skips invalid
-    slots, so the pad index is never read.
+    slots, so the pad index is never read. A constant image then leaves a fixed pattern
+    around these 24 pixels (``run_sanity_checks.py`` enc_white_corners).
+    ``fill_missing=True`` puts the nearest node that is not already a neighbor in that
+    slot instead, as the kNN graph of the lower levels does, so every slot is valid.
     """
     import numpy as np
     from astropy_healpix import neighbours
@@ -214,9 +239,17 @@ def healpix_neighbor_graph(
     self_idx = torch.arange(n, dtype=torch.long).unsqueeze(1).expand_as(nbr)
     missing = nbr < 0
     nbr = torch.where(missing, self_idx, nbr)
+    if fill_missing and missing.any():
+        rows = missing.any(1).nonzero(as_tuple=True)[0]
+        sim = points[rows] @ points.t()                              # [n_missing, N]
+        sim[torch.arange(rows.numel()), rows] = -float("inf")        # not itself
+        sim.scatter_(1, nbr[rows], -float("inf"))                    # not a neighbor yet
+        nearest = sim.argmax(dim=1)
+        slot = missing[rows].float().argmax(dim=1)                   # one missing slot per row
+        nbr[rows, slot] = nearest
 
     east, north = tangent_basis(points)
-    index = _sort_neighbors_by_tangent_angle(points, nbr, east, north)
+    index = _sort_neighbors_by_tangent_angle(points, nbr, east, north, sort_cut_deg)
 
     # Recover each sorted slot's validity: a slot is invalid iff it holds the self pad
     # (HEALPix `neighbours` never lists a pixel as its own neighbor, so this is exact).
@@ -244,6 +277,7 @@ def _build_level(
     lookup_neighbors: int,
     knn_chunk: int,
     conv_graph: Optional[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = None,
+    sort_cut_deg: Optional[float] = None,
 ) -> SphereLevel:
     """Memory-safe `SphereLevel` builder (the chunked generalization of build_knn_level).
 
@@ -262,7 +296,7 @@ def _build_level(
         # A level holds at most n-1 conv neighbors; clamp so very coarse correlation
         # levels (small n) don't request more neighbors than exist.
         conv_index, conv_weight, conv_valid = chunked_directional_knn_graph(
-            points, min(conv_neighbors, n - 1), knn_chunk
+            points, min(conv_neighbors, n - 1), knn_chunk, sort_cut_deg=sort_cut_deg
         )
     if lookup_neighbors <= 0:
         lookup_index = torch.arange(n, dtype=torch.long).unsqueeze(1)
@@ -439,6 +473,8 @@ def build_healpix_pyramid(
     lookup_neighbors: int = 24,
     knn_chunk: int = 2048,
     retina_resolution: Optional[int] = None,
+    sort_cut_deg: Optional[float] = None,
+    fill_missing_neighbors: bool = False,
 ) -> SpherePyramid:
     """Assemble the nested-HEALPix :class:`SpherePyramid` (needs healpy/astropy-healpix).
 
@@ -450,6 +486,11 @@ def build_healpix_pyramid(
     above ``fine_resolution`` are encoder-only, so they get a trivial lookup (nothing
     gathers there) and — above ``_FAST_GRAPH_MIN_NODES`` — the O(N) topological conv
     graph instead of the O(N^2) kNN. ``None`` reproduces the pre-retina pyramid exactly.
+
+    ``sort_cut_deg`` sets where the SDPAConv neighbor order starts (see
+    :func:`_tangent_angle_order`); ``None`` keeps the ``atan2`` order of every existing
+    checkpoint. ``fill_missing_neighbors`` is :func:`healpix_neighbor_graph`'s
+    ``fill_missing`` on the fast-path levels.
     """
     if fine_resolution < estimation_resolution:
         raise ValueError("fine_resolution must be >= estimation_resolution")
@@ -469,12 +510,14 @@ def build_healpix_pyramid(
     for r in needed:
         points = healpix_unit_vectors(r)  # nested ordering
         conv_graph = (
-            healpix_neighbor_graph(r, points)
+            healpix_neighbor_graph(r, points, sort_cut_deg=sort_cut_deg,
+                                   fill_missing=fill_missing_neighbors)
             if conv_neighbors == 8 and points.size(0) > _FAST_GRAPH_MIN_NODES
             else None
         )
         level_lookup = lookup_neighbors if r <= fine_resolution else 0
-        levels[r] = _build_level(points, conv_neighbors, level_lookup, knn_chunk, conv_graph)
+        levels[r] = _build_level(points, conv_neighbors, level_lookup, knn_chunk, conv_graph,
+                                 sort_cut_deg)
 
     # Encoder pooling maps: for each coarse level r with r+1 present, children at r+1.
     pool_index: Dict[int, torch.Tensor] = {

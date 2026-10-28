@@ -382,6 +382,7 @@ def main() -> None:
             else:
                 raft_flow = predict_raft_flow(
                     model, transforms, frames1, frames2, device, args.flow_transform,
+                    infer_size,
                 )
             pred_erp = [raft_flow[i].permute(1, 2, 0).contiguous() for i in range(len(items))]
         elif args.predictor == "oracle":
@@ -482,7 +483,7 @@ def main() -> None:
             "torchvision": torchvision_version,
             "iters": args.iters if args.checkpoint else None,
             "input_scale": args.princeton_input_scale if args.checkpoint else None,
-            "infer_size": list(infer_size) if (args.checkpoint and infer_size) else None,
+            "infer_size": list(infer_size) if infer_size else None,
             "princeton": princeton_meta,
             "panoflow": panoflow_meta,
         },

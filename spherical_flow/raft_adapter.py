@@ -154,15 +154,31 @@ def predict_raft_flow(
     frame2: torch.Tensor,
     device: torch.device,
     flow_transform: str,
+    infer_size: Optional[tuple[int, int]] = None,
 ) -> torch.Tensor:
+    """TorchVision RAFT; ``infer_size`` as in :func:`predict_princeton_flow` (the frames
+    are resampled before normalization, the flow back to the input size)."""
     frame1 = frame1.to(device, non_blocking=True)
     frame2 = frame2.to(device, non_blocking=True)
+    orig_h, orig_w = int(frame1.shape[-2]), int(frame1.shape[-1])
+    resized = infer_size is not None and tuple(infer_size) != (orig_h, orig_w)
+    if resized:
+        def down(x: torch.Tensor) -> torch.Tensor:
+            y = torch.nn.functional.interpolate(x.float(), size=infer_size, mode="bilinear",
+                                                align_corners=False, antialias=True)
+            return y.round().clamp(0, 255).to(x.dtype)  # the trained net saw rounded bytes
+        frame1, frame2 = down(frame1), down(frame2)
     if transforms is not None:
         frame1, frame2 = transforms(frame1, frame2)
     else:
         frame1, frame2 = normalize_untrained_inputs(frame1, frame2)
-    predictions = model(frame1, frame2)
-    return transform_flow(predictions[-1].detach().float().cpu(), flow_transform)
+    flow = model(frame1, frame2)[-1]
+    if resized:
+        flow = torch.nn.functional.interpolate(
+            flow, size=(orig_h, orig_w), mode="bilinear", align_corners=False)
+        flow = torch.cat([flow[:, 0:1] * (orig_w / infer_size[1]),
+                          flow[:, 1:2] * (orig_h / infer_size[0])], dim=1)
+    return transform_flow(flow.detach().float().cpu(), flow_transform)
 
 
 def erp_flow_to_tangent(
