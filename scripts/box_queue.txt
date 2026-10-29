@@ -99,3 +99,36 @@ sup_r7 | scripts/raft_parity_large.sh | RUN_NAME=raft_parity_sup7; ARMS=base; PR
 budget_30k | scripts/raft_parity_large.sh | RUN_NAME=raft_parity_budget; ARMS=base; STEPS=30000; EVAL_EVERY=5000
 # 5) same table with every new row (finished rows are skipped)   ~1 h
 benchmark_bins_final | scripts/benchmark_flowscape.sh | TAG=bins
+
+# Isolating the gap (2026-10-28, RAFT_PARITY 11.6-11.7). Every OSLO and RAFT we train lands
+# at 11-17 px on flowscape:test; PriOr-Flow 2.33, PanoFlow 3.32. In order:
+# 0) mpf: the pipeline check found the GT barely warps frame 2 (residual 0.98). Frozen
+#    RAFT-large against the stored and the sign-flipped GT   ~5 min
+mpf_check | scripts/flow360_convention_check.sh | SOURCE=mpf:val; DIRECTIONS=both; MAX_PAIRS=200
+# 1) recipe: PriOr-Flow's route (RAFT pretrained on Chairs+Things, fine-tuned on FlowScape
+#    only, upright, ERP-px loss) in OUR pipeline, against the same nets from scratch on
+#    FlowScape only. ~3 px = our pipeline is fine and the gap is recipe + pretraining;
+#    ~11 px = something in our pipeline. Then OSLO upright on FlowScape only   ~3 h + ~3 h
+recipe_planar | scripts/raft_parity_planar.sh | RUN_NAME=raft_parity_recipe; TRAIN_SOURCES=flowscape:train; FROZEN= ; ARMS=raft_large_ft|raft_large|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024 --init-weights C_T_V2 --lr 1.25e-4 --weight-decay 1e-5 --gamma 0.85\nraft_large_fs|raft_large|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024\nraft_small_ft|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024 --init-weights C_T_V2 --lr 1.25e-4 --weight-decay 1e-5 --gamma 0.85\nraft_small_fs|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024; OSLO_RUNS=oslo_noso3|raft_parity_large/noso3_s7\noslo_fs_noso3|raft_parity_fsonly/noso3_s7
+recipe_oslo | scripts/raft_parity_large.sh | RUN_NAME=raft_parity_fsonly; ARMS=noso3; PREFLIGHT_ARMS=; TRAIN_SOURCES=flowscape:train
+benchmark_recipe | scripts/benchmark_flowscape.sh | TAG=bins
+# 2) loss: each side trained on the other's metric, upright. OSLO with the ERP-pixel EPE
+#    (nodes weighted by ERP pixel density) vs oslo_noso3; RAFT-small with OSLO's
+#    area-weighted geodesic vs raft_small_noaug   ~3 h + ~35 min
+loss_oslo_erppx | scripts/raft_parity_large.sh | ARMS=noso3_erppx; PREFLIGHT_ARMS=noso3_erppx
+loss_raft_geo | scripts/raft_parity_planar.sh | FROZEN= ; ARMS=raft_small_noaug_geo|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024 --loss-space geodesic; OSLO_RUNS=oslo_noso3|raft_parity_large/noso3_s7\noslo_noso3_erppx|raft_parity_large/noso3_erppx_s7
+# 3) input information: RAFT fed exactly what OSLO's r7 retina sees (ERP -> 196,608 HEALPix
+#    nodes -> ERP), at train and eval. vs raft_small_noaug (scratch, mix) and vs
+#    raft_large_ft (pretrained recipe)   ~35 min + ~1 h
+retina_raft_small | scripts/raft_parity_planar.sh | FROZEN= ; ARMS=raft_small_noaug_bn7|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024 --retina-bottleneck 7; OSLO_RUNS=oslo_noso3|raft_parity_large/noso3_s7
+retina_raft_large_ft | scripts/raft_parity_planar.sh | RUN_NAME=raft_parity_recipe; TRAIN_SOURCES=flowscape:train; FROZEN= ; ARMS=raft_large_ft_bn7|raft_large|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024 --init-weights C_T_V2 --lr 1.25e-4 --weight-decay 1e-5 --gamma 0.85 --retina-bottleneck 7; OSLO_RUNS=oslo_fs_noso3|raft_parity_fsonly/noso3_s7
+# 4) matched comparison without SO(3) on both sides (upright, as the benchmark): OSLO
+#    small with --so3-prob 0 (~2.7 h) and RAFT-small 320x640 without augmentation (~15 min)
+oslo_small_noso3 | scripts/raft_parity_large.sh | ARMS=small_noso3; PREFLIGHT_ARMS=
+raft_small_noaug_320 | scripts/raft_parity_planar.sh | FROZEN= ; ARMS=raft_small_noaug_320|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --resize 320x640 --crop 320x640; OSLO_RUNS=oslo_noso3|raft_parity_large/noso3_s7\noslo_small_noso3|raft_parity_large/small_noso3_s7\noslo_small|raft_parity_large/small_s7
+# 5) second seed for the small differences: RAFT-small 320 (~15 min), then OSLO gridfix
+#    and OSLO small at seed 11 (base_s11 exists)   ~5.5 h
+raft_small_320_s11 | scripts/raft_parity_planar.sh | SEED=11; FROZEN= ; ARMS=raft_small_so3_320|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --resize 320x640 --crop 320x640 --so3-prob 1; OSLO_RUNS=oslo_base_s11|raft_parity_large/base_s11\noslo_small_s11|raft_parity_large/small_s11\noslo_gridfix_s11|raft_parity_large/gridfix_s11
+seeds_s11 | scripts/raft_parity_large.sh | ARMS=gridfix small; PREFLIGHT_ARMS=; SEEDS=11
+# 6) benchmark with every new row (finished rows are skipped)   ~45 min
+benchmark_next | scripts/benchmark_flowscape.sh | TAG=bins

@@ -130,6 +130,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--infer-size", default="",
                         help="raft predictor (TorchVision): run the net at HxW, flow resampled "
                              "back to shard size (for checkpoints trained with --resize).")
+    parser.add_argument("--retina-bottleneck", type=int, default=0,
+                        help="raft predictor (TorchVision): pass both frames through the "
+                             "HEALPix r R retina, for checkpoints trained that way.")
     parser.add_argument("--tv-checkpoint", default="",
                         help="raft predictor: a run_erp_raft_train.py checkpoint (raft_erp.pt)")
     parser.add_argument("--prior-checkpoint", default="",
@@ -340,7 +343,8 @@ def main() -> None:
             else:
                 raft_flow = predict_raft_flow(raft, raft_transforms, frames1, frames2,
                                               device, args.flow_transform,
-                                              _parse_size(args.infer_size))
+                                              _parse_size(args.infer_size),
+                                              args.retina_bottleneck)
             raft_flow = raft_flow.detach().float().cpu()
             preds = []
             for i in range(len(items)):

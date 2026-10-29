@@ -37,7 +37,22 @@ oslo_sup_r7|oslo|$OUT/raft_parity_sup7/base_s7/oslo_raft.pt|--init-checkpoint $O
 oslo_base_30k|oslo|$OUT/raft_parity_budget/base_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_budget/base_s7/oslo_raft.pt
 oslo_gridfix|oslo|$OUT/raft_parity_large/gridfix_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_large/gridfix_s7/oslo_raft.pt
 oslo_small|oslo|$OUT/raft_parity_large/small_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_large/small_s7/oslo_raft.pt
-raft_small_so3_320|raft|$OUT/raft_parity_planar/raft_small_so3_320_s7/raft_erp.pt|--model raft_small --tv-checkpoint $OUT/raft_parity_planar/raft_small_so3_320_s7/raft_erp.pt --infer-size 320x640}"
+raft_small_so3_320|raft|$OUT/raft_parity_planar/raft_small_so3_320_s7/raft_erp.pt|--model raft_small --tv-checkpoint $OUT/raft_parity_planar/raft_small_so3_320_s7/raft_erp.pt --infer-size 320x640
+oslo_gridfix_s11|oslo|$OUT/raft_parity_large/gridfix_s11/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_large/gridfix_s11/oslo_raft.pt
+oslo_small_s11|oslo|$OUT/raft_parity_large/small_s11/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_large/small_s11/oslo_raft.pt
+raft_small_so3_320_s11|raft|$OUT/raft_parity_planar/raft_small_so3_320_s11/raft_erp.pt|--model raft_small --tv-checkpoint $OUT/raft_parity_planar/raft_small_so3_320_s11/raft_erp.pt --infer-size 320x640
+oslo_small_noso3|oslo|$OUT/raft_parity_large/small_noso3_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_large/small_noso3_s7/oslo_raft.pt
+raft_small_noaug|raft|$OUT/raft_parity_planar/raft_small_noaug_s7/raft_erp.pt|--model raft_small --tv-checkpoint $OUT/raft_parity_planar/raft_small_noaug_s7/raft_erp.pt
+raft_small_noaug_320|raft|$OUT/raft_parity_planar/raft_small_noaug_320_s7/raft_erp.pt|--model raft_small --tv-checkpoint $OUT/raft_parity_planar/raft_small_noaug_320_s7/raft_erp.pt --infer-size 320x640
+raft_large_ft|raft|$OUT/raft_parity_recipe/raft_large_ft_s7/raft_erp.pt|--model raft_large --tv-checkpoint $OUT/raft_parity_recipe/raft_large_ft_s7/raft_erp.pt
+raft_large_fs|raft|$OUT/raft_parity_recipe/raft_large_fs_s7/raft_erp.pt|--model raft_large --tv-checkpoint $OUT/raft_parity_recipe/raft_large_fs_s7/raft_erp.pt
+raft_small_ft|raft|$OUT/raft_parity_recipe/raft_small_ft_s7/raft_erp.pt|--model raft_small --tv-checkpoint $OUT/raft_parity_recipe/raft_small_ft_s7/raft_erp.pt
+raft_small_fs|raft|$OUT/raft_parity_recipe/raft_small_fs_s7/raft_erp.pt|--model raft_small --tv-checkpoint $OUT/raft_parity_recipe/raft_small_fs_s7/raft_erp.pt
+oslo_fs_noso3|oslo|$OUT/raft_parity_fsonly/noso3_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_fsonly/noso3_s7/oslo_raft.pt
+oslo_noso3_erppx|oslo|$OUT/raft_parity_large/noso3_erppx_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_large/noso3_erppx_s7/oslo_raft.pt
+raft_small_noaug_geo|raft|$OUT/raft_parity_planar/raft_small_noaug_geo_s7/raft_erp.pt|--model raft_small --tv-checkpoint $OUT/raft_parity_planar/raft_small_noaug_geo_s7/raft_erp.pt
+raft_small_noaug_bn7|raft|$OUT/raft_parity_planar/raft_small_noaug_bn7_s7/raft_erp.pt|--model raft_small --tv-checkpoint $OUT/raft_parity_planar/raft_small_noaug_bn7_s7/raft_erp.pt --retina-bottleneck 7
+raft_large_ft_bn7|raft|$OUT/raft_parity_recipe/raft_large_ft_bn7_s7/raft_erp.pt|--model raft_large --tv-checkpoint $OUT/raft_parity_recipe/raft_large_ft_bn7_s7/raft_erp.pt --retina-bottleneck 7}"
 mkdir -p "$DEST"
 
 names=()

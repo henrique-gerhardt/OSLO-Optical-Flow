@@ -48,6 +48,9 @@ arm_flags() {
     gridfix) echo "--neighbor-sort-cut-deg -157.5 --fill-missing-neighbors" ;;
     # about RAFT-small's 0.99M parameters (base is 1.56M)
     small) echo "--hidden-channels 72 --context-dim 48" ;;
+    small_noso3) echo "--hidden-channels 72 --context-dim 48 --so3-prob 0" ;;
+    # upright, trained on the benchmark's ERP-pixel EPE instead of the geodesic
+    noso3_erppx) echo "--so3-prob 0 --loss-space erp_px" ;;
     # 4 fixed batches repeated: can the model fit 8 pairs? (train_global must go to ~0)
     overfit) echo "--overfit-batches 4" ;;
     yaw) echo "--so3-axis vertical" ;;

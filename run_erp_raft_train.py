@@ -15,7 +15,11 @@ adapted to ERP:
   both frames are re-rendered as seen by a rotated camera and the flow is recomputed
   from the rotated endpoints, with the convention of ``so3_augment_pair``.
 
-Loss: RAFT's sequence loss (L1, gamma 0.8, pixels with |flow| < max_flow and valid).
+Loss: RAFT's sequence loss (L1, gamma 0.8, pixels with |flow| < max_flow and valid), or
+with ``--loss-space geodesic`` OSLO's loss: great-circle endpoint error, area-weighted.
+``--init-weights`` starts from a TorchVision checkpoint (e.g. C_T_V2 = Chairs + Things,
+PriOr-Flow's starting point) instead of random weights. ``--retina-bottleneck R`` feeds
+both frames through OSLO's HEALPix retina (ERP -> r``R`` nodes -> ERP) at train and eval.
 Optimizer: AdamW + OneCycle (RAFT: 5% warm-up, linear). Frames enter as x/127.5 - 1,
 which is what ``run_raft_shard_baseline.py --tv-checkpoint`` feeds at evaluation; that
 script scores the checkpoint with the same spherical metrics as ``run_oslo_raft.py``.
@@ -94,7 +98,8 @@ class ERPPairStream(IterableDataset):
                  seed: int, shuffle_buffer: int = 64, photo_prob: float = 1.0,
                  roll: bool = True, hflip_prob: float = 0.5, so3_prob: float = 0.0,
                  so3_max_angle_deg: float = 180.0,
-                 resize: Optional[Tuple[int, int]] = None) -> None:
+                 resize: Optional[Tuple[int, int]] = None,
+                 retina_bottleneck: int = 0) -> None:
         self._iter_shard, list_shards = _import_sfprep()
         self.shards = [s for d, sp in sources for s in list_shards(Path(shards_dir), d, sp)]
         if not self.shards:
@@ -103,6 +108,7 @@ class ERPPairStream(IterableDataset):
         self.photo_prob, self.roll, self.hflip_prob = photo_prob, roll, hflip_prob
         self.so3_prob, self.so3_max_angle_deg = so3_prob, so3_max_angle_deg
         self.resize = resize
+        self.retina_bottleneck = retina_bottleneck
 
     def _records(self, rng: random.Random) -> Iterator[dict]:
         info = get_worker_info()
@@ -158,10 +164,16 @@ class ERPPairStream(IterableDataset):
         if rng.random() < self.hflip_prob:
             f1, f2, flow, valid = f1.flip(2), f2.flip(2), flow.flip(2), valid.flip(1)
             flow = torch.stack([-flow[0], flow[1]])
+        if self.retina_bottleneck:
+            from spherical_flow.retina_bottleneck import get_bottleneck
+
+            bn = get_bottleneck(height, width, self.retina_bottleneck)
+            f1, f2 = bn(f1), bn(f2)
         y0 = rng.randrange(height - ch + 1)
         x0 = rng.randrange(width - cw + 1)
         sl = (slice(y0, y0 + ch), slice(x0, x0 + cw))
         return {
+            "origin": torch.tensor([y0, x0, height, width]),
             "frame1": f1[:, sl[0], sl[1]].contiguous(),
             "frame2": f2[:, sl[0], sl[1]].contiguous(),
             "flow": flow[:, sl[0], sl[1]].contiguous(),
@@ -211,6 +223,40 @@ def sequence_loss(predictions, flow, valid, gamma: float, max_flow: float):
     return loss, (epe / mask.sum().clamp_min(1.0)).item()
 
 
+def geodesic_sequence_loss(predictions, flow, valid, origin, gamma: float, max_flow: float):
+    """OSLO's loss on an ERP crop: per-pixel great-circle distance between the predicted
+    and the GT endpoint (radians), weighted by cos(latitude) so every unit of sphere area
+    counts the same, as the equal-area node mean does. ``origin`` = [B, 4] (row and column
+    of the crop, full ERP height and width)."""
+    b, _, h, w = flow.shape
+    dev = flow.device
+    rows = torch.arange(h, device=dev, dtype=torch.float32).view(1, h, 1)
+    cols = torch.arange(w, device=dev, dtype=torch.float32).view(1, 1, w)
+    o = origin.to(dev).float()
+    v = (rows + o[:, 0].view(b, 1, 1)).expand(b, h, w)
+    u = (cols + o[:, 1].view(b, 1, 1)).expand(b, h, w)
+    full_h, full_w = int(origin[0, 2]), int(origin[0, 3])
+
+    def unit(uu: torch.Tensor, vv: torch.Tensor) -> torch.Tensor:
+        return equirectangular_pixels_to_unit_vectors(uu.reshape(-1), vv.reshape(-1),
+                                                      full_h, full_w).view(b, h, w, 3)
+
+    lat = math.pi / 2.0 - ((v + 0.5) / full_h) * math.pi
+    mag = flow.pow(2).sum(dim=1).sqrt()
+    weight = (valid & (mag < max_flow)).float() * torch.cos(lat)
+    denom = weight.sum().clamp_min(1e-6)
+    gt_end = unit(u + flow[:, 0], v + flow[:, 1])
+    n = len(predictions)
+    loss = flow.new_zeros(())
+    for i, pred in enumerate(predictions):
+        end = unit(u + pred[:, 0], v + pred[:, 1])
+        geo = 2.0 * torch.asin((0.5 * (end - gt_end).norm(dim=-1)).clamp(max=1.0))
+        loss = loss + gamma ** (n - i - 1) * (geo * weight).sum() / denom
+    mask = (valid & (mag < max_flow)).float()
+    epe = ((predictions[-1] - flow).pow(2).sum(dim=1).sqrt() * mask).sum()
+    return loss, (epe / mask.sum().clamp_min(1.0)).item()
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--shards", default="/data/shards")
@@ -234,6 +280,15 @@ def main() -> None:
     p.add_argument("--overfit-batches", type=int, default=0,
                    help="Draw this many batches once and repeat them for every step "
                         "(augmentation frozen). Capacity check: train EPE must go to ~0.")
+    p.add_argument("--init-weights", default="none",
+                   help="TorchVision weights to start from: none (random), C_T_V2 (Chairs + "
+                        "Things), C_T_SKHT_V2 (raft_large only), ...")
+    p.add_argument("--loss-space", default="px", choices=["px", "geodesic"],
+                   help="px = RAFT's L1 in ERP pixels; geodesic = OSLO's area-weighted "
+                        "great-circle endpoint error.")
+    p.add_argument("--retina-bottleneck", type=int, default=0,
+                   help="HEALPix resolution R > 0: both frames go ERP -> r R nodes -> ERP "
+                        "(OSLO's retina is r7). Score with --retina-bottleneck R as well.")
     p.add_argument("--photo-prob", type=float, default=1.0)
     p.add_argument("--no-roll", action="store_true", help="Disable the random ERP yaw roll.")
     p.add_argument("--hflip-prob", type=float, default=0.5)
@@ -263,7 +318,14 @@ def main() -> None:
     if resize is not None and (resize[0] < crop[0] or resize[1] < crop[1]):
         raise SystemExit(f"--crop {args.crop} does not fit --resize {args.resize}")
 
-    model = (raft_small if args.model == "raft_small" else raft_large)(weights=None).to(device)
+    builder = raft_small if args.model == "raft_small" else raft_large
+    weights = None
+    if args.init_weights.lower() != "none":
+        from torchvision.models.optical_flow import Raft_Large_Weights, Raft_Small_Weights
+
+        enum = Raft_Small_Weights if args.model == "raft_small" else Raft_Large_Weights
+        weights = enum[args.init_weights]
+    model = builder(weights=weights).to(device)
     model.train()
     n_params = sum(q.numel() for q in model.parameters() if q.requires_grad)
     steps = 3 if args.smoke_test else args.steps
@@ -277,11 +339,13 @@ def main() -> None:
     ds = ERPPairStream(args.shards, parse_sources(args.train_sources), crop, args.seed,
                        photo_prob=args.photo_prob, roll=not args.no_roll,
                        hflip_prob=args.hflip_prob, so3_prob=args.so3_prob,
-                       so3_max_angle_deg=args.so3_max_angle_deg, resize=resize)
+                       so3_max_angle_deg=args.so3_max_angle_deg, resize=resize,
+                       retina_bottleneck=args.retina_bottleneck)
     loader = DataLoader(ds, batch_size=args.batch_size, num_workers=args.num_workers,
                         pin_memory=device.type == "cuda", persistent_workers=args.num_workers > 0)
     print(f"erp raft model={args.model} params={n_params:,} crop={crop} "
-          f"resize={resize or 'none'} batch={args.batch_size}x{args.grad_accum} steps={steps} lr={args.lr} "
+          f"resize={resize or 'none'} init={args.init_weights} loss={args.loss_space} "
+          f"bottleneck={args.retina_bottleneck or 'none'} batch={args.batch_size}x{args.grad_accum} steps={steps} lr={args.lr} "
           f"sources={args.train_sources} device={device}", flush=True)
 
     batches = iter(loader)
@@ -299,8 +363,12 @@ def main() -> None:
             flow, valid = batch["flow"].to(device), batch["valid"].to(device)
             with torch.autocast(device.type, enabled=args.amp and device.type == "cuda"):
                 preds = model(f1, f2, num_flow_updates=args.iters)
-            loss, epe = sequence_loss([q.float() for q in preds], flow, valid,
-                                      args.gamma, args.max_flow)
+            if args.loss_space == "geodesic":
+                loss, epe = geodesic_sequence_loss([q.float() for q in preds], flow, valid,
+                                                   batch["origin"], args.gamma, args.max_flow)
+            else:
+                loss, epe = sequence_loss([q.float() for q in preds], flow, valid,
+                                          args.gamma, args.max_flow)
             scaler.scale(loss / args.grad_accum).backward()
             loss_sum += loss.item() / args.grad_accum
             epe_sum += epe / args.grad_accum

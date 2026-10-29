@@ -143,6 +143,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--infer-size", default="",
                         help="Optional HxW (e.g. 320x640) to run princeton inference at; flow is "
                              "resampled+rescaled back to shard resolution. Empty = shard resolution.")
+    parser.add_argument("--retina-bottleneck", type=int, default=0,
+                        help="TorchVision RAFT: pass both frames through the HEALPix r R retina "
+                             "(ERP -> nodes -> ERP), for checkpoints trained that way.")
     parser.add_argument("--flow-transform", default="identity", choices=FLOW_TRANSFORMS,
                         help="Transform applied to RAFT pixel-flow before spherical evaluation.")
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
@@ -382,7 +385,7 @@ def main() -> None:
             else:
                 raft_flow = predict_raft_flow(
                     model, transforms, frames1, frames2, device, args.flow_transform,
-                    infer_size,
+                    infer_size, args.retina_bottleneck,
                 )
             pred_erp = [raft_flow[i].permute(1, 2, 0).contiguous() for i in range(len(items))]
         elif args.predictor == "oracle":

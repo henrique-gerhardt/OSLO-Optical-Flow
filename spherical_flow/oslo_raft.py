@@ -368,8 +368,15 @@ def sequence_geodesic_loss(
     motion_weight: float = 0.0,
     motion_ref_deg: float = 1.0,
     min_target_deg: float = 0.0,
+    space: str = "geodesic",
+    erp_max_density: float = 20.0,
 ) -> torch.Tensor:
     """Iteration-weighted geodesic endpoint loss (the spherical RAFT sequence loss).
+
+    ``space="erp_px"`` replaces the geodesic by the ERP-pixel endpoint error of the
+    FlowScape benchmark (PriOr-Flow's EPE): ``sqrt(dlon^2 + dlat^2)`` (radians; x H/pi =
+    ERP px), and weights each node by the ERP pixel density ``1/cos(lat)`` (capped at
+    ``erp_max_density``), so the node mean approximates the mean over ERP pixels.
 
     ``L = sum_t gamma^(T-t) * weighted_mean( geodesic(expmap(p, f_t), gt_endpoint) )``.
 
@@ -407,12 +414,28 @@ def sequence_geodesic_loss(
 
     if weights is None:
         weights = mask.float()
-    denom = weights.sum().clamp_min(1.0)
+    if space == "erp_px":
+        cos_lat = (1.0 - level.points[:, 2].pow(2)).clamp_min(0.0).sqrt()
+        weights = weights / cos_lat.clamp_min(1.0 / erp_max_density).unsqueeze(0)
+    elif space != "geodesic":
+        raise ValueError(f"unknown loss space {space!r}")
+    denom = weights.sum().clamp_min(1e-6)
 
+    def lonlat(x: torch.Tensor):
+        lon = torch.atan2(x[..., 1], x[..., 0] + 1e-12 * (x[..., 0] == 0))
+        return lon, torch.asin(x[..., 2].clamp(-1.0 + 1e-7, 1.0 - 1e-7))
+
+    if space == "erp_px":
+        gt_lon, gt_lat = lonlat(gt_endpoint)
     total = predictions[0].new_zeros(())
     for t, flow in enumerate(predictions):
         endpoint = endpoint_from_tangent_flow(level.points, flow, level.basis_east, level.basis_north)
-        geo = geodesic_distance(endpoint, gt_endpoint)  # [B, N], radians
+        if space == "erp_px":
+            lon, lat = lonlat(endpoint)
+            dlon = torch.remainder(lon - gt_lon + math.pi, 2.0 * math.pi) - math.pi
+            geo = (dlon.pow(2) + (lat - gt_lat).pow(2) + 1e-12).sqrt()
+        else:
+            geo = geodesic_distance(endpoint, gt_endpoint)  # [B, N], radians
         weight = gamma ** (n_pred - 1 - t)
         total = total + weight * (geo * weights).sum() / denom
     return total

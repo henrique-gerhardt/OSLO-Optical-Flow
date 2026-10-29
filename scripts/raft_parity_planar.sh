@@ -59,6 +59,8 @@ while IFS='|' read -r name model flags; do
   # an arm trained with --resize HxW is scored at that input size (flow back to shard size)
   infer=()
   if [[ " $flags " =~ \ --resize\ ([0-9]+x[0-9]+) ]]; then infer=(--infer-size "${BASH_REMATCH[1]}"); fi
+  # an arm trained through the HEALPix retina is scored through it too
+  if [[ " $flags " =~ \ --retina-bottleneck\ ([0-9]+) ]]; then infer+=(--retina-bottleneck "${BASH_REMATCH[1]}"); fi
   for src in $VAL_SOURCES; do
     score "${name}_s${SEED}" "$src" --model "$model" --tv-checkpoint "$dir/raft_erp.pt" ${infer[@]+"${infer[@]}"}
   done

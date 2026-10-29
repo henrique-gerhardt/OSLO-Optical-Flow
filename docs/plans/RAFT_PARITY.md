@@ -870,3 +870,109 @@ checks the current shards.
   at 15 px of motion), but clearly beats it on the City sequences (0.43–0.89). Neither
   negation, swapping, a backward direction nor a 2× scale does better. mpf was in the
   round 3 training mix.
+
+### 11.5 Results: search reach and r7 supervision (box, 2026-10-27, seed 7, 10k steps)
+
+`reach_arms` (git `5a66883`) and `sup_r7` (git `558c0b2`). Training val = flowscape:val,
+extra = replica360:val. Improvement over zero flow, %, and global error in degrees. Base
+seed spread (s7/s11) is ±0.4 on flowscape and ±0.6 on replica360.
+
+| arm | reach | params | flowscape global | poles | deg | replica360 global | poles | deg |
+|---|---|---|---|---|---|---|---|---|
+| base (2 rings) | 59° | 1.56M | 75.8 | 72.8 | 0.598 | 85.7 | 78.9 | 1.93 |
+| rings1 | 29° | 1.45M | 73.7 | 67.3 | 0.65 | 86.9 | 78.3 | 1.77 |
+| rings4 | 117° | 1.78M | 74.5 | 70.9 | 0.63 | 86.0 | 77.8 | 1.90 |
+| rings4dense | 117° (16 pts) | 2.22M | 74.2 | 70.2 | 0.64 | 84.6 | 76.2 | 2.09 |
+| sup_r7 | 59° | 1.61M | 74.6* | 71.6* | 0.631* | 88.3* | 80.2* | 1.58* |
+
+\* sup_r7 is scored on r7 nodes (zero flow 2.4847° vs 2.4726° on r6), so its rows are
+close to, not exactly, the same target.
+
+- **Reach is not the bottleneck.** Halving the reach (29°) or doubling it (117°, sparse
+  or dense) moves flowscape by at most 2 points, and no arm beats base there. This
+  matches the `benchmark_bins` table (flowscape:test): 99% of FlowScape pixels move less than
+  15°, well inside every reach tested.
+- **r7 supervision helps large motion, not FlowScape.** replica360 improves by 2.6 points
+  (1.93° → 1.58°, −18%), beyond the seed spread. flowscape is 1.2 points lower, on a
+  slightly different grid. The decisive number is the EPE in pixels on flowscape:test in
+  `benchmark_bins_final` (row `oslo_sup_r7`), where the output-grid floor drops from
+  4.12 px (oracle r6) to 2.78 px (oracle r7).
+
+### 11.6 Results: isolation runs, 30k budget and the final benchmark (box, 2026-10-28, git `01b14ea`)
+
+Validation: improvement over zero flow, % (r6 nodes, haversine). Test: flowscape:test, PriOr-Flow
+protocol (EPE px all pixels; SEPE 1e-3 rad). Seed 7, 10k steps unless noted. Base seed spread
+(7/11): flowscape ±0.4, replica360 ±0.6.
+
+| row | params | fs:val global / poles | rep:val global / poles | test EPE | test SEPE |
+|---|---|---|---|---|---|
+| oslo_base | 1.56M | 75.8 / 72.8 | 85.7 / 78.9 | 16.29 | 21.00 |
+| oslo_small (hidden 72 / ctx 48) | 1.03M | 76.2 / 73.1 | 86.1 / 77.8 | 16.49 | 21.68 |
+| raft_small_so3_320 (320×640) | 0.99M | 77.9 / 77.8 | 87.3 / 78.6 | 14.26 | 20.34 |
+| raft_small_so3 (512×1024, 3 seeds) | 0.99M | 80.5 / 78.4 | 86.0 / 71.6 | 13.46 | 18.16 |
+| oslo_gridfix | 1.56M | 74.8 / 71.2 | 88.9 / 82.4 | 17.23 | 21.65 |
+| oslo_sup_r7 | 1.61M | 74.6* / 71.6* | 88.3* / 80.2* | 16.43 | 21.59 |
+| oslo_base_30k (30k steps) | 1.56M | 78.1 / 76.8 | 90.0 / 85.7 | 17.84 | 19.67 |
+| oslo_noso3 (reference) | 1.56M | 83.2 / 88.8 | 81.8 / 71.4 | 16.55 | 12.87 |
+
+\* scored on r7 nodes.
+
+- **Capacity is not the bottleneck.** Cutting OSLO to 1.03M parameters changes nothing (within
+  the seed spread on both val sets, +0.2 px test EPE). With §10.1 (6.6M is worse), OSLO is flat
+  in parameters from 1M to 6.6M.
+- **Matched comparison (≈1M params, ≈200k input pixels, ≈3k estimation cells).** RAFT-small at
+  320×640 still beats OSLO small: +1.7 points flowscape:val, +1.2 replica360:val, test EPE
+  14.26 vs 16.49 (−13.5%), SEPE 20.34 vs 21.68 (−6%). RAFT also wins the poles on
+  flowscape:val (77.8 vs 73.1). The gap at matched budget is small; lowering RAFT's input
+  resolution explains about 60% of the full-resolution flowscape:val gap (80.5 → 77.9 vs OSLO
+  76.2). The spherical design gives no measurable advantage at matched budget.
+- **Neighbor-graph fix: correct, not a gain on FlowScape.** gridfix passes 33/34 sanity checks
+  (only `conv_blur pole 80`, anisotropy 1.16, remains) but trades replica360 +2.6 for
+  flowscape −1.4 and is worse on the test benchmark (17.23 vs 16.29 px). One seed; the defects
+  were not what held OSLO back.
+- **Longer training improves validation but not the benchmark EPE.** 30k steps gives +2.3
+  flowscape:val and +4.3 replica360:val (poles +6.8) and SEPE 21.00 → 19.67, but test EPE gets
+  worse (16.29 → 17.84), all of it in the polar caps (EPE pol 30.97 → 34.18) and in the 0–5°
+  bin. EPE px weights near-pole pixels by 1/cos(lat); the angular metrics (val, SEPE) and EPE
+  px disagree on every OSLO change in this round (gridfix, sup_r7, 30k).
+- **Iterations.** Eval at 8 iterations (16.28) ties 12 (16.29); 4, 24 and 32 are worse. The
+  pipeline check finds the best at 7 on 8 val pairs. More iterations do not help.
+- **Overfit (4 fixed batches, 3000 steps).** OSLO's logged batch falls 8.0° → 0.35° and the loss
+  plateaus as the cosine schedule ends; RAFT-small reaches 0.46 px (≈0.16°) on its batches.
+  Neither memorizes to zero in 3000 steps; the units and augmentations differ (OSLO SO(3) on,
+  RAFT off), so this is weak evidence of a representation floor, not a verdict.
+- **Pipeline checks on the box (14/17).** `warp mpf:val` fails (GT/zero residual 0.98: the GT
+  barely explains frame 2 on mpf; do not use mpf for training until checked). `batch_indep`
+  3.7e-3 relative (GPU numerics or a batch-coupled op; below any metric effect). `iters` as above.
+- **Benchmark standing.** Every OSLO variant lands at 16.3–17.8 px EPE against oracle r6 4.12,
+  RAFT variants 11.3–14.3, PanoFlow 3.32 and PriOr-Flow 2.33. Reach, output grid, iterations,
+  capacity, training length and the grid defects are all ruled out as the cause. The best OSLO
+  SEPE remains the upright-trained `oslo_noso3` (12.87, better than every RAFT we trained),
+  so the SO(3) augmentation, not the architecture, is the largest single lever on this upright
+  benchmark.
+
+### 11.7 Isolating the gap to the published methods (queued 2026-10-28)
+
+Every OSLO and RAFT we train scores 11–17 px on flowscape:test; PriOr-Flow 2.33, PanoFlow
+3.32. OSLO vs our RAFT is 2–5 px of that; our RAFT vs PriOr-Flow is ~9 px, so most of the gap
+is shared by both architectures. The eval pipeline is not the cause (the released PriOr-RAFT
+and PanoFlow checkpoints reproduce their published numbers in it). Queue, in order:
+
+1. **Recipe** (`recipe_planar`, `recipe_oslo`). RAFT-large/small from Chairs+Things
+   (`--init-weights C_T_V2`, lr 1.25e-4, wd 1e-5, gamma 0.85) fine-tuned on flowscape:train
+   only, upright, no augmentation, ERP-px loss; the same nets from scratch on flowscape only;
+   OSLO upright on flowscape only. Reading: `raft_large_ft` near 3 px = our pipeline is
+   fine and the gap is pretraining + data; near 11 px = something in our pipeline.
+2. **Loss** (`loss_oslo_erppx`, `loss_raft_geo`). OSLO trained on the benchmark's ERP-pixel
+   EPE (`--loss-space erp_px`: sqrt(dlon² + dlat²), nodes weighted by ERP pixel density
+   1/cos(lat), capped at 20); RAFT-small trained on OSLO's area-weighted geodesic
+   (`--loss-space geodesic`). Upright, against `oslo_noso3` and `raft_small_noaug`.
+3. **Input information** (`retina_raft_small`, `retina_raft_large_ft`). RAFT fed exactly what
+   the r7 retina sees (`--retina-bottleneck 7`: ERP → 196,608 HEALPix nodes, bilinear as in
+   OSLO → ERP by HEALPix bilinear interpolation), at train and eval. If RAFT falls to OSLO's
+   level, the retina sampling is the cause; if not, the processing is.
+4. **Matched and upright** (`oslo_small_noso3`, `raft_small_noaug_320`).
+
+Then seed 11 for RAFT-small 320, gridfix and OSLO small, and the benchmark with every new
+row. Local checks: the bottleneck keeps a smooth field (mean error 0.02 / 255) and a constant
+one exactly; both new losses match analytic values; OSLO smoke run with `erp_px` passes.

@@ -187,6 +187,11 @@ def parse_args() -> argparse.Namespace:
     # loss re-balancing (diagnose/break the static-majority ceiling)
     p.add_argument("--loss-motion-weight", type=float, default=0.0,
                    help="Up-weight moving pixels: weight = 1 + w*min(gt_motion/ref, 1).")
+    p.add_argument("--loss-space", default="geodesic", choices=["geodesic", "erp_px"],
+                   help="geodesic = great-circle endpoint error, equal-area node mean; erp_px = "
+                        "the benchmark's ERP-pixel EPE, nodes weighted by ERP pixel density.")
+    p.add_argument("--loss-erp-max-density", type=float, default=20.0,
+                   help="erp_px: cap on the 1/cos(lat) node weight (20 = 87 deg).")
     p.add_argument("--loss-motion-ref-deg", type=float, default=1.0,
                    help="GT-motion (deg) at which --loss-motion-weight saturates.")
     p.add_argument("--loss-min-target-deg", type=float, default=0.0,
@@ -819,6 +824,7 @@ def main() -> None:
                         preds, batch["endpoint"], step_sup, batch["valid"], gamma=args.gamma,
                         motion_weight=args.loss_motion_weight, motion_ref_deg=args.loss_motion_ref_deg,
                         min_target_deg=args.loss_min_target_deg,
+                        space=args.loss_space, erp_max_density=args.loss_erp_max_density,
                     ) / accum
                     if aux is not None:
                         loss = loss + aux_w * aux / accum

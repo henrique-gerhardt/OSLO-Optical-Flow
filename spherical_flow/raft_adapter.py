@@ -155,9 +155,12 @@ def predict_raft_flow(
     device: torch.device,
     flow_transform: str,
     infer_size: Optional[tuple[int, int]] = None,
+    retina_bottleneck: int = 0,
 ) -> torch.Tensor:
     """TorchVision RAFT; ``infer_size`` as in :func:`predict_princeton_flow` (the frames
-    are resampled before normalization, the flow back to the input size)."""
+    are resampled before normalization, the flow back to the input size).
+    ``retina_bottleneck`` R > 0 passes both frames through the HEALPix r R retina
+    (``spherical_flow.retina_bottleneck``) at the network's input size."""
     frame1 = frame1.to(device, non_blocking=True)
     frame2 = frame2.to(device, non_blocking=True)
     orig_h, orig_w = int(frame1.shape[-2]), int(frame1.shape[-1])
@@ -168,6 +171,11 @@ def predict_raft_flow(
                                                 align_corners=False, antialias=True)
             return y.round().clamp(0, 255).to(x.dtype)  # the trained net saw rounded bytes
         frame1, frame2 = down(frame1), down(frame2)
+    if retina_bottleneck:
+        from .retina_bottleneck import get_bottleneck
+
+        bn = get_bottleneck(int(frame1.shape[-2]), int(frame1.shape[-1]), retina_bottleneck)
+        frame1, frame2 = bn(frame1), bn(frame2)
     if transforms is not None:
         frame1, frame2 = transforms(frame1, frame2)
     else:
