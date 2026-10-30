@@ -132,3 +132,17 @@ raft_small_320_s11 | scripts/raft_parity_planar.sh | SEED=11; FROZEN= ; ARMS=raf
 seeds_s11 | scripts/raft_parity_large.sh | ARMS=gridfix small; PREFLIGHT_ARMS=; SEEDS=11
 # 6) benchmark with every new row (finished rows are skipped)   ~45 min
 benchmark_next | scripts/benchmark_flowscape.sh | TAG=bins
+# What is left of OSLO's gap (2026-10-30, RAFT_PARITY 11.8-11.9): with the same input and the
+# ERP-pixel loss OSLO is at 10.4 px vs RAFT 4.5; the rest is polar and in small motions.
+# 1) matched comparison with the right loss: OSLO-small erp_px vs raft_small_noaug_320 (7.77)   ~2.7 h
+erppx_small | scripts/raft_parity_large.sh | ARMS=small_noso3_erppx; PREFLIGHT_ARMS=small_noso3_erppx
+# 2) output grid: erp_px supervised and read out at r7 (floor 2.78 px vs 4.12 at r6)   ~3 h
+erppx_sup7 | scripts/raft_parity_large.sh | RUN_NAME=raft_parity_sup7; ARMS=noso3_erppx; PREFLIGHT_ARMS=noso3_erppx; RESOLUTION=7
+# 3) polar weight: erp_px without the density cap of 20   ~3 h
+erppx_nocap | scripts/raft_parity_large.sh | ARMS=noso3_erppx_nocap; PREFLIGHT_ARMS=noso3_erppx_nocap
+# 4) seed 11 for the deciding rows   ~30 min + ~55 min + ~3 h
+bn7_small_s11 | scripts/raft_parity_planar.sh | SEED=11; FROZEN= ; ARMS=raft_small_noaug_bn7|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024 --retina-bottleneck 7; OSLO_RUNS=oslo_noso3_s11|raft_parity_large/noso3_s11
+bn7_large_ft_s11 | scripts/raft_parity_planar.sh | SEED=11; RUN_NAME=raft_parity_recipe; TRAIN_SOURCES=flowscape:train; FROZEN= ; ARMS=raft_large_ft_bn7|raft_large|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024 --init-weights C_T_V2 --lr 1.25e-4 --weight-decay 1e-5 --gamma 0.85 --retina-bottleneck 7; OSLO_RUNS=oslo_fs_noso3|raft_parity_fsonly/noso3_s7
+erppx_s11 | scripts/raft_parity_large.sh | ARMS=noso3_erppx; PREFLIGHT_ARMS=; SEEDS=11
+# 5) benchmark with the new rows (finished rows are skipped)   ~45 min
+benchmark_erppx | scripts/benchmark_flowscape.sh | TAG=bins

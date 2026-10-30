@@ -976,3 +976,72 @@ and PanoFlow checkpoints reproduce their published numbers in it). Queue, in ord
 Then seed 11 for RAFT-small 320, gridfix and OSLO small, and the benchmark with every new
 row. Local checks: the bottleneck keeps a smooth field (mean error 0.02 / 255) and a constant
 one exactly; both new losses match analytic values; OSLO smoke run with `erp_px` passes.
+
+### 11.8 Results of the isolation runs (box, 2026-10-29, git `0f0a770`, seed 7)
+
+flowscape:test, PriOr-Flow protocol (EPE in ERP px, SEPE in 1e-3 rad). "fs" = flowscape:train
+only; otherwise replica360 + flowscape. All rows upright unless marked SO(3).
+
+| row | EPE all | eq | pol | SEPE all | EPE 0–5° bin |
+|---|---|---|---|---|---|
+| PriOr-Flow (released) | 2.33 | 0.53 | 4.14 | 3.49 | 2.32 |
+| PanoFlow (released) | 3.32 | 0.51 | 6.13 | 4.45 | 3.12 |
+| oracle r6 (output-grid floor) | 4.12 | 0.63 | 7.60 | 1.99 | 4.79 |
+| raft_large_ft_bn7 (C+T init, fs, retina r7 input) | **4.44** | 0.67 | 8.22 | **6.08** | 4.83 |
+| raft_small_noaug_bn7 (retina r7 input) | 4.46 | 1.12 | 7.80 | 8.45 | 3.96 |
+| raft_small_noaug_geo (geodesic loss) | 4.62 | 1.03 | 8.22 | 8.16 | 4.11 |
+| raft_small_noaug | 4.74 | 1.20 | 8.28 | 9.34 | 4.08 |
+| raft_small_ft (C+T init, fs) | 5.80 | 0.88 | 10.72 | 7.85 | 6.21 |
+| raft_large_ft (C+T init, fs) | 6.20 | 0.68 | 11.71 | 6.63 | 7.13 |
+| raft_small_fs | 7.66 | 1.80 | 13.52 | 15.82 | 6.53 |
+| raft_small_noaug_320 (matched) | 7.77 | 2.03 | 13.50 | 15.56 | 7.07 |
+| raft_large_fs | 9.59 | 1.25 | 17.92 | 14.32 | 11.34 |
+| oslo_noso3_erppx (ERP-px loss) | 10.44 | 1.56 | 19.31 | 13.34 | 10.73 |
+| raft_large_so3_scale (SO(3)) | 11.33 | 1.04 | 21.62 | 15.28 | 8.55 |
+| raft_small_so3 (SO(3)) | 13.46 | 1.27 | 25.65 | 18.16 | 10.69 |
+| oslo_small_noso3 (matched) | 15.76 | **1.40** | 30.11 | **12.70** | 13.57 |
+| oslo_noso3 | 16.55 | 1.44 | 31.66 | 12.87 | 15.00 |
+| oslo_fs_noso3 | 17.14 | 1.50 | 32.78 | 12.27 | 16.49 |
+| zero | 23.39 | 5.72 | 41.07 | 48.07 | 12.57 |
+
+Seed noise on this benchmark is ~0.5–1 px (gridfix 17.23 / 16.43, raft_small_so3_320 14.26 / 14.04).
+
+- **mpf convention is correct** (frozen RAFT-large +19.3% identity vs −77.7% negated). The
+  failed pipeline warp check on mpf:val is weak texture / appearance change, not a sign defect.
+- **§11.7's premise was wrong: the gap was not shared.** Our earlier RAFT rows (11–13 px) all
+  had SO(3) augmentation. Upright, RAFT-small from scratch reaches 4.74 px, 1.4 px from
+  PanoFlow. SO(3) augmentation costs RAFT 8.7 px on this upright benchmark (poles), and costs
+  OSLO nothing in px (16.29 vs 16.55) but 8 points of SEPE (21.0 vs 12.9).
+- **Pretraining is worth ~2–3 px**, not the whole gap: fs-only small 7.66 → 5.80, large
+  9.59 → 6.20. More data (adding replica360) is worth about as much (7.66 → 4.74).
+- **The retina is ruled out.** RAFT fed exactly the r7 retina's information is not worse and
+  may be better (small 4.74 → 4.46; large ft 6.20 → 4.44, the best non-released row). What
+  OSLO sees is enough for ~4.4 px; the loss is in how OSLO processes and outputs it.
+- **The loss explains a third of OSLO's gap.** Training OSLO on ERP-px EPE: 16.55 → 10.44 px
+  (poles 31.7 → 19.3, 0–5° bin 15.0 → 10.7) at a small cost in val angle (83.2 → 80.8) and SEPE
+  (12.9 → 13.3). RAFT trained on OSLO's geodesic is unchanged (4.74 → 4.62). OSLO's angular
+  loss lets near-pole errors that are small in angle and large in ERP px go unpunished.
+- **Matched budget, upright (item 4) splits by metric.** OSLO-small vs RAFT-small 320×640:
+  OSLO wins SEPE everywhere (12.70 vs 15.56; eq 7.76 vs 11.31; poles 17.63 vs 19.81), ERP-px at
+  the equator (1.40 vs 2.03) and val angle (83.2 vs 73.9); RAFT wins ERP-px at the poles
+  (13.5 vs 30.1) and therefore EPE all (7.77 vs 15.76). Caveat: OSLO here still had the angular
+  loss; the matched erp_px run is missing.
+- **What is left is OSLO-specific and polar.** Best OSLO 10.44 vs RAFT 4.5–4.7 with the same
+  information: the residual is at the poles (19.3 vs 8.2) and in small motions (0–5° bin, 77%
+  of pixels: 10.7 vs 4.1, against zero 12.6). Candidates: the r6 output grid (its floor alone is
+  7.60 px at the poles), noise on near-static polar pixels, the anisotropic polar blur
+  (`conv_blur pole 80`, still failing with gridfix), and working resolution (RAFT drops
+  4.74 → 7.77 going from 512×1024 to 320×640 at the same input information).
+- Seed 11: gridfix 87.7 ± 1.3 / 75.4 ± 0.6 (replica / flowscape val), small 85.3 ± 0.9 /
+  75.9 ± 0.3; raft_small_so3_320 s11 86.0 / 78.1. Readings of §11.6 unchanged.
+
+### 11.9 Queued (2026-10-30): what is left of OSLO's gap
+
+1. `erppx_small`: OSLO-small (1.03M) with `erp_px`, against `raft_small_noaug_320` (7.77 px).
+   The matched comparison with the benchmark's loss on both sides.
+2. `erppx_sup7`: `noso3_erppx` supervised and read out at r7 (oracle floor 2.78 px vs 4.12
+   at r6). Tests the output grid.
+3. `erppx_nocap`: `erp_px` without the density cap (`--loss-erp-max-density 1000`; r6 polar
+   nodes reach about 78). Tests the polar weight.
+4. Seed 11 for `raft_small_noaug_bn7`, `raft_large_ft_bn7` and `oslo_noso3_erppx`.
+5. `benchmark_erppx`: the six new rows.

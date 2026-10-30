@@ -51,6 +51,10 @@ arm_flags() {
     small_noso3) echo "--hidden-channels 72 --context-dim 48 --so3-prob 0" ;;
     # upright, trained on the benchmark's ERP-pixel EPE instead of the geodesic
     noso3_erppx) echo "--so3-prob 0 --loss-space erp_px" ;;
+    # matched size (about RAFT-small) with the ERP-pixel loss
+    small_noso3_erppx) echo "--hidden-channels 72 --context-dim 48 --so3-prob 0 --loss-space erp_px" ;;
+    # ERP-pixel loss without the density cap of 20 (r6 polar nodes reach about 78)
+    noso3_erppx_nocap) echo "--so3-prob 0 --loss-space erp_px --loss-erp-max-density 1000" ;;
     # 4 fixed batches repeated: can the model fit 8 pairs? (train_global must go to ~0)
     overfit) echo "--overfit-batches 4" ;;
     yaw) echo "--so3-axis vertical" ;;

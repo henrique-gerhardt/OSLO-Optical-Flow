@@ -52,7 +52,13 @@ oslo_fs_noso3|oslo|$OUT/raft_parity_fsonly/noso3_s7/oslo_raft.pt|--init-checkpoi
 oslo_noso3_erppx|oslo|$OUT/raft_parity_large/noso3_erppx_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_large/noso3_erppx_s7/oslo_raft.pt
 raft_small_noaug_geo|raft|$OUT/raft_parity_planar/raft_small_noaug_geo_s7/raft_erp.pt|--model raft_small --tv-checkpoint $OUT/raft_parity_planar/raft_small_noaug_geo_s7/raft_erp.pt
 raft_small_noaug_bn7|raft|$OUT/raft_parity_planar/raft_small_noaug_bn7_s7/raft_erp.pt|--model raft_small --tv-checkpoint $OUT/raft_parity_planar/raft_small_noaug_bn7_s7/raft_erp.pt --retina-bottleneck 7
-raft_large_ft_bn7|raft|$OUT/raft_parity_recipe/raft_large_ft_bn7_s7/raft_erp.pt|--model raft_large --tv-checkpoint $OUT/raft_parity_recipe/raft_large_ft_bn7_s7/raft_erp.pt --retina-bottleneck 7}"
+raft_large_ft_bn7|raft|$OUT/raft_parity_recipe/raft_large_ft_bn7_s7/raft_erp.pt|--model raft_large --tv-checkpoint $OUT/raft_parity_recipe/raft_large_ft_bn7_s7/raft_erp.pt --retina-bottleneck 7
+oslo_small_noso3_erppx|oslo|$OUT/raft_parity_large/small_noso3_erppx_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_large/small_noso3_erppx_s7/oslo_raft.pt
+oslo_noso3_erppx_nocap|oslo|$OUT/raft_parity_large/noso3_erppx_nocap_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_large/noso3_erppx_nocap_s7/oslo_raft.pt
+oslo_sup7_noso3_erppx|oslo|$OUT/raft_parity_sup7/noso3_erppx_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_sup7/noso3_erppx_s7/oslo_raft.pt
+oslo_noso3_erppx_s11|oslo|$OUT/raft_parity_large/noso3_erppx_s11/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_large/noso3_erppx_s11/oslo_raft.pt
+raft_small_noaug_bn7_s11|raft|$OUT/raft_parity_planar/raft_small_noaug_bn7_s11/raft_erp.pt|--model raft_small --tv-checkpoint $OUT/raft_parity_planar/raft_small_noaug_bn7_s11/raft_erp.pt --retina-bottleneck 7
+raft_large_ft_bn7_s11|raft|$OUT/raft_parity_recipe/raft_large_ft_bn7_s11/raft_erp.pt|--model raft_large --tv-checkpoint $OUT/raft_parity_recipe/raft_large_ft_bn7_s11/raft_erp.pt --retina-bottleneck 7}"
 mkdir -p "$DEST"
 
 names=()
