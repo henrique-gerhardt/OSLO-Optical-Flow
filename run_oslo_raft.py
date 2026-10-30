@@ -221,6 +221,9 @@ def parse_args() -> argparse.Namespace:
                         "optimizer step (0 disables). Evals also report the shadow weights and the "
                         "EMA checkpoint is saved as oslo_raft_ema.pt (P1 consolidation: the raw "
                         "trajectory oscillates around the optimum at effective batch 8).")
+    p.add_argument("--abort-below", default="",
+                   help="STEP:PCT. Stop with exit code 3 if val global improvement at step "
+                        "STEP is below PCT (a long run that has not left zero flow).")
     p.add_argument("--init-checkpoint", default="",
                    help="Load model weights from a saved checkpoint before training "
                         "(stage-to-stage init, e.g. Stage B from Stage A).")
@@ -867,6 +870,13 @@ def main() -> None:
             if ema_state is not None:
                 print_metrics(f"val_ema@{step}", evaluate_state(ema_state), motion_bands, band_regions)
             model.train()
+            if args.abort_below:
+                gate_step, gate_pct = args.abort_below.split(":")
+                got = metrics.get("global_improvement_pct", float("nan"))
+                if step == int(gate_step) and not got >= float(gate_pct):
+                    print(f"abort: val global improvement {got:.2f}% at step {step} "
+                          f"< {gate_pct}%", flush=True)
+                    raise SystemExit(3)
 
     metrics = evaluate(model, val_loader, geom, sup_level, region_masks, active_thresholds,
                        device, args.eval_iters, args.max_val_pairs, motion_bands,

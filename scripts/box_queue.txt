@@ -146,3 +146,17 @@ bn7_large_ft_s11 | scripts/raft_parity_planar.sh | SEED=11; RUN_NAME=raft_parity
 erppx_s11 | scripts/raft_parity_large.sh | ARMS=noso3_erppx; PREFLIGHT_ARMS=; SEEDS=11
 # 5) benchmark with the new rows (finished rows are skipped)   ~45 min
 benchmark_erppx | scripts/benchmark_flowscape.sh | TAG=bins
+# Pretraining OSLO (2026-10-30, RAFT_PARITY 11.10): RAFT's recipe, a long generic stage then a
+# short upright fine-tune. Pretrain on chairs360 + replica360 (replica gives the large motions
+# chairs360-only lacked in July), SO(3) on, geodesic loss, 40k steps; stops at 4k if the val
+# has not left zero flow   ~11.5 h
+pt_oslo | scripts/raft_parity_large.sh | RUN_NAME=oslo_pretrain; ARMS=base; PREFLIGHT_ARMS=base; TRAIN_SOURCES=chairs360:train,replica360:train; VAL_SOURCES=chairs360:val; EXTRA_VAL_SOURCES=flowscape:val replica360:val; STEPS=40000; EVAL_EVERY=4000; EXTRA_FLAGS=--abort-below 4000:5
+# fine-tune: flowscape only, upright, ERP-pixel loss, lr 1.25e-4, 10k   ~3 h
+pt_oslo_ft | scripts/raft_parity_large.sh | RUN_NAME=oslo_pretrain_ft; ARMS=noso3_erppx; PREFLIGHT_ARMS=; TRAIN_SOURCES=flowscape:train; EXTRA_FLAGS=--init-checkpoint /outputs/oslo_pretrain/base_s7/oslo_raft.pt --lr 1.25e-4
+# control: the same fine-tune from scratch   ~3 h
+fs_oslo_erppx | scripts/raft_parity_large.sh | RUN_NAME=raft_parity_fsonly; ARMS=noso3_erppx; PREFLIGHT_ARMS=; TRAIN_SOURCES=flowscape:train
+# RAFT-small through the same two stages (is chairs360 as good a pretraining as Chairs+Things,
+# and does OSLO use it as well as RAFT?); compare with raft_small_ft (C+T, 5.80 px)   ~2 h + ~30 min
+pt_raft_small | scripts/raft_parity_planar.sh | RUN_NAME=raft_pretrain; TRAIN_SOURCES=chairs360:train,replica360:train; STEPS=40000; FROZEN= ; ARMS=raft_small_c360|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024 --so3-prob 1; OSLO_RUNS=oslo_pretrain|oslo_pretrain/base_s7
+pt_raft_small_ft | scripts/raft_parity_planar.sh | RUN_NAME=raft_pretrain; TRAIN_SOURCES=flowscape:train; FROZEN= ; ARMS=raft_small_c360_ft|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024 --init-checkpoint /outputs/raft_pretrain/raft_small_c360_s7/raft_erp.pt --lr 1.25e-4 --weight-decay 1e-5 --gamma 0.85; OSLO_RUNS=oslo_pretrain_ft|oslo_pretrain_ft/noso3_erppx_s7\noslo_fs_erppx|raft_parity_fsonly/noso3_erppx_s7
+benchmark_pretrain | scripts/benchmark_flowscape.sh | TAG=bins

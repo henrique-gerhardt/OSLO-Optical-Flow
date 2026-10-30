@@ -58,7 +58,12 @@ oslo_noso3_erppx_nocap|oslo|$OUT/raft_parity_large/noso3_erppx_nocap_s7/oslo_raf
 oslo_sup7_noso3_erppx|oslo|$OUT/raft_parity_sup7/noso3_erppx_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_sup7/noso3_erppx_s7/oslo_raft.pt
 oslo_noso3_erppx_s11|oslo|$OUT/raft_parity_large/noso3_erppx_s11/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_large/noso3_erppx_s11/oslo_raft.pt
 raft_small_noaug_bn7_s11|raft|$OUT/raft_parity_planar/raft_small_noaug_bn7_s11/raft_erp.pt|--model raft_small --tv-checkpoint $OUT/raft_parity_planar/raft_small_noaug_bn7_s11/raft_erp.pt --retina-bottleneck 7
-raft_large_ft_bn7_s11|raft|$OUT/raft_parity_recipe/raft_large_ft_bn7_s11/raft_erp.pt|--model raft_large --tv-checkpoint $OUT/raft_parity_recipe/raft_large_ft_bn7_s11/raft_erp.pt --retina-bottleneck 7}"
+raft_large_ft_bn7_s11|raft|$OUT/raft_parity_recipe/raft_large_ft_bn7_s11/raft_erp.pt|--model raft_large --tv-checkpoint $OUT/raft_parity_recipe/raft_large_ft_bn7_s11/raft_erp.pt --retina-bottleneck 7
+oslo_pretrain|oslo|$OUT/oslo_pretrain/base_s7/oslo_raft.pt|--init-checkpoint $OUT/oslo_pretrain/base_s7/oslo_raft.pt
+oslo_pretrain_ft|oslo|$OUT/oslo_pretrain_ft/noso3_erppx_s7/oslo_raft.pt|--init-checkpoint $OUT/oslo_pretrain_ft/noso3_erppx_s7/oslo_raft.pt
+oslo_fs_erppx|oslo|$OUT/raft_parity_fsonly/noso3_erppx_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_fsonly/noso3_erppx_s7/oslo_raft.pt
+raft_small_c360|raft|$OUT/raft_pretrain/raft_small_c360_s7/raft_erp.pt|--model raft_small --tv-checkpoint $OUT/raft_pretrain/raft_small_c360_s7/raft_erp.pt
+raft_small_c360_ft|raft|$OUT/raft_pretrain/raft_small_c360_ft_s7/raft_erp.pt|--model raft_small --tv-checkpoint $OUT/raft_pretrain/raft_small_c360_ft_s7/raft_erp.pt}"
 mkdir -p "$DEST"
 
 names=()

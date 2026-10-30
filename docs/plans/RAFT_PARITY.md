@@ -1045,3 +1045,20 @@ Seed noise on this benchmark is ~0.5–1 px (gridfix 17.23 / 16.43, raft_small_s
    nodes reach about 78). Tests the polar weight.
 4. Seed 11 for `raft_small_noaug_bn7`, `raft_large_ft_bn7` and `oslo_noso3_erppx`.
 5. `benchmark_erppx`: the six new rows.
+
+### 11.10 Queued (2026-10-30): pretraining OSLO (after §11.9)
+
+RAFT's recipe for OSLO: a long generic stage, then a short upright fine-tune on FlowScape.
+
+| job | what | time |
+|---|---|---|
+| `pt_oslo` | from scratch on chairs360:train + replica360:train, SO(3) on, geodesic loss, 40k steps, val chairs360:val (+ flowscape:val, replica360:val after). `--abort-below 4000:5` stops the run if val global is below +5% at 4k (the July chairs360-only run sat at exact zero-flow parity) | ~11.5 h |
+| `pt_oslo_ft` | init from `pt_oslo`, flowscape:train only, upright, `erp_px`, lr 1.25e-4, 10k | ~3 h |
+| `fs_oslo_erppx` | control: the same fine-tune from scratch | ~3 h |
+| `pt_raft_small`, `pt_raft_small_ft` | RAFT-small through the same two stages (`--init-checkpoint`, new in `run_erp_raft_train.py`) | ~2.5 h |
+| `benchmark_pretrain` | five new rows | ~45 min |
+
+Reading: `pt_oslo_ft` − `fs_oslo_erppx` = what pretraining buys OSLO; `raft_small_c360_ft` vs
+`raft_small_ft` (C+T, 5.80 px) = chairs360 vs Chairs+Things as pretraining data;
+`raft_small_c360_ft` − `raft_small_fs` (7.66) = what the same pretraining buys RAFT. If §11.9's
+`erppx_sup7` shows the output grid is binding, move step 3 (working resolution) ahead of these.

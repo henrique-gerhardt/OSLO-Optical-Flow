@@ -283,6 +283,9 @@ def main() -> None:
     p.add_argument("--init-weights", default="none",
                    help="TorchVision weights to start from: none (random), C_T_V2 (Chairs + "
                         "Things), C_T_SKHT_V2 (raft_large only), ...")
+    p.add_argument("--init-checkpoint", default="",
+                   help="raft_erp.pt from an earlier run of this script to start from "
+                        "(our own pretraining stage). Overrides --init-weights.")
     p.add_argument("--loss-space", default="px", choices=["px", "geodesic"],
                    help="px = RAFT's L1 in ERP pixels; geodesic = OSLO's area-weighted "
                         "great-circle endpoint error.")
@@ -325,7 +328,12 @@ def main() -> None:
 
         enum = Raft_Small_Weights if args.model == "raft_small" else Raft_Large_Weights
         weights = enum[args.init_weights]
-    model = builder(weights=weights).to(device)
+    model = builder(weights=weights)
+    if args.init_checkpoint:
+        payload = torch.load(args.init_checkpoint, map_location="cpu", weights_only=False)
+        model.load_state_dict(payload.get("model", payload), strict=True)
+        print(f"loaded init checkpoint: {args.init_checkpoint}", flush=True)
+    model = model.to(device)
     model.train()
     n_params = sum(q.numel() for q in model.parameters() if q.requires_grad)
     steps = 3 if args.smoke_test else args.steps
