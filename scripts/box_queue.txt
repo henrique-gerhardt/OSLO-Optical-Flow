@@ -160,3 +160,19 @@ fs_oslo_erppx | scripts/raft_parity_large.sh | RUN_NAME=raft_parity_fsonly; ARMS
 pt_raft_small | scripts/raft_parity_planar.sh | RUN_NAME=raft_pretrain; TRAIN_SOURCES=chairs360:train,replica360:train; STEPS=40000; FROZEN= ; ARMS=raft_small_c360|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024 --so3-prob 1; OSLO_RUNS=oslo_pretrain|oslo_pretrain/base_s7
 pt_raft_small_ft | scripts/raft_parity_planar.sh | RUN_NAME=raft_pretrain; TRAIN_SOURCES=flowscape:train; FROZEN= ; ARMS=raft_small_c360_ft|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024 --init-checkpoint /outputs/raft_pretrain/raft_small_c360_s7/raft_erp.pt --lr 1.25e-4 --weight-decay 1e-5 --gamma 0.85; OSLO_RUNS=oslo_pretrain_ft|oslo_pretrain_ft/noso3_erppx_s7\noslo_fs_erppx|raft_parity_fsonly/noso3_erppx_s7
 benchmark_pretrain | scripts/benchmark_flowscape.sh | TAG=bins
+# Working resolution and the matched claim (2026-10-30, RAFT_PARITY 11.11)
+# 1) estimation at r5 (12288 nodes, RAFT 512x1024 works on 8192; est r4 = 3072 ~ RAFT 320x640),
+#    4 pooling levels for the same reach, upright, ERP-pixel loss. Stops at 2k if val < +10%
+#    (r8_cp4_noso3 diverged in October)   ~5-6 h
+est5_erppx | scripts/raft_parity_large.sh | ARMS=est5_noso3_erppx; PREFLIGHT_ARMS=est5_noso3_erppx; EXTRA_FLAGS=--abort-below 2000:10
+# 2) second seed of the matched-size comparison (OSLO-small erp_px vs RAFT-small 320x640)   ~2.7 h + ~30 min
+erppx_small_s11 | scripts/raft_parity_large.sh | ARMS=small_noso3_erppx; PREFLIGHT_ARMS=; SEEDS=11
+raft_small_320_s11 | scripts/raft_parity_planar.sh | SEED=11; FROZEN= ; ARMS=raft_small_noaug_320|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --resize 320x640 --crop 320x640; OSLO_RUNS=oslo_small_noso3_erppx_s11|raft_parity_large/small_noso3_erppx_s11
+# 3) benchmark with the new rows   ~20 min
+benchmark_est5 | scripts/benchmark_flowscape.sh | TAG=bins
+# 4) seed 11 of the pretraining comparison (RAFT_PARITY 11.12: OSLO gain 0.67 px is inside seed noise)   ~3 h + ~3 h + ~1 h
+pt_oslo_ft_s11 | scripts/raft_parity_large.sh | RUN_NAME=oslo_pretrain_ft; ARMS=noso3_erppx; PREFLIGHT_ARMS=; SEEDS=11; TRAIN_SOURCES=flowscape:train; EXTRA_FLAGS=--init-checkpoint /outputs/oslo_pretrain/base_s7/oslo_raft.pt --lr 1.25e-4
+fs_oslo_erppx_s11 | scripts/raft_parity_large.sh | RUN_NAME=raft_parity_fsonly; ARMS=noso3_erppx; PREFLIGHT_ARMS=; SEEDS=11; TRAIN_SOURCES=flowscape:train
+pt_raft_small_ft_s11 | scripts/raft_parity_planar.sh | SEED=11; RUN_NAME=raft_pretrain; TRAIN_SOURCES=flowscape:train; FROZEN= ; ARMS=raft_small_c360_ft|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024 --init-checkpoint /outputs/raft_pretrain/raft_small_c360_s7/raft_erp.pt --lr 1.25e-4 --weight-decay 1e-5 --gamma 0.85; OSLO_RUNS=oslo_pretrain_ft_s11|oslo_pretrain_ft/noso3_erppx_s11\noslo_fs_erppx_s11|raft_parity_fsonly/noso3_erppx_s11
+raft_small_fs_s11 | scripts/raft_parity_planar.sh | SEED=11; RUN_NAME=raft_parity_recipe; TRAIN_SOURCES=flowscape:train; FROZEN= ; ARMS=raft_small_fs|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024; OSLO_RUNS=oslo_fs_erppx_s11|raft_parity_fsonly/noso3_erppx_s11
+benchmark_pretrain_s11 | scripts/benchmark_flowscape.sh | TAG=bins

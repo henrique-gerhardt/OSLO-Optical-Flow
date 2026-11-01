@@ -1062,3 +1062,69 @@ Reading: `pt_oslo_ft` − `fs_oslo_erppx` = what pretraining buys OSLO; `raft_sm
 `raft_small_ft` (C+T, 5.80 px) = chairs360 vs Chairs+Things as pretraining data;
 `raft_small_c360_ft` − `raft_small_fs` (7.66) = what the same pretraining buys RAFT. If §11.9's
 `erppx_sup7` shows the output grid is binding, move step 3 (working resolution) ahead of these.
+
+### 11.11 Queued (2026-10-30): working resolution and the second seed of the matched claim
+
+Jobs after §11.10 in `scripts/box_queue.txt`:
+
+| job | what | reading |
+|---|---|---|
+| `est5_erppx` | arm `est5_noso3_erppx`: r7 retina / **est r5** / sup r6, 4 pooling levels (coarsest r1, same reach as est r4 with 3), upright, ERP-px loss, 10k. Gate `--abort-below 2000:10` | vs `oslo_noso3_erppx` (10.44 px) = what working resolution buys OSLO. RAFT's counterpart is 512×1024 vs 320×640 at the same information: 4.74 vs 7.77 |
+| `erppx_small_s11`, `raft_small_320_s11` | seed 11 of the matched-size pair (OSLO-small erp_px, RAFT-small 320×640) | the claim "at matched size and working resolution OSLO wins SEPE" needs two seeds; seed noise here is ~0.5–1 px |
+| `benchmark_est5` | rows `oslo_est5_erppx`, `oslo_small_noso3_erppx_s11`, `raft_small_noaug_320_s11` | |
+
+Grid sizes behind the comparison: est r4 = 3072 nodes ≈ RAFT at 320×640 (40×80 = 3200 cells);
+est r5 = 12288 nodes vs RAFT at 512×1024 (64×128 = 8192). The matched pair of §11.8 is therefore
+matched in working resolution as well as size.
+
+Local CPU smoke (replica360:val, batch 1): builds, 12288 estimation nodes, 1.59M params, peak
+memory 3.4 GB. Time per step on the box unknown; the preflight catches an OOM (fallback
+`BATCH_SIZE=1 GRAD_ACCUM=2`).
+
+Polar reading already answered by §11.8: matched OSLO beats RAFT-small 320×640 in **polar SEPE**
+(17.63 vs 19.81) while losing polar ERP-px (30.1 vs 13.5). The polar loss in px is the
+1/cos(lat) weighting of ERP pixels, not a polar angular error.
+
+### 11.12 Results of §11.9 and §11.10 (box, 2026-11-01, git `e22a236`, seed 7 unless marked)
+
+§11.11 (est r5, seed 11 of the matched pair) did not run: it was not pushed before the queue pulled.
+
+flowscape:test, PriOr-Flow protocol (EPE in ERP px, SEPE in 1e-3 rad).
+
+| row | EPE all | eq | pol | SEPE all | 0–5° | replica360:val global |
+|---|---|---|---|---|---|---|
+| raft_small_c360_ft (chairs360+replica pretrain → fs) | **6.54** | 0.98 | 12.09 | **9.31** | 6.93 | 16.2 |
+| raft_small_fs (fs only) | 7.66 | 1.80 | 13.52 | 15.82 | 6.53 | 3.5 |
+| raft_small_noaug_320 (matched working grid) | 7.77 | 2.03 | 13.50 | 15.56 | 7.07 | |
+| **oslo_pretrain_ft** (same pretrain → fs, erp_px) | **8.52** | 1.46 | 15.59 | 12.64 | 8.11 | **46.7** |
+| oslo_fs_erppx (fs only, erp_px) | 9.19 | 1.62 | 16.75 | 12.94 | 9.59 | 8.1 |
+| oslo_sup7_noso3_erppx (sup r7) | 10.17 | 1.51 | 18.83 | 13.61 | 9.81 | |
+| oslo_noso3_erppx s7 / s11 | 10.44 / 10.17 | 1.56 / 1.52 | 19.31 / 18.82 | 13.34 / 13.54 | | |
+| oslo_small_noso3_erppx (matched size) | 10.46 | 1.52 | 19.40 | 13.30 | 10.49 | |
+| oslo_noso3_erppx_nocap | 10.50 | 1.50 | 19.49 | 13.85 | 10.58 | |
+| raft_small_noaug_bn7 s7 / s11 | 4.46 / 5.00 | | 7.80 / 8.66 | 8.45 / 10.27 | | |
+| raft_large_ft_bn7 s7 / s11 | 4.44 / 6.47 | | 8.22 / 12.28 | 6.08 / 6.87 | | |
+| oslo_pretrain (zero-shot, before ft) | 20.53 | 3.29 | 37.76 | 37.01 | 11.85 | 89.5 |
+| raft_small_c360 (zero-shot, before ft) | 16.93 | 2.16 | 31.70 | 27.29 | 10.41 | 92.2 |
+
+- **Output grid is not binding.** sup r7 10.17 vs r6 10.44 / 10.17 (two seeds): no effect. §11.10's rule keeps
+  pretraining before resolution; resolution means the working (estimation) grid, §11.11.
+- **Density cap is not binding** (nocap 10.50).
+- **Matched size with the right loss:** OSLO-small erp_px 10.46 vs RAFT-small 320×640 7.77. OSLO still wins SEPE
+  (13.30 vs 15.56) and equator px (1.52 vs 2.03), loses polar px (19.4 vs 13.5).
+- **Pretraining:** buys OSLO 0.67 px (9.19 → 8.52, 7%) and RAFT-small 1.12 px (7.66 → 6.54, 15%). One seed; seed
+  noise here is ~0.5–1 px, so OSLO's gain is not yet distinguishable from noise (seed 11 queued, §11.12 jobs).
+  chairs360+replica is a slightly worse pretraining than Chairs+Things for RAFT (6.54 vs 5.80).
+- **The cleanest comparison now:** same pretraining data, same fine-tune data, same schedule. OSLO 8.52 vs
+  RAFT-small 6.54 = 2.0 px; RAFT also wins SEPE (9.31 vs 12.64). What still differs: working grid (est r4 =
+  3072 nodes vs 64×128 = 8192 cells) and size (1.56M vs 0.99M). RAFT's own 512→320 drop is 3 px, so §11.11
+  (est r5) is the deciding run.
+- **Retention after fine-tune:** OSLO keeps 46.7% on replica360:val (out of the fine-tune domain) vs RAFT 16.2%,
+  from similar zero-shot points (89.5 vs 92.2). OSLO forgets the pretraining domain less. One seed.
+- **flowscape-only beats the replica+flowscape mix for OSLO with erp_px** (9.19 vs 10.3 mean), unlike the geodesic
+  loss (17.14 vs 16.55). One seed.
+- **Seed spread on RAFT rows is larger than assumed:** raft_large_ft_bn7 4.44 / 6.47. "Best non-released row" from
+  §11.8 does not hold as a single number; report means.
+
+Queued after §11.11: seed 11 of `pt_oslo_ft`, `fs_oslo_erppx`, `raft_small_c360_ft`, `raft_small_fs`, then
+`benchmark_pretrain_s11` (~7.5 h).

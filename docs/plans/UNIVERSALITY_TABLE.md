@@ -1708,6 +1708,8 @@ new campaign, not a control. The result as it stands is reportable with its scop
 
 ## 16. SLOF's Table I reproduced in SLOF's own metric (2026-08-03) — OPENED
 
+> **2026-10-30, user decision:** the flow360 convention defect described in this section is a data-preparation bug that was fixed. It is **not** a result or a contribution. Do not use the "blindfold" / "methodological result" framing below in the article, thesis or slides. This section stays only as the record of why pre-2026-08-04 flow360 numbers are void.
+
 Every universality row so far is scored in *our* metric: geodesic degrees on an
 equal-area grid, actives conditioned on true angular displacement. A referee is
 entitled to reply "that is not the metric the field uses, and your baseline is a

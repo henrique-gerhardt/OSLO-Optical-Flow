@@ -20,7 +20,6 @@ claim a method, metric, or protocol that someone else published first.*
 | Evaluating under random global rotation | **EXISTS in panoramic vision, NOT in flow** | Sphere-Depth (2026) for monocular 360 depth; Spherical-GOF (2026) trains canonical and tests random global rotations on OmniBlender; SO3UFormer (2026) for rotation-robust panoramic segmentation | The **application to 360 optical flow**, and the **in-domain vs out-of-domain discriminator** — Sphere-Depth explicitly does *not* analyse whether in-domain models degrade more |
 | "Spherical-aware models degrade under camera-pose change" | **EXISTS** | Sphere-Depth's central conclusion, verbatim: "even models explicitly designed to process spherical images exhibit substantial performance degradation when variations in the camera pose are observed" | Our numbers replicate this in a new task. **Frame as replication, not discovery** |
 | No 360°-flow paper reports a trivial baseline | **OURS** (reporting-practice claim) | six papers read in full text, none reports a trivial predictor | Safe as stated. See §2 for the *derived* claim that is void |
-| Flow-convention verification (sign/direction audit) | **OURS** | no prior art found | Safe. The methodological point — a sign-invariant baseline plus an exactly reproduced published table cannot detect it — is the contribution |
 | Matched-backbone comparison across panoramic representations | **EXISTS** | PriOr-Flow Table 5: SphereNet / TanImg / MPF-net / SLOF / PanoFlow / PriOr, all on RAFT, all from the same FlyingThings pre-training, baselines re-run by the authors | Do not propose this as a novel experimental design. An **OSLO row** in that design is what is missing |
 
 ---
@@ -34,6 +33,7 @@ claim a method, metric, or protocol that someone else published first.*
 | "The sub-pixel regime is unsolved by anyone" | rests entirely on the void table | Scope to what the corrected table shows, which is much weaker |
 | "The SO(3) rotation protocol, which ERP methods structurally cannot win" (`THESIS_REGIME_ARGUMENT.md` §5) | **refuted by our own measurement**: under Haar rotation on flowscape:test, frozen RAFT-large degrades **6.3%**, OSLO **29.3%**, PanoFlow **313.9%**. The ERP method is the *most* robust of the three | Orientation sensitivity tracks **in-domain training**, not representation |
 | "Spherical geometry buys polar accuracy and uniformity, replicated on two independent datasets" | the flowscape half is placement, not geometry: that dataset's zero baseline has poles/equator **4.47**; under Haar rotation RAFT's polar tax falls 4.19 → 1.10 and OSLO's only 2.72 → 1.36 | One dataset (replica360, natively uniform at 1.05), plus a **displacement threshold**: the advantage needs polar ERP displacement above the raster method's correlation reach (~32 px) |
+| The FLOW360 convention defect as a finding or contribution ("a sign-invariant baseline plus a reproduced table cannot detect it") | user decision 2026-10-30: it is a data-preparation bug that we fixed, not a research result | Mention only as data preparation: "flow360 targets use the corrected forward convention". Never in contributions, results or slides |
 | "The decisive triangle" | retired 2026-07-29 as confounded (field and appearance swapped together), and its numbers are void anyway | the P0d six-cell decomposition, itself void on flow360 |
 
 ---
@@ -58,20 +58,18 @@ first is the difference between a scoped claim and an embarrassment.
 
 Stated at the width the evidence supports, no wider:
 
-1. **The FLOW360 convention defect**, and the methodological point that neither a
-   sign-invariant baseline nor an exactly reproduced published table detects it.
-2. **360°-flow papers do not report trivial baselines** — six-paper full-text sweep.
-3. **In-domain benchmark performance is orientation-contingent**: PanoFlow loses
+1. **360°-flow papers do not report trivial baselines** — six-paper full-text sweep.
+2. **In-domain benchmark performance is orientation-contingent**: PanoFlow loses
    314% of its margin under an isometry that preserves every motion statistic and
    falls behind an out-of-domain frozen RAFT-large that loses 6.3%. The control
    exists in panoramic depth and segmentation; **applying it to flow, and using
    in-domain vs out-of-domain as the discriminator, is ours**.
-4. **The polar penalty is a threshold, not a slope** — nil while polar ERP
+3. **The polar penalty is a threshold, not a slope** — nil while polar ERP
    displacement fits the correlation reach (~32 px), severe past it. Measured at
    1.5 px, 27.4 px and 132 px.
-5. **The equal-area grid's polar advantage, scoped to that threshold**, on one
+4. **The equal-area grid's polar advantage, scoped to that threshold**, on one
    content-controlled dataset.
-6. **EPE-versus-SEPE polar inflation**: in PriOr-Flow's own table the polar gap is
+5. **EPE-versus-SEPE polar inflation**: in PriOr-Flow's own table the polar gap is
    5× larger in pixels than in geodesic units (PanoFlow 12.0 vs 2.33). Both
    metrics are published; the comparison between them is not.
 

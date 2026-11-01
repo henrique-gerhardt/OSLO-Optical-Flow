@@ -55,6 +55,9 @@ arm_flags() {
     small_noso3_erppx) echo "--hidden-channels 72 --context-dim 48 --so3-prob 0 --loss-space erp_px" ;;
     # ERP-pixel loss without the density cap of 20 (r6 polar nodes reach about 78)
     noso3_erppx_nocap) echo "--so3-prob 0 --loss-space erp_px --loss-erp-max-density 1000" ;;
+    # working resolution: estimation at r5 (12288 nodes; RAFT at 512x1024 works on 8192 cells,
+    # at 320x640 on 3200 ~ r4); 4 pooling levels keep the reach of est r4 with 3
+    est5_noso3_erppx) echo "--estimation-resolution 5 --corr-pool-levels 4 --so3-prob 0 --loss-space erp_px" ;;
     # 4 fixed batches repeated: can the model fit 8 pairs? (train_global must go to ~0)
     overfit) echo "--overfit-batches 4" ;;
     yaw) echo "--so3-axis vertical" ;;
