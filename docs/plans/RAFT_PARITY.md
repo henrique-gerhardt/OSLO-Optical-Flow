@@ -1128,3 +1128,28 @@ flowscape:test, PriOr-Flow protocol (EPE in ERP px, SEPE in 1e-3 rad).
 
 Queued after §11.11: seed 11 of `pt_oslo_ft`, `fs_oslo_erppx`, `raft_small_c360_ft`, `raft_small_fs`, then
 `benchmark_pretrain_s11` (~7.5 h).
+
+### 11.13 est r5 and the seed-11 pretraining pair (box report 2026-11-02, git 185e2cc)
+
+flowscape:test, PriOr-Flow protocol. EPE all for the s11 rows that fell off the report tail is recomputed from the displacement bins (pixel-fraction weighted); the method reproduces the printed s7 values to 0.01 px.
+
+| row | EPE all | EPE eq | EPE pol | SEPE all | SEPE eq | SEPE pol | replica360:val global |
+|---|---|---|---|---|---|---|---|
+| oslo_noso3_erppx (est r4, mean s7/s11) | 10.31 | 1.54 | 19.07 | 13.44 | 8.59 | 18.30 | 70.5 |
+| oslo_est5_erppx (est r5, cp4, s7) | 10.71 | 1.30 | 20.13 | 13.27 | 7.26 | 19.28 | 56.7 |
+| oslo_small_noso3_erppx (mean s7/s11) | 10.51 | | | | | | 66.9 |
+| oslo_pretrain_ft s7 / s11 | 8.52 / 8.73 | | | | | | 46.7 / 44.8 |
+| oslo_fs_erppx s7 / s11 | 9.19 / 9.96 | | | | | | 8.1 / 6.4 |
+| raft_small_c360_ft s7 / s11 | 6.54 / 6.09 | | | | | | 16.2 / 15.4 |
+| raft_small_fs s7 / s11 | 7.66 / NaN | | | | | | 3.5 / NaN |
+
+Readings:
+- est r5 does not close the gap. Global EPE 10.71 vs 10.31 (est r4 mean), inside or just outside seed noise, wrong direction. It helps the equator (EPE 1.54 -> 1.30, SEPE eq 8.59 -> 7.26, flowscape:val global 81.0 -> 83.6) and hurts the poles in px (19.07 -> 20.13). Cost: 7.5 h per run vs 2.9 h. Out-of-domain retention drops (replica 70.5 -> 56.7).
+- The RAFT 512 vs 320 lesson (4.74 vs 7.77) does not transfer: for OSLO a 4x denser working grid buys equator accuracy, not polar px, and polar px dominates EPE all.
+- Pretraining now holds across two seeds for OSLO: 9.58 -> 8.63 px mean (s7 -0.67, s11 -1.23). RAFT-small: 7.66 -> 6.32 (s11 baseline NaN, pending rerun).
+- Same-recipe gap, two-seed means: OSLO 8.63 vs RAFT-small 6.32 = 2.3 px. Stopping criterion (11.11) fires: after pretraining and est r5, OSLO stays > 2 px behind.
+- Retention after fine-tune replicates: OSLO 46.7/44.8 vs RAFT 16.2/15.4 on replica360:val.
+
+Defects found in this run:
+- raft_small_320_s11 (11.11 block) reused a job name already marked .done on 10-29, so the queue skipped it. Requeued as raft_small_noaug_320_s11.
+- raft_small_fs_s11 went NaN near step 7000. The planar trainer runs without AMP, so one non-finite gradient passed clip_grad_norm_ and poisoned the weights. run_erp_raft_train.py now skips steps with a non-finite grad norm and logs them. Rerun queued under RUN_NAME=raft_parity_recipe_r2, benchmark row raft_small_fs_s11b.

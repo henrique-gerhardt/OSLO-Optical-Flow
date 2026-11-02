@@ -361,6 +361,7 @@ def main() -> None:
         batches = itertools.cycle([next(batches) for _ in range(args.overfit_batches)])
         print(f"overfit: repeating {args.overfit_batches} fixed batches", flush=True)
     t0 = time.time()
+    skipped_steps = 0
     for step in range(1, steps + 1):
         opt.zero_grad(set_to_none=True)
         loss_sum, epe_sum = 0.0, 0.0
@@ -381,8 +382,14 @@ def main() -> None:
             loss_sum += loss.item() / args.grad_accum
             epe_sum += epe / args.grad_accum
         scaler.unscale_(opt)
-        torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
-        scaler.step(opt)
+        grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
+        if torch.isfinite(grad_norm) or scaler.is_enabled():
+            scaler.step(opt)
+        else:
+            # Without AMP a single non-finite gradient would poison the weights for good.
+            skipped_steps += 1
+            print(f"step={step:06d} non-finite grad norm, step skipped "
+                  f"(total skipped {skipped_steps})", flush=True)
         scaler.update()
         sched.step()
         if step == 1 or step % args.log_every == 0 or step == steps:

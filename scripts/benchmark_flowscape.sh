@@ -70,7 +70,8 @@ raft_small_noaug_320_s11|raft|$OUT/raft_parity_planar/raft_small_noaug_320_s11/r
 oslo_pretrain_ft_s11|oslo|$OUT/oslo_pretrain_ft/noso3_erppx_s11/oslo_raft.pt|--init-checkpoint $OUT/oslo_pretrain_ft/noso3_erppx_s11/oslo_raft.pt
 oslo_fs_erppx_s11|oslo|$OUT/raft_parity_fsonly/noso3_erppx_s11/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_fsonly/noso3_erppx_s11/oslo_raft.pt
 raft_small_c360_ft_s11|raft|$OUT/raft_pretrain/raft_small_c360_ft_s11/raft_erp.pt|--model raft_small --tv-checkpoint $OUT/raft_pretrain/raft_small_c360_ft_s11/raft_erp.pt
-raft_small_fs_s11|raft|$OUT/raft_parity_recipe/raft_small_fs_s11/raft_erp.pt|--model raft_small --tv-checkpoint $OUT/raft_parity_recipe/raft_small_fs_s11/raft_erp.pt}"
+raft_small_fs_s11|raft|$OUT/raft_parity_recipe/raft_small_fs_s11/raft_erp.pt|--model raft_small --tv-checkpoint $OUT/raft_parity_recipe/raft_small_fs_s11/raft_erp.pt
+raft_small_fs_s11b|raft|$OUT/raft_parity_recipe_r2/raft_small_fs_s11/raft_erp.pt|--model raft_small --tv-checkpoint $OUT/raft_parity_recipe_r2/raft_small_fs_s11/raft_erp.pt}"
 mkdir -p "$DEST"
 
 names=()

@@ -176,3 +176,10 @@ fs_oslo_erppx_s11 | scripts/raft_parity_large.sh | RUN_NAME=raft_parity_fsonly; 
 pt_raft_small_ft_s11 | scripts/raft_parity_planar.sh | SEED=11; RUN_NAME=raft_pretrain; TRAIN_SOURCES=flowscape:train; FROZEN= ; ARMS=raft_small_c360_ft|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024 --init-checkpoint /outputs/raft_pretrain/raft_small_c360_s7/raft_erp.pt --lr 1.25e-4 --weight-decay 1e-5 --gamma 0.85; OSLO_RUNS=oslo_pretrain_ft_s11|oslo_pretrain_ft/noso3_erppx_s11\noslo_fs_erppx_s11|raft_parity_fsonly/noso3_erppx_s11
 raft_small_fs_s11 | scripts/raft_parity_planar.sh | SEED=11; RUN_NAME=raft_parity_recipe; TRAIN_SOURCES=flowscape:train; FROZEN= ; ARMS=raft_small_fs|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024; OSLO_RUNS=oslo_fs_erppx_s11|raft_parity_fsonly/noso3_erppx_s11
 benchmark_pretrain_s11 | scripts/benchmark_flowscape.sh | TAG=bins
+# --- RAFT_PARITY 11.13 (2026-11-02): finish the seed-11 pairs ---
+# 1) RAFT-small no-aug 320x640 seed 11: the 11.11 job reused the name raft_small_320_s11 (already .done from 10-29) and was skipped   ~15 min
+raft_small_noaug_320_s11 | scripts/raft_parity_planar.sh | SEED=11; FROZEN= ; ARMS=raft_small_noaug_320|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --resize 320x640 --crop 320x640; OSLO_RUNS=oslo_small_noso3_erppx_s11|raft_parity_large/small_noso3_erppx_s11
+# 2) RAFT-small flowscape-only seed 11 rerun: the first run went NaN at ~step 7000 (no AMP, one bad gradient); trainer now skips non-finite steps   ~30 min
+raft_small_fs_s11_r2 | scripts/raft_parity_planar.sh | SEED=11; RUN_NAME=raft_parity_recipe_r2; TRAIN_SOURCES=flowscape:train; FROZEN= ; ARMS=raft_small_fs|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024; OSLO_RUNS=oslo_fs_erppx_s11|raft_parity_fsonly/noso3_erppx_s11
+# 3) benchmark the two new rows   ~10 min
+benchmark_seeds_final | scripts/benchmark_flowscape.sh | TAG=bins
