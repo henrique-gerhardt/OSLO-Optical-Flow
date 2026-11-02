@@ -1167,3 +1167,13 @@ Design: same recipe as oslo_fs_erppx / raft_small_fs (flowscape:train only, erp_
 | raft_small_fs | 60k | 7 | ~2.7 h |
 
 Decision rule (10k gap = 9.58 vs 7.66 = 1.9 px): gap shrinks by >= 1 px at 30k -> budget-limited, next step is OSLO 60k and OSLO-large at 30k; gap stays within +-0.5 px or widens -> structural, budget is closed as an explanation. Between the two -> OSLO seed 11 at 30k before deciding.
+
+### 11.15 Combined run queued (2026-11-02)
+
+Question: the single-factor tests each read as a tie within seed noise (~0.8 px). Do the small effects add up when stacked? Stack: pretraining (chairs360 + replica360, 40k, SO(3), geodesic) -> fine-tune on flowscape (erp_px, no SO(3), lr 1.25e-4), with est r5 + cp4 + sup r7 throughout.
+
+The est r4 pretrained checkpoint cannot be reused: at est r5 the encoder loses one downsampling level, so only 18 of 83 tensors keep their shape. Pretraining is redone at the combined grid (new arm `est5`).
+
+Cost: ~31 h pretraining (est r5 runs at ~2.7 s/step) + ~7.7 h fine-tune + benchmark. Runs after the 11.14 budget test.
+
+Reading against oslo_pretrain_ft (8.63 px, 2 seeds) and raft_small_c360_ft (6.32 px): a gain >= 1 px means the small effects add up, and the residual gap is spread across factors; a gain < 0.5 px leaves the spherical encoder as the main unexplained component. One seed only, so a change between 0.5 and 1 px is not readable.

@@ -58,6 +58,8 @@ arm_flags() {
     # working resolution: estimation at r5 (12288 nodes; RAFT at 512x1024 works on 8192 cells,
     # at 320x640 on 3200 ~ r4); 4 pooling levels keep the reach of est r4 with 3
     est5_noso3_erppx) echo "--estimation-resolution 5 --corr-pool-levels 4 --so3-prob 0 --loss-space erp_px" ;;
+    # base recipe (SO(3) on, geodesic loss) at est r5: pretraining stage of the combined run
+    est5) echo "--estimation-resolution 5 --corr-pool-levels 4" ;;
     # 4 fixed batches repeated: can the model fit 8 pairs? (train_global must go to ~0)
     overfit) echo "--overfit-batches 4" ;;
     yaw) echo "--so3-axis vertical" ;;
