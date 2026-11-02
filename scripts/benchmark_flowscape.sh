@@ -71,7 +71,11 @@ oslo_pretrain_ft_s11|oslo|$OUT/oslo_pretrain_ft/noso3_erppx_s11/oslo_raft.pt|--i
 oslo_fs_erppx_s11|oslo|$OUT/raft_parity_fsonly/noso3_erppx_s11/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_fsonly/noso3_erppx_s11/oslo_raft.pt
 raft_small_c360_ft_s11|raft|$OUT/raft_pretrain/raft_small_c360_ft_s11/raft_erp.pt|--model raft_small --tv-checkpoint $OUT/raft_pretrain/raft_small_c360_ft_s11/raft_erp.pt
 raft_small_fs_s11|raft|$OUT/raft_parity_recipe/raft_small_fs_s11/raft_erp.pt|--model raft_small --tv-checkpoint $OUT/raft_parity_recipe/raft_small_fs_s11/raft_erp.pt
-raft_small_fs_s11b|raft|$OUT/raft_parity_recipe_r2/raft_small_fs_s11/raft_erp.pt|--model raft_small --tv-checkpoint $OUT/raft_parity_recipe_r2/raft_small_fs_s11/raft_erp.pt}"
+raft_small_fs_s11b|raft|$OUT/raft_parity_recipe_r2/raft_small_fs_s11/raft_erp.pt|--model raft_small --tv-checkpoint $OUT/raft_parity_recipe_r2/raft_small_fs_s11/raft_erp.pt
+oslo_fs_erppx_30k|oslo|$OUT/scale_fs30k/noso3_erppx_s7/oslo_raft.pt|--init-checkpoint $OUT/scale_fs30k/noso3_erppx_s7/oslo_raft.pt
+raft_small_fs_30k|raft|$OUT/scale_fs30k_planar/raft_small_fs_s7/raft_erp.pt|--model raft_small --tv-checkpoint $OUT/scale_fs30k_planar/raft_small_fs_s7/raft_erp.pt
+raft_small_fs_30k_s11|raft|$OUT/scale_fs30k_planar/raft_small_fs_s11/raft_erp.pt|--model raft_small --tv-checkpoint $OUT/scale_fs30k_planar/raft_small_fs_s11/raft_erp.pt
+raft_small_fs_60k|raft|$OUT/scale_fs60k_planar/raft_small_fs_s7/raft_erp.pt|--model raft_small --tv-checkpoint $OUT/scale_fs60k_planar/raft_small_fs_s7/raft_erp.pt}"
 mkdir -p "$DEST"
 
 names=()

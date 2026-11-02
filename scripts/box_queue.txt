@@ -183,3 +183,10 @@ raft_small_noaug_320_s11 | scripts/raft_parity_planar.sh | SEED=11; FROZEN= ; AR
 raft_small_fs_s11_r2 | scripts/raft_parity_planar.sh | SEED=11; RUN_NAME=raft_parity_recipe_r2; TRAIN_SOURCES=flowscape:train; FROZEN= ; ARMS=raft_small_fs|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024; OSLO_RUNS=oslo_fs_erppx_s11|raft_parity_fsonly/noso3_erppx_s11
 # 3) benchmark the two new rows   ~10 min
 benchmark_seeds_final | scripts/benchmark_flowscape.sh | TAG=bins
+# --- RAFT_PARITY 11.14 (2026-11-02): is the 2.3 px gap a budget effect? Same recipe (flowscape-only, erp_px, no SO(3)), 3x steps ---
+# Reading: gap at 10k = OSLO 9.58 (2 seeds) vs RAFT-small 7.66. If the gap at 30k shrinks by >= 1 px, OSLO is budget-limited; if it stays or widens, it is structural.
+scale_raft_fs30k | scripts/raft_parity_planar.sh | SEED=7; RUN_NAME=scale_fs30k_planar; TRAIN_SOURCES=flowscape:train; STEPS=30000; FROZEN= ; ARMS=raft_small_fs|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024; OSLO_RUNS=oslo_fs_erppx|raft_parity_fsonly/noso3_erppx_s7
+scale_raft_fs30k_s11 | scripts/raft_parity_planar.sh | SEED=11; RUN_NAME=scale_fs30k_planar; TRAIN_SOURCES=flowscape:train; STEPS=30000; FROZEN= ; ARMS=raft_small_fs|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024; OSLO_RUNS=oslo_fs_erppx_s11|raft_parity_fsonly/noso3_erppx_s11
+scale_oslo_fs30k | scripts/raft_parity_large.sh | RUN_NAME=scale_fs30k; ARMS=noso3_erppx; PREFLIGHT_ARMS=; SEEDS=7; TRAIN_SOURCES=flowscape:train; STEPS=30000; EVAL_EVERY=5000
+scale_raft_fs60k | scripts/raft_parity_planar.sh | SEED=7; RUN_NAME=scale_fs60k_planar; TRAIN_SOURCES=flowscape:train; STEPS=60000; FROZEN= ; ARMS=raft_small_fs|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024; OSLO_RUNS=oslo_fs_erppx|raft_parity_fsonly/noso3_erppx_s7
+benchmark_scale | scripts/benchmark_flowscape.sh | TAG=bins

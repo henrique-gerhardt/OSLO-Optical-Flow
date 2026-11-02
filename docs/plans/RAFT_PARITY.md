@@ -1153,3 +1153,17 @@ Readings:
 Defects found in this run:
 - raft_small_320_s11 (11.11 block) reused a job name already marked .done on 10-29, so the queue skipped it. Requeued as raft_small_noaug_320_s11.
 - raft_small_fs_s11 went NaN near step 7000. The planar trainer runs without AMP, so one non-finite gradient passed clip_grad_norm_ and poisoned the weights. run_erp_raft_train.py now skips steps with a non-finite grad norm and logs them. Rerun queued under RUN_NAME=raft_parity_recipe_r2, benchmark row raft_small_fs_s11b.
+
+### 11.14 Budget test queued (2026-11-02)
+
+Question: is the residual 2.3 px gap a training-budget effect (OSLO learns slower) or structural? Earlier size and step tests do not answer it: OSLO-large was only trained 10k steps (a larger model needs more steps), and the 30k run used the old geodesic loss.
+
+Design: same recipe as oslo_fs_erppx / raft_small_fs (flowscape:train only, erp_px loss, no SO(3)), steps 10k -> 30k for both, plus RAFT-small at 60k for the shape of its curve.
+
+| run | steps | seeds | time |
+|---|---|---|---|
+| raft_small_fs | 30k | 7, 11 | ~1.4 h each |
+| oslo noso3_erppx | 30k | 7 | ~8.6 h |
+| raft_small_fs | 60k | 7 | ~2.7 h |
+
+Decision rule (10k gap = 9.58 vs 7.66 = 1.9 px): gap shrinks by >= 1 px at 30k -> budget-limited, next step is OSLO 60k and OSLO-large at 30k; gap stays within +-0.5 px or widens -> structural, budget is closed as an explanation. Between the two -> OSLO seed 11 at 30k before deciding.
