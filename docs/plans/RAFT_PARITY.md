@@ -1202,3 +1202,12 @@ Defects:
 
 Queued (11.16, ahead of 11.15): OSLO seed 11 at 30k, RAFT 60k rerun under a new RUN_NAME, benchmark.
 Decision once OSLO s11 30k lands: if the two-seed 30k gap is within 0.5 px of 1.39, budget is ruled out as the main cause and the combined run (11.15) becomes the remaining test of the OSLO-specific gap.
+
+### 11.17 Short pretraining at est r5 queued; combined run on hold (2026-11-03)
+
+Pretraining at est r4 helped OSLO in 0-5 deg (9.99 -> 8.29 px) and hurt 5-15 deg (6.67 -> 8.14 px). RAFT-small gained in 5-15 deg (8.00 -> 3.79 px). Before spending 31 h on the combined pretraining, a 10k pretraining at est r5 (cp4, sup r6) tests whether a finer working grid fixes that transfer.
+- Jobs: `pt_oslo_est5_10k` (~7.5 h), `pt_oslo_est5_10k_ft` (~7.5 h), `benchmark_pt_est5`.
+- Baseline: est r5 from scratch, same grid: 10.71 px, 5-15 deg bin 8.60 px.
+- Reading: if the 5-15 deg bin does not get worse and EPE all drops by >= 1 px, the grid helps transfer and the combined run goes ahead. If 5-15 deg gets worse as at est r4, the grid is not the reason and the combined run is dropped.
+- Confound: 10k pretraining against 40k at est r4. A weaker overall gain is not readable on its own; the 5-15 deg sign is the main signal.
+- The three 11.15 lines are commented out with `# HOLD` until this is read.

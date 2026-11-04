@@ -65,6 +65,8 @@ oslo_fs_erppx|oslo|$OUT/raft_parity_fsonly/noso3_erppx_s7/oslo_raft.pt|--init-ch
 raft_small_c360|raft|$OUT/raft_pretrain/raft_small_c360_s7/raft_erp.pt|--model raft_small --tv-checkpoint $OUT/raft_pretrain/raft_small_c360_s7/raft_erp.pt
 raft_small_c360_ft|raft|$OUT/raft_pretrain/raft_small_c360_ft_s7/raft_erp.pt|--model raft_small --tv-checkpoint $OUT/raft_pretrain/raft_small_c360_ft_s7/raft_erp.pt
 oslo_est5_erppx|oslo|$OUT/raft_parity_large/est5_noso3_erppx_s7/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_large/est5_noso3_erppx_s7/oslo_raft.pt
+oslo_pt_est5_10k|oslo|$OUT/oslo_pretrain_est5_10k/est5_s7/oslo_raft.pt|--init-checkpoint $OUT/oslo_pretrain_est5_10k/est5_s7/oslo_raft.pt
+oslo_pt_est5_10k_ft|oslo|$OUT/oslo_pretrain_est5_10k_ft/est5_noso3_erppx_s7/oslo_raft.pt|--init-checkpoint $OUT/oslo_pretrain_est5_10k_ft/est5_noso3_erppx_s7/oslo_raft.pt
 oslo_small_noso3_erppx_s11|oslo|$OUT/raft_parity_large/small_noso3_erppx_s11/oslo_raft.pt|--init-checkpoint $OUT/raft_parity_large/small_noso3_erppx_s11/oslo_raft.pt
 raft_small_noaug_320_s11|raft|$OUT/raft_parity_planar/raft_small_noaug_320_s11/raft_erp.pt|--model raft_small --tv-checkpoint $OUT/raft_parity_planar/raft_small_noaug_320_s11/raft_erp.pt --infer-size 320x640
 oslo_pretrain_ft_s11|oslo|$OUT/oslo_pretrain_ft/noso3_erppx_s11/oslo_raft.pt|--init-checkpoint $OUT/oslo_pretrain_ft/noso3_erppx_s11/oslo_raft.pt
