@@ -1197,8 +1197,9 @@ Readings:
 - Retention on replica360 after 30k flowscape-only: OSLO 1.4 %, RAFT 2.5 / 2.8 %. Longer single-domain training forgets more, for both.
 
 Defects:
-- `raft_small_fs_60k` went NaN for most of the run. Its log has `loss=nan` with no "step skipped" line, so it ran without the non-finite guard. The box checked out 47f6bff, a commit that is not on origin. From 15:39 every `git pull` failed with "diverging branches", so the queue kept the old checkout and never saw the 11.15 lines.
-- The trainer now prints `nonfinite_guard=on` at start and aborts after 200 consecutive skipped steps, so a run that stays non-finite stops instead of burning its budget.
+- `raft_small_fs_60k` went NaN for most of the run, as `raft_small_fs_s11` did in 11.13. Both ran with `--amp`, which `raft_parity_planar.sh` always passed, and the guard exempted AMP runs. The guard was in the checkout; it never acted.
+- Fix: the trainer now skips every step with a non-finite grad norm, AMP or not, prints `nonfinite_guard=on amp=<bool>` at start, and aborts after 200 consecutive skips. `raft_parity_planar.sh` takes `AMP_FLAG` (default `--amp`); the 60k rerun runs in fp32 with `AMP_FLAG= `.
+- The box queue pulls with `--ff-only`. The box carries a local commit (15a17ef "Change permission") and the merge commits from manual pulls, so any push made while the queue runs cannot fast-forward. The queue then keeps the checkout it has; it did not lose work.
 
 Queued (11.16, ahead of 11.15): OSLO seed 11 at 30k, RAFT 60k rerun under a new RUN_NAME, benchmark.
 Decision once OSLO s11 30k lands: if the two-seed 30k gap is within 0.5 px of 1.39, budget is ruled out as the main cause and the combined run (11.15) becomes the remaining test of the OSLO-specific gap.

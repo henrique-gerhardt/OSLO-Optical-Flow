@@ -194,8 +194,8 @@ benchmark_scale | scripts/benchmark_flowscape.sh | TAG=bins
 # 30k result: both models gain ~0.7 px from 3x steps; gap 1.39 -> 1.13 px, but OSLO has one seed and RAFT seeds differ by 1.3 px.
 # 1) OSLO seed 11 at 30k   ~8.4 h
 scale_oslo_fs30k_s11 | scripts/raft_parity_large.sh | RUN_NAME=scale_fs30k; ARMS=noso3_erppx; PREFLIGHT_ARMS=; SEEDS=11; TRAIN_SOURCES=flowscape:train; STEPS=30000; EVAL_EVERY=5000
-# 2) RAFT-small 60k rerun: the first one went NaN and ran without the guard (log has no "step skipped" lines). Check the log starts with nonfinite_guard=on   ~2.7 h
-scale_raft_fs60k_r2 | scripts/raft_parity_planar.sh | SEED=7; RUN_NAME=scale_fs60k_planar_r2; TRAIN_SOURCES=flowscape:train; STEPS=60000; FROZEN= ; ARMS=raft_small_fs|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024; OSLO_RUNS=oslo_fs_erppx_30k|scale_fs30k/noso3_erppx_s7
+# 2) RAFT-small 60k rerun in fp32 (AMP_FLAG= ): the first went NaN under AMP, where the old guard did not act. Log must start with nonfinite_guard=on amp=False   ~4-5 h
+scale_raft_fs60k_r2 | scripts/raft_parity_planar.sh | SEED=7; RUN_NAME=scale_fs60k_planar_r2; AMP_FLAG= ; TRAIN_SOURCES=flowscape:train; STEPS=60000; FROZEN= ; ARMS=raft_small_fs|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024; OSLO_RUNS=oslo_fs_erppx_30k|scale_fs30k/noso3_erppx_s7
 # 3) benchmark the two rows   ~20 min
 benchmark_scale_r2 | scripts/benchmark_flowscape.sh | TAG=bins
 # --- RAFT_PARITY 11.17 (2026-11-03): short pretraining at est r5 before committing to the 31 h combined run ---

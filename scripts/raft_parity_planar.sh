@@ -52,7 +52,7 @@ while IFS='|' read -r name model flags; do
     python run_erp_raft_train.py --shards "$SHARDS" --train-sources "$TRAIN_SOURCES" \
       --model "$model" --steps "$STEPS" --seed "$SEED" \
       --batch-size "${BATCH_SIZE:-2}" --grad-accum "${GRAD_ACCUM:-1}" \
-      --num-workers "${NUM_WORKERS:-4}" --device "${DEVICE:-cuda}" --amp $flags ${TRAIN_FLAGS:-} \
+      --num-workers "${NUM_WORKERS:-4}" --device "${DEVICE:-cuda}" ${AMP_FLAG---amp} $flags ${TRAIN_FLAGS:-} \
       --output-dir "$dir" < /dev/null \
       2>&1 | tee "$dir.train.log"
   fi
