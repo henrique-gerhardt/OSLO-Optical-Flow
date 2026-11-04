@@ -1177,3 +1177,28 @@ The est r4 pretrained checkpoint cannot be reused: at est r5 the encoder loses o
 Cost: ~31 h pretraining (est r5 runs at ~2.7 s/step) + ~7.7 h fine-tune + benchmark. Runs after the 11.14 budget test.
 
 Reading against oslo_pretrain_ft (8.63 px, 2 seeds) and raft_small_c360_ft (6.32 px): a gain >= 1 px means the small effects add up, and the residual gap is spread across factors; a gain < 0.5 px leaves the spherical encoder as the main unexplained component. One seed only, so a change between 0.5 and 1 px is not readable.
+
+### 11.16 Seed-11 pairs and budget test results (2026-11-03)
+
+flowscape:test, PriOr-Flow protocol. EPE all recomputed from the displacement bins.
+
+| Pair | OSLO s7 / s11 / mean | RAFT-small s7 / s11 / mean | Gap |
+|---|---|---|---|
+| Matched size (OSLO small, RAFT 320x640), 10k, no aug, erp_px | 10.45 / 10.56 / 10.51 | 7.77 / 8.17 / 7.97 | 2.5 px |
+| flowscape-only, 10k | 9.19 / 9.96 / 9.58 | 7.66 / 8.73 / 8.19 | 1.39 px |
+| flowscape-only, 30k | 8.55 / - / 8.55 | 8.09 / 6.76 / 7.42 | 1.13 px |
+| Pretrained + fine-tune (11.13) | 8.52 / 8.73 / 8.63 | 6.54 / 6.09 / 6.32 | 2.3 px |
+
+Readings:
+- With RAFT seed 11 in (the r2 rerun is clean), the 10k flowscape-only gap is 1.39 px, not the 1.9 px seed-7 value the 11.14 rule was built on.
+- Three times the steps gains both models about the same: OSLO s7 -0.64 px, RAFT seed mean -0.77 px. The gap moves 1.39 -> 1.13 px, inside the +/-0.5 px "structural" band of 11.14.
+- The reading is provisional. OSLO has one seed at 30k, and the RAFT seeds differ by 1.07 px at 10k and 1.33 px at 30k, so a single pair cannot separate a 0.3 px change from noise. RAFT s7 got worse from 10k to 30k (7.66 -> 8.09).
+- flowscape:val geodesic at 30k: poles tie (OSLO 92.3 % vs RAFT 91.2 / 92.5 %), equator stays behind (69.3 % vs 73.2 / 73.5 %). In ERP px on test the deficit is polar; the two metrics weight the poles differently (known since 11.9).
+- Retention on replica360 after 30k flowscape-only: OSLO 1.4 %, RAFT 2.5 / 2.8 %. Longer single-domain training forgets more, for both.
+
+Defects:
+- `raft_small_fs_60k` went NaN for most of the run. Its log has `loss=nan` with no "step skipped" line, so it ran without the non-finite guard. The box checked out 47f6bff, a commit that is not on origin. From 15:39 every `git pull` failed with "diverging branches", so the queue kept the old checkout and never saw the 11.15 lines.
+- The trainer now prints `nonfinite_guard=on` at start and aborts after 200 consecutive skipped steps, so a run that stays non-finite stops instead of burning its budget.
+
+Queued (11.16, ahead of 11.15): OSLO seed 11 at 30k, RAFT 60k rerun under a new RUN_NAME, benchmark.
+Decision once OSLO s11 30k lands: if the two-seed 30k gap is within 0.5 px of 1.39, budget is ruled out as the main cause and the combined run (11.15) becomes the remaining test of the OSLO-specific gap.

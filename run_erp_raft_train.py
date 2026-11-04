@@ -362,6 +362,9 @@ def main() -> None:
         print(f"overfit: repeating {args.overfit_batches} fixed batches", flush=True)
     t0 = time.time()
     skipped_steps = 0
+    consecutive_skips = 0
+    print("nonfinite_guard=on (steps with a non-finite grad norm are skipped; "
+          "abort after 200 in a row)", flush=True)
     for step in range(1, steps + 1):
         opt.zero_grad(set_to_none=True)
         loss_sum, epe_sum = 0.0, 0.0
@@ -385,11 +388,15 @@ def main() -> None:
         grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
         if torch.isfinite(grad_norm) or scaler.is_enabled():
             scaler.step(opt)
+            consecutive_skips = 0
         else:
             # Without AMP a single non-finite gradient would poison the weights for good.
             skipped_steps += 1
+            consecutive_skips += 1
             print(f"step={step:06d} non-finite grad norm, step skipped "
                   f"(total skipped {skipped_steps})", flush=True)
+            if consecutive_skips >= 200:
+                raise SystemExit(f"aborting at step {step}: 200 consecutive non-finite steps")
         scaler.update()
         sched.step()
         if step == 1 or step % args.log_every == 0 or step == steps:

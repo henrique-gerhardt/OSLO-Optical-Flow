@@ -190,6 +190,14 @@ scale_raft_fs30k_s11 | scripts/raft_parity_planar.sh | SEED=11; RUN_NAME=scale_f
 scale_oslo_fs30k | scripts/raft_parity_large.sh | RUN_NAME=scale_fs30k; ARMS=noso3_erppx; PREFLIGHT_ARMS=; SEEDS=7; TRAIN_SOURCES=flowscape:train; STEPS=30000; EVAL_EVERY=5000
 scale_raft_fs60k | scripts/raft_parity_planar.sh | SEED=7; RUN_NAME=scale_fs60k_planar; TRAIN_SOURCES=flowscape:train; STEPS=60000; FROZEN= ; ARMS=raft_small_fs|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024; OSLO_RUNS=oslo_fs_erppx|raft_parity_fsonly/noso3_erppx_s7
 benchmark_scale | scripts/benchmark_flowscape.sh | TAG=bins
+# --- RAFT_PARITY 11.16 (2026-11-03): finish the budget test before the combined run ---
+# 30k result: both models gain ~0.7 px from 3x steps; gap 1.39 -> 1.13 px, but OSLO has one seed and RAFT seeds differ by 1.3 px.
+# 1) OSLO seed 11 at 30k   ~8.4 h
+scale_oslo_fs30k_s11 | scripts/raft_parity_large.sh | RUN_NAME=scale_fs30k; ARMS=noso3_erppx; PREFLIGHT_ARMS=; SEEDS=11; TRAIN_SOURCES=flowscape:train; STEPS=30000; EVAL_EVERY=5000
+# 2) RAFT-small 60k rerun: the first one went NaN and ran without the guard (log has no "step skipped" lines). Check the log starts with nonfinite_guard=on   ~2.7 h
+scale_raft_fs60k_r2 | scripts/raft_parity_planar.sh | SEED=7; RUN_NAME=scale_fs60k_planar_r2; TRAIN_SOURCES=flowscape:train; STEPS=60000; FROZEN= ; ARMS=raft_small_fs|raft_small|--photo-prob 0 --hflip-prob 0 --no-roll --crop 512x1024; OSLO_RUNS=oslo_fs_erppx_30k|scale_fs30k/noso3_erppx_s7
+# 3) benchmark the two rows   ~20 min
+benchmark_scale_r2 | scripts/benchmark_flowscape.sh | TAG=bins
 # --- RAFT_PARITY 11.15 (2026-11-02): combined run. Do the small single-factor effects add up? pretraining + est r5 (cp4) + sup r7 together ---
 # The est r4 pretrained checkpoint cannot be reused (only 18/83 tensors keep their shape at est r5), so pretraining is redone at the combined grid.
 # Compare oslo_comb_ft against oslo_pretrain_ft (8.63 px, 2 seeds) and raft_small_c360_ft (6.32 px).   ~31 h + ~7.7 h + ~40 min
