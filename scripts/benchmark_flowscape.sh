@@ -87,6 +87,8 @@ mkdir -p "$DEST"
 names=()
 while IFS='|' read -r name predictor ckpt flags; do
   [ -n "$name" ] || continue
+  # ONLY: space-separated row names to run (default: every row)
+  if [ -n "${ONLY:-}" ] && [[ " $ONLY " != *" $name "* ]]; then continue; fi
   if [ -n "$ckpt" ] && [ ! -f "$ckpt" ]; then
     echo "missing checkpoint '$ckpt', leaving $name out"
     continue
@@ -145,6 +147,51 @@ for n in names:
 if frac_row:
     print(f"{'% of pixels':<22}" + "".join(
         f"{100 * frac_row.get('official_disp' + b + '_fraction', 0.0):>9.1f}" for b in bins))
+over_rows = []
+for n in names:
+    path = root / n / "epe_metrics.json"
+    if path.exists():
+        m = json.loads(path.read_text())["metrics"]
+        if "official_overshoot_epe" in m:
+            over_rows.append((n, m))
+if over_rows:
+    frac = over_rows[0][1].get("official_overshoot_fraction", float("nan"))
+    print(f"\nNear-nadir overshoot pixels (GT endpoint leaves the raster; {100 * frac:.2f}% of pixels): "
+          "EPE there vs everywhere else")
+    print(f"{'row':<26}{'overshoot':>11}{'inraster':>10}{'share of EPE':>14}")
+    for n, m in over_rows:
+        share = frac * m["official_overshoot_epe"] / max(m["official_all_epe"], 1e-9)
+        print(f"{n:<26}{m['official_overshoot_epe']:>11.2f}{m['official_inraster_epe']:>10.2f}{100 * share:>13.1f}%")
+split_rows = [(n, m) for n, m in over_rows if "official_disp0-5_overshoot_epe" in m]
+if split_rows:
+    print("\nEPE (px) by GT displacement, split into overshoot / in-raster pixels; "
+          "contrib = bin EPE x pixel fraction (px of EPE all)")
+    print(f"{'row':<26}{'bin':>8}{'over EPE':>10}{'in EPE':>9}{'over %px':>10}"
+          f"{'over contrib':>14}{'in contrib':>12}")
+    for n, m in split_rows:
+        for b in bins[:3]:
+            fo = m.get(f"official_disp{b}_overshoot_fraction", 0.0)
+            fi = m.get(f"official_disp{b}_inraster_fraction", 0.0)
+            eo = m.get(f"official_disp{b}_overshoot_epe", float("nan"))
+            ei = m.get(f"official_disp{b}_inraster_epe", float("nan"))
+            print(f"{n:<26}{b:>8}{eo:>10.2f}{ei:>9.2f}{100 * fo:>10.2f}"
+                  f"{(eo * fo if fo else 0.0):>14.3f}{(ei * fi if fi else 0.0):>12.3f}")
+layouts = ("cube", "paper")
+vp_rows = []
+for n in names:
+    path = root / n / "epe_metrics.json"
+    if path.exists():
+        m = json.loads(path.read_text())["metrics"]
+        if "viewport_cube_all_epe_px" in m:
+            vp_rows.append((n, m))
+if vp_rows:
+    print("\nViewport EPE (px in rectilinear viewports, arXiv 2610.32561 protocol); "
+          "cube = six 90-deg faces, paper = 4 equator 150x60 + 2 poles")
+    print(f"{'row':<26}" + "".join(f"{L + ' ' + g:>14}" for L in layouts
+                                   for g in ("all", "equator", "poles")))
+    for n, m in vp_rows:
+        print(f"{n:<26}" + "".join(f"{m[f'viewport_{L}_{g}_epe_px']:>14.3f}" for L in layouts
+                                   for g in ("all", "equator", "poles")))
 print("\nPublished (PriOr-Flow Table, FlowScape all weathers, EPE / SEPE): TanImg 18.3 / 25.3, "
       "SLOF 7.59 / 5.79, PanoFlow 3.38 / 4.78, PriOr-Flow 2.33 / 3.49")
 PY

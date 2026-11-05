@@ -68,8 +68,23 @@ def bilinear_node_weights(
     layout of ``healpix_unit_vectors(resolution, nest=nest)``. Precompute once per
     (resolution, H, W); the runner caches it.
     """
-    nside = 1 << resolution
     dirs = erp_pixel_directions(height, width).double().numpy()
+    return node_weights_at_dirs(resolution, dirs, nest=nest, device=device)
+
+
+def node_weights_at_dirs(
+    resolution: int,
+    dirs: np.ndarray,
+    nest: bool = True,
+    device: Optional[torch.device] = None,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """HEALPix interpolation stencil at arbitrary unit directions ``dirs`` [M, 3].
+
+    Same stencil as ``bilinear_node_weights`` (bilinear, with the affine polar-cap
+    fallback); returns ``(indices [K, M] long, weights [K, M] float32)``.
+    """
+    nside = 1 << resolution
+    dirs = np.asarray(dirs, dtype=np.float64)
     lon = np.mod(np.arctan2(dirs[:, 1], dirs[:, 0]), 2.0 * np.pi)
     lat = np.arcsin(np.clip(dirs[:, 2], -1.0, 1.0))
     if _hp is not None:
@@ -147,18 +162,9 @@ def nodes_to_erp_flow(
     pixel_dirs: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """Read node tangent flow [N, 2] out to dense ERP pixel flow [H, W, 2] (px)."""
-    if node_flow.ndim == 2:
-        node_flow = node_flow.unsqueeze(0)
-    idx, w = weights
-    ambient = tangent_components_to_3d(node_flow, basis_east, basis_north)[0]  # [N, 3]
-    amb_px = (ambient[idx] * w.unsqueeze(-1)).sum(dim=0)  # [H*W, 3]
-
     if pixel_dirs is None:
         pixel_dirs = erp_pixel_directions(height, width, device=node_flow.device)
-    radial = (amb_px * pixel_dirs).sum(dim=-1, keepdim=True)
-    tangent = amb_px - radial * pixel_dirs
-
-    endpoints = expmap(pixel_dirs, tangent.unsqueeze(0))[0]
+    endpoints = nodes_to_endpoints(node_flow, basis_east, basis_north, weights, pixel_dirs)
     u2, v2 = points_to_equirectangular_pixels(endpoints, height, width)
 
     u1 = torch.arange(width, dtype=u2.dtype, device=u2.device).repeat(height)
@@ -166,6 +172,27 @@ def nodes_to_erp_flow(
     du = wrap_px(u2 - u1, width)
     dv = v2 - v1
     return torch.stack([du, dv], dim=-1).reshape(height, width, 2)
+
+
+def nodes_to_endpoints(
+    node_flow: torch.Tensor,
+    basis_east: torch.Tensor,
+    basis_north: torch.Tensor,
+    weights: Tuple[torch.Tensor, torch.Tensor],
+    dirs: torch.Tensor,
+) -> torch.Tensor:
+    """Node tangent flow [N, 2] -> flow endpoints [M, 3] at the directions ``dirs``.
+
+    ``weights`` is the stencil of ``node_weights_at_dirs`` for the same ``dirs``.
+    """
+    if node_flow.ndim == 2:
+        node_flow = node_flow.unsqueeze(0)
+    idx, w = weights
+    ambient = tangent_components_to_3d(node_flow, basis_east, basis_north)[0]  # [N, 3]
+    amb = (ambient[idx] * w.unsqueeze(-1)).sum(dim=0)  # [M, 3]
+    radial = (amb * dirs).sum(dim=-1, keepdim=True)
+    tangent = amb - radial * dirs
+    return expmap(dirs, tangent.unsqueeze(0))[0]
 
 
 def wrap_px(delta: torch.Tensor, width: int) -> torch.Tensor:

@@ -1212,3 +1212,30 @@ Pretraining at est r4 helped OSLO in 0-5 deg (9.99 -> 8.29 px) and hurt 5-15 deg
 - Reading: if the 5-15 deg bin does not get worse and EPE all drops by >= 1 px, the grid helps transfer and the combined run goes ahead. If 5-15 deg gets worse as at est r4, the grid is not the reason and the combined run is dropped.
 - Confound: 10k pretraining against 40k at est r4. A weaker overall gain is not readable on its own; the 5-15 deg sign is the main signal.
 - The three 11.15 lines are commented out with `# HOLD` until this is read.
+
+### 11.18 OSLO seed 11 at 30k (2026-11-04, partial)
+
+- flowscape:val geodesic, global improvement over zero flow: OSLO 30k s7 / s11 = 83.9 / 84.8 % (mean 84.4), RAFT-small 30k = 85.2 / 86.2 % (mean 85.7). At 10k: OSLO 80.9 / 81.9, RAFT 77.9 / 79.4. On this metric RAFT gains more from 3x steps (+7.0 pts vs +3.0) and passes OSLO. The test-EPE reading of 11.16 waits for `benchmark_scale_r2`.
+- replica360 retention after 30k: OSLO s11 -0.8 % (s7 +1.4 %).
+- Queue: the 2026-11-03 restart found no `.done` markers and walked the whole file again (all skips). Two queue instances ran; the second waited 5 h on the first's container. `run_pipeline_checks.py` crashed in `check_warp_planar` (stream built with `__new__` lacked `retina_bottleneck`); fixed.
+
+### 11.19 Scale test closed; short est r5 pretraining did not bootstrap (2026-11-05)
+
+flowscape:test EPE (px), recomputed from the displacement bins:
+
+| run | 10k | 30k | 60k |
+|---|---|---|---|
+| OSLO noso3_erppx s7 / s11 | 9.58 (mean) | 8.55 / 8.88 (mean 8.72) | - |
+| RAFT-small fs s7 / s11 | 8.19 (mean) | 8.09 / 6.76 (mean 7.42) | 7.40 (s7, fp32) |
+| gap | 1.39 | 1.30 | - |
+
+- Scale rule (11.16) fires: the two-seed 30k gap (1.30 px) is within 0.5 px of the 10k gap (1.39 px). Budget is ruled out as the cause of the gap. Both models gain about the same from 3x steps (OSLO -0.86 px, RAFT -0.77 px), and RAFT-small is flat from 30k to 60k (7.42 -> 7.40, one seed at 60k).
+- Where the 30k gap sits (two-seed means, bin EPE x pixel fraction): 0-5 deg OSLO 9.15 vs RAFT 7.32 px, contributes +1.41 px; 5-15 deg 5.86 vs 5.56, +0.07 px; 15-30 deg 46.1 vs 72.0, -0.16 px (OSLO better). The whole gap is in the 0-5 deg bin (77 % of pixels).
+- 11.17 `pt_oslo_est5_10k` aborted at step 4000 by `--abort-below 4000:5`: chairs360:val global -0.43 % (step 2000: -1.50 %). The est r4 pretraining on the same sources was at +13.4 % at step 4000 (40k schedule). Confound: the 10k schedule reaches the 4e-4 peak LR at step 3000, the 40k schedule does not; training spikes (train_global 16-17 deg) appear after step 2300. est r5 vs schedule is not separated. `pt_oslo_est5_10k_ft` failed on the missing checkpoint.
+- Decision: 11.15 (combined est r5 + r7 40k pretraining) stays on hold; the est r5 arm did not learn from chairs360 + replica360 in this test.
+
+### 11.20 Is the 0-5 deg gap the near-nadir overshoot pixels? (queued 2026-11-05)
+
+- `run_epe_eval.py` now also reports every displacement bin split into overshoot / in-raster pixels (`official_disp{bin}_overshoot_*`, `official_disp{bin}_inraster_*`); `benchmark_flowscape.sh` prints the split with each part's contribution to EPE all.
+- Queue job `benchmark_overshoot` (eval only, ahead of VIEWPORT_TTA): zero, prior_raft, panoflow, the four 30k checkpoints and RAFT 60k.
+- Reading: if the overshoot part of the 0-5 deg bin carries most of the 1.41 px OSLO-RAFT difference, the gap is the unsupervised overshoot region (OSLO never sees a target there) and the fix is in the target, not the model. If the in-raster part carries it, the gap is in ordinary small motion.

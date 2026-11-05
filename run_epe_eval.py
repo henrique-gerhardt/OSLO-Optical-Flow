@@ -45,8 +45,17 @@ from spherical_flow.erp_readout import (
     compute_epe_maps,
     erp_pixel_directions,
     finalize_epe,
+    node_weights_at_dirs,
+    nodes_to_endpoints,
     nodes_to_erp_flow,
     pixel_coslat,
+)
+from spherical_flow.viewport_metrics import (
+    accumulate_viewport,
+    build_viewports,
+    erp_flow_endpoints,
+    finalize_viewport,
+    viewport_epe,
 )
 from spherical_flow.panoflow_adapter import load_panoflow_checkpoint, predict_panoflow_cfe_flow
 from spherical_flow.prior_adapter import load_prior_checkpoint, predict_prior_flow
@@ -116,6 +125,20 @@ def displacement_bin_masks(gt: torch.Tensor) -> Dict[str, torch.Tensor]:
             for lo, hi in zip(DISP_BINS_DEG[:-1], DISP_BINS_DEG[1:])}
 
 
+def overshoot_masks(gt: torch.Tensor) -> Dict[str, torch.Tensor]:
+    """Pixels whose GT endpoint leaves the raster vertically (v + dv outside [-0.5, H - 0.5]).
+
+    FlowScape writes some near-nadir motion this way (~3 % of pixels, ~24 % of the zero-flow
+    error mass); `sample_pair_to_nodes` marks such targets invalid, so node models are never
+    supervised there. Reported as its own region; "inraster" is the complement.
+    """
+    height = gt.shape[0]
+    rows = torch.arange(height, dtype=gt.dtype).view(-1, 1)
+    end_v = rows + gt[..., 1]
+    over = (end_v > height - 0.5) | (end_v < -0.5)
+    return {"overshoot": over, "inraster": ~over}
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="ERP-pixel EPE evaluation on sfprep shards.")
     parser.add_argument("--shards", default="/data/shards")
@@ -161,6 +184,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--max-pairs", type=int, default=None)
     parser.add_argument("--output-dir", default="/outputs/epe_eval")
+    parser.add_argument("--viewport-layouts", default="cube,paper",
+                        help="Comma list of viewport layouts for viewport EPE "
+                             "(spherical_flow.viewport_metrics); empty = off.")
+    parser.add_argument("--viewport-node-route", default="native", choices=["native", "erp"],
+                        help="Node predictors: read the viewport rays from the nodes "
+                             "(native, one mapping) or from the ERP readout (erp).")
     return parser.parse_args()
 
 
@@ -288,6 +317,9 @@ def main() -> None:
 
     # Per-raster caches: readout stencil, pixel dirs/masks/weights, node pixel coords.
     stencils: Dict[Tuple[int, int], dict] = {}
+    layouts = [x for x in args.viewport_layouts.split(",") if x]
+    vp_totals: Dict[str, Dict[str, float]] = {name: {} for name in layouts}
+    vp_counts: Dict[str, Dict[str, float]] = {name: {} for name in layouts}
 
     def raster(height: int, width: int) -> dict:
         key = (height, width)
@@ -298,7 +330,13 @@ def main() -> None:
                 "masks": build_pixel_region_masks(height, width),
                 "coslat": pixel_coslat(height, width),
                 "uv": points_to_equirectangular_pixels(points, height, width),
+                "viewports": {},
             }
+            for name in layouts:
+                vp = build_viewports(name, height, width)
+                if args.predictor in NODE_PREDICTORS and args.viewport_node_route == "native":
+                    vp["node_weights"] = node_weights_at_dirs(args.resolution, vp["dirs"].numpy())
+                stencils[key]["viewports"][name] = vp
         return stencils[key]
 
     totals: Dict[str, float] = {}
@@ -319,6 +357,7 @@ def main() -> None:
         height, width = items[0]["flow_erp"].shape[:2]
         cache = raster(height, width)
         u, v = cache["uv"]
+        node_preds: List[torch.Tensor] = []
 
         if args.predictor == "zero":
             preds = [torch.zeros_like(it["flow_erp"]) for it in items]
@@ -329,6 +368,7 @@ def main() -> None:
                     it["frame1_f"], it["frame2_f"], it["flow_erp"], it["valid_erp"],
                     points, basis_east, basis_north,
                 )["flow"]
+                node_preds.append(node_gt)
                 preds.append(readout(node_gt, cache, height, width))
         elif args.predictor in ("raft", "raft_nodes"):
             frames1 = torch.stack([it["frame1_u8"] for it in items], dim=0)
@@ -353,6 +393,7 @@ def main() -> None:
                     node_flow = erp_flow_to_tangent(
                         erp, points, basis_east, basis_north, u, v, height, width
                     )
+                    node_preds.append(node_flow)
                     erp = readout(node_flow, cache, height, width)
                 preds.append(erp)
         else:  # oslo
@@ -360,17 +401,32 @@ def main() -> None:
             frame2 = torch.stack([it["nodes"]["frame2"] for it in items], dim=0).to(device)
             with torch.no_grad():
                 node_pred = oslo_model(frame1, frame2, pyramid, iters=args.eval_iters)[-1]
-            preds = [readout(node_pred[i].float(), cache, height, width)
-                     for i in range(len(items))]
+            node_preds = [node_pred[i].float().cpu() for i in range(len(items))]
+            preds = [readout(nf, cache, height, width) for nf in node_preds]
 
         if "official" not in cache:
             cache["official"] = official_region_masks(height, width)
-        for it, pred in zip(items, preds):
+        for i, (it, pred) in enumerate(zip(items, preds)):
+            for name, vp in cache["viewports"].items():
+                gt_end = erp_flow_endpoints(it["flow_erp"], vp)
+                if "node_weights" in vp:
+                    pred_end = nodes_to_endpoints(node_preds[i].float(), basis_east, basis_north,
+                                                  vp["node_weights"], vp["dirs"].float())
+                else:
+                    pred_end = erp_flow_endpoints(pred.cpu(), vp)
+                accumulate_viewport(viewport_epe(pred_end, gt_end, vp), vp,
+                                    vp_totals[name], vp_counts[name])
             maps = compute_epe_maps(pred, it["flow_erp"], it["valid_erp"], width)
             accumulate_epe(maps, cache["masks"], cache["coslat"], totals, counts, sample_chunks)
             epe, sepe = official_maps(pred.cpu(), it["flow_erp"])
             regions = dict(cache["official"])
-            regions.update(displacement_bin_masks(it["flow_erp"]))
+            bins = displacement_bin_masks(it["flow_erp"])
+            over = overshoot_masks(it["flow_erp"])
+            regions.update(bins)
+            regions.update(over)
+            for bname, bmask in bins.items():
+                regions[f"{bname}_overshoot"] = bmask & over["overshoot"]
+                regions[f"{bname}_inraster"] = bmask & over["inraster"]
             for region, mask in regions.items():
                 for name, vals in (("epe", epe), ("sepe", sepe)):
                     key = f"{region}_{name}"
@@ -418,8 +474,10 @@ def main() -> None:
             metrics[f"official_{key}"] = total / official_counts[key]
     all_px = official_counts.get("all_epe", 0.0)
     for key, count in official_counts.items():
-        if key.startswith("disp") and key.endswith("_epe") and all_px > 0:
+        if key.startswith(("disp", "overshoot")) and key.endswith("_epe") and all_px > 0:
             metrics[f"official_{key[:-4]}_fraction"] = count / all_px
+    for name in layouts:
+        metrics.update(finalize_viewport(vp_totals[name], vp_counts[name], name))
     metrics["elapsed_s"] = time.time() - start_time
     metrics["pairs"] = seen
     print(f"{args.predictor}_epe " + json.dumps(

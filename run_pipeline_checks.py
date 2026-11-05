@@ -185,6 +185,7 @@ def check_warp_planar(shards: Path, source: Tuple[str, str], pairs: int) -> None
         ds.roll, ds.hflip_prob = kw.get("roll", False), kw.get("hflip_prob", 0.0)
         ds.so3_prob, ds.so3_max_angle_deg = kw.get("so3_prob", 0.0), 180.0
         ds.resize = kw.get("resize")
+        ds.retina_bottleneck = 0
         rng, gen = random.Random(0), torch.Generator().manual_seed(0)
         ratios = []
         for rec in recs:
