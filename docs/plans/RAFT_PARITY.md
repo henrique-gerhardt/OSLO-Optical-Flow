@@ -1239,3 +1239,31 @@ flowscape:test EPE (px), recomputed from the displacement bins:
 - `run_epe_eval.py` now also reports every displacement bin split into overshoot / in-raster pixels (`official_disp{bin}_overshoot_*`, `official_disp{bin}_inraster_*`); `benchmark_flowscape.sh` prints the split with each part's contribution to EPE all.
 - Queue job `benchmark_overshoot` (eval only, ahead of VIEWPORT_TTA): zero, prior_raft, panoflow, the four 30k checkpoints and RAFT 60k.
 - Reading: if the overshoot part of the 0-5 deg bin carries most of the 1.41 px OSLO-RAFT difference, the gap is the unsupervised overshoot region (OSLO never sees a target there) and the fix is in the target, not the model. If the in-raster part carries it, the gap is in ordinary small motion.
+
+### 11.21 The 0-5 deg gap is the overshoot pixels (2026-11-06)
+
+`benchmark_overshoot`, flowscape:test, two-seed means at 30k, contribution to EPE all (px):
+
+| part | OSLO | RAFT-small | OSLO - RAFT |
+|---|---|---|---|
+| overshoot, all bins (3.17 % of px) | 3.58 | 0.88 | +2.70 |
+| in-raster 0-5 deg | 3.62 | 4.81 | -1.19 |
+| in-raster 5-15 deg | 1.15 | 1.18 | -0.04 |
+| in-raster 15-30 deg | 0.29 | 0.45 | -0.16 |
+| EPE all | 8.72 | 7.42 | +1.30 |
+
+- Rule of 11.20 fires on the overshoot side: the overshoot pixels carry more than the whole gap (+2.70 px); on in-raster pixels OSLO is lower by 1.39 px (5.06 vs 6.45 px). Same pattern in the pretrained pair (OSLO pretrain_ft vs RAFT c360_ft: overshoot +3.2 px, in-raster -0.9 px).
+- The node oracle (GT on r6 nodes, read out to ERP) already loses 2.9 px on the overshoot pixels (0-5 deg overshoot EPE 112.5 px, in-raster 1.23 px). A perfect node flow cannot reproduce an endpoint outside the raster: the spherical endpoint always maps back inside it. So most of OSLO's overshoot error (3.3-3.9 px) is a readout limit, not a learning failure.
+- Limit of the reading: the in-raster win is in ERP px. The geometric metrics still favour RAFT-small: flowscape:val haversine 84.4 vs 85.7 %, viewport EPE cube-all 2.04 vs 1.65 px (OSLO s7/s11 2.18/1.90, RAFT 1.75/1.55), equator faces included. Do not state "OSLO beats RAFT-small" without the metric.
+- Published rows stay far ahead in-raster: PriOr-RAFT 1.77 px, PanoFlow 2.45 px vs OSLO 5.06 px.
+- Next: queued `overshoot_band_head` (P6, experiments/proposals): frozen OSLO 30k s7/s11 + small ERP head on the top/bottom H/16 rows, raw-GT supervision. The local smoke shows the overshoot loss is the longitude jump near the pole (|du| median ~130 px), not the vertical clamp (gt_clamped floor ~10 px there), so it replaces the Jacobian-readout idea. Success: overshoot <= 40 px with in-raster within 0.05 px.
+
+Other jobs of the same report:
+- VIEWPORT_TTA probe (100 pairs, anchor02_fb_c4): init -0.05 px, smooth 0.05 -0.12 px (73 % of pairs improve), smooth 0.2 / 0.5 +3.2 / +6.1 px. Gain too small to pursue.
+- proposals P5 toy (corr vs WAFT update, r5, 3k steps): both at zero flow (22.47 / 22.45 vs 22.40 px), the toy did not learn; uninformative. P1-P4 read from the JSONs, see experiments/proposals/README.md: P1 kill; P2 inconclusive; P3 oracle static gate -18.7 % on the 30k checkpoint (proxy only -3.3 %); P4 faces lose overall through the overshoot region, in-raster -3.5 % for RAFT-small only.
+- est r5 pretraining rerun aborted again at step 4000 (-0.36 %); ft failed on the missing checkpoint. 11.15 stays on hold.
+
+### 11.22 Learned static gate queued after P6 (2026-11-08)
+
+- Job `static_gate_learned` (P7, `experiments/proposals/p7_learned_gate.py`), right after `overshoot_band_head`: frozen OSLO (fs30k s7, s11, pretrain_ft s7) + small ERP CNN at H/4 giving a per-pixel static probability g; gated flow = pred * (1 - g). Loss = in-raster EPE + 0.1 BCE; overshoot pixels left to P6 but still scored. Full flowscape:test, ~3-4 h.
+- Reading on fs30k s7: success if EPE <= -9 % (half the oracle -18.7 %) with moving-pixel EPE up <= 2 %; kill if no better than mag_gate_0.5 (-3.3 %).

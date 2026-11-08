@@ -202,6 +202,16 @@ benchmark_viewport_rest | scripts/benchmark_flowscape.sh | TAG=viewport; ONLY=ze
 # --- PROPOSALS (2026-11-04): minimal experiments for the five proposals of reports/Formulações de fluxo para HEALPix.md (experiments/proposals/README.md) ---
 # P1 rigid ceiling, P2 classical cascade, P3 gate ceiling (2 ckpts), P4 frozen RAFT on HEALPix faces (small+large), P5 toy corr vs waft (3000 steps x2)   ~3-4 h
 proposals_probes | scripts/proposals_probes.sh |
+# --- OVERSHOOT 11.21 (2026-11-07): can OSLO learn the near-nadir overshoot pixels? (experiments/proposals/p6_polar_band_head.py) ---
+# Matched 30k pair: in-raster OSLO 5.1-5.5 vs RAFT-small 6.1-7.4 px; overshoot (3 % px) OSLO 103-123 vs RAFT 27-35 px = the whole gap.
+# Frozen OSLO 30k (s7, s11) + small ERP CNN on the top/bottom H/16 rows, raw-GT supervision; full flowscape:test.
+# Success: overshoot <= 40 px with in-raster within 0.05 px. Floor reference row gt_clamped (~10 px in overshoot).   ~1.5-2.5 h
+overshoot_band_head | scripts/proposals_probes.sh | PROBES=p6
+# --- STATIC GATE 11.22 (2026-11-08): how much of the oracle static-gate ceiling does a learned gate recover? (experiments/proposals/p7_learned_gate.py) ---
+# P3 box: oracle gate -18.7 % on scale_fs30k s7 (in-raster 5.16 -> 3.80 px), -8.0 % on oslo_pretrain_ft s7; training-free proxy only -3.3 / -2.4 %.
+# Frozen OSLO (fs30k s7, s11, pretrain_ft s7) + small ERP CNN at H/4 giving a per-pixel static probability g, flow * (1 - g); full flowscape:test.
+# Success on fs30k s7: EPE <= -9 % (half the oracle) with moving-pixel EPE up <= 2 %; kill if no better than mag_gate_0.5.   ~3-4 h
+static_gate_learned | scripts/proposals_probes.sh | PROBES=p7
 # --- RAFT_PARITY 11.16 (2026-11-03): finish the budget test before the combined run ---
 # 30k result: both models gain ~0.7 px from 3x steps; gap 1.39 -> 1.13 px, but OSLO has one seed and RAFT seeds differ by 1.3 px.
 # 1) OSLO seed 11 at 30k   ~8.4 h
@@ -211,14 +221,15 @@ scale_raft_fs60k_r2 | scripts/raft_parity_planar.sh | SEED=7; RUN_NAME=scale_fs6
 # 3) benchmark the two rows   ~20 min
 benchmark_scale_r2 | scripts/benchmark_flowscape.sh | TAG=bins
 # --- RAFT_PARITY 11.17 (2026-11-03): short pretraining at est r5 before committing to the 31 h combined run ---
+# HOLD (2026-11-08): the pretraining aborted at 4k (-0.36 %), so the fine-tune and benchmark have no checkpoint.
 # Question: does a finer working grid let OSLO transfer pretraining? At est r4 pretraining helped only 0-5 deg and made 5-15 deg worse (6.67 -> 8.14 px).
 # Same grid as the est5 from-scratch run (est r5, cp4, sup r6: 10.71 px, 5-15 deg bin 8.60 px), so the fine-tune compares directly against it.
 # 1) pretrain 10k on chairs360 + replica360, base recipe   ~7.5 h
-pt_oslo_est5_10k | scripts/raft_parity_large.sh | RUN_NAME=oslo_pretrain_est5_10k; ARMS=est5; PREFLIGHT_ARMS=est5; TRAIN_SOURCES=chairs360:train,replica360:train; VAL_SOURCES=chairs360:val; EXTRA_VAL_SOURCES=flowscape:val replica360:val; STEPS=10000; EVAL_EVERY=2000; EXTRA_FLAGS=--abort-below 4000:5
+# HOLD pt_oslo_est5_10k | scripts/raft_parity_large.sh | RUN_NAME=oslo_pretrain_est5_10k; ARMS=est5; PREFLIGHT_ARMS=est5; TRAIN_SOURCES=chairs360:train,replica360:train; VAL_SOURCES=chairs360:val; EXTRA_VAL_SOURCES=flowscape:val replica360:val; STEPS=10000; EVAL_EVERY=2000; EXTRA_FLAGS=--abort-below 4000:5
 # 2) fine-tune 10k on flowscape, erp_px, no SO(3)   ~7.5 h
-pt_oslo_est5_10k_ft | scripts/raft_parity_large.sh | RUN_NAME=oslo_pretrain_est5_10k_ft; ARMS=est5_noso3_erppx; PREFLIGHT_ARMS=; TRAIN_SOURCES=flowscape:train; EXTRA_FLAGS=--init-checkpoint /outputs/oslo_pretrain_est5_10k/est5_s7/oslo_raft.pt --lr 1.25e-4
+# HOLD pt_oslo_est5_10k_ft | scripts/raft_parity_large.sh | RUN_NAME=oslo_pretrain_est5_10k_ft; ARMS=est5_noso3_erppx; PREFLIGHT_ARMS=; TRAIN_SOURCES=flowscape:train; EXTRA_FLAGS=--init-checkpoint /outputs/oslo_pretrain_est5_10k/est5_s7/oslo_raft.pt --lr 1.25e-4
 # 3) benchmark   ~40 min
-benchmark_pt_est5 | scripts/benchmark_flowscape.sh | TAG=bins
+# HOLD benchmark_pt_est5 | scripts/benchmark_flowscape.sh | TAG=bins
 # --- RAFT_PARITY 11.15 (2026-11-02): combined run. Do the small single-factor effects add up? pretraining + est r5 (cp4) + sup r7 together ---
 # The est r4 pretrained checkpoint cannot be reused (only 18/83 tensors keep their shape at est r5), so pretraining is redone at the combined grid.
 # ON HOLD (2026-11-03): uncomment the three lines below only after 11.17 is read.

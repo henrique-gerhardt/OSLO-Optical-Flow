@@ -7,6 +7,8 @@ set -uo pipefail
 OUT="${OUTPUT_DIR:-/outputs}/proposals_probes${TAG:+_$TAG}"
 SHARDS="${OSLO_SHARDS:-/data/shards}"
 CKPTS="${CKPTS:-${OUTPUT_DIR:-/outputs}/oslo_pretrain_ft/noso3_erppx_s7/oslo_raft.pt ${OUTPUT_DIR:-/outputs}/scale_fs30k/noso3_erppx_s7/oslo_raft.pt}"
+P6_CKPTS="${P6_CKPTS:-${OUTPUT_DIR:-/outputs}/scale_fs30k/noso3_erppx_s7/oslo_raft.pt ${OUTPUT_DIR:-/outputs}/scale_fs30k/noso3_erppx_s11/oslo_raft.pt}"
+P7_CKPTS="${P7_CKPTS:-${OUTPUT_DIR:-/outputs}/scale_fs30k/noso3_erppx_s7/oslo_raft.pt ${OUTPUT_DIR:-/outputs}/scale_fs30k/noso3_erppx_s11/oslo_raft.pt ${OUTPUT_DIR:-/outputs}/oslo_pretrain_ft/noso3_erppx_s7/oslo_raft.pt}"
 PROBES="${PROBES:-p1 p2 p3 p4 p5}"
 DEV="${DEVICE:-cuda}"
 mkdir -p "$OUT"
@@ -38,6 +40,20 @@ for p in $PROBES; do
         done ;;
     p5) run p5_waft_toy p5_waft_toy.py "${common[@]}" --stride 13 --max-pairs 106 \
           --train-sources flowscape:train --train-pairs 1000 --steps "${P5_STEPS:-3000}" --device "$DEV" ;;
+    p6) for ck in $P6_CKPTS; do
+          [ -f "$ck" ] || { echo "missing $ck"; continue; }
+          tag="$(basename "$(dirname "$ck")")"
+          run "p6_band_$tag" p6_polar_band_head.py "${common[@]}" --stride 1 --max-pairs 100000 \
+            --init-checkpoint "$ck" --pyramid-cache "${OUTPUT_DIR:-/outputs}/pyramid_cache" --device "$DEV" \
+            --train-sources flowscape:train --train-pairs 2000 --train-stride 2 --steps "${P6_STEPS:-6000}"
+        done ;;
+    p7) for ck in $P7_CKPTS; do
+          [ -f "$ck" ] || { echo "missing $ck"; continue; }
+          tag="$(basename "$(dirname "$(dirname "$ck")")")_$(basename "$(dirname "$ck")")"
+          run "p7_gate_$tag" p7_learned_gate.py "${common[@]}" --stride 1 --max-pairs 100000 \
+            --init-checkpoint "$ck" --pyramid-cache "${OUTPUT_DIR:-/outputs}/pyramid_cache" --device "$DEV" \
+            --train-sources flowscape:train --train-pairs 1500 --train-stride 2 --steps "${P7_STEPS:-4000}"
+        done ;;
   esac
 done
 exit 0
