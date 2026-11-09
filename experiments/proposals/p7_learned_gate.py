@@ -46,8 +46,7 @@ import torch.nn.functional as F
 
 import common as C
 from p3_gate_probe import auroc
-from p6_polar_band_head import FLOW_NORM, CConv, build_oslo_runner, wrap_du
-from spherical_flow.raft_adapter import load_raft_model, predict_raft_flow
+from p6_polar_band_head import FLOW_NORM, CConv, build_predictor, build_raft_runner, wrap_du  # noqa: F401 (p8 imports build_raft_runner from here)
 
 DOWN = 4  # gate-net input resolution = output / DOWN
 LOSS_DOWN = 2  # training loss is computed on a point-sampled grid at output / LOSS_DOWN
@@ -131,23 +130,6 @@ def collate(batch, device):
     return x, pred, gt, (m & 1).bool()[:, None], (m & 2).bool()[:, None]
 
 
-def build_raft_runner(args):
-    """Frozen trained TorchVision RAFT (raft_erp.pt) -> function(record) -> ERP flow [H, W, 2]."""
-    device = torch.device(args.device)
-    raft, transforms, _, _ = load_raft_model(args.raft_model, "none", device)
-    raft.load_state_dict(torch.load(args.tv_checkpoint, map_location=device)["model"])
-    raft.eval()
-
-    def run(rec):
-        f1 = torch.from_numpy(np.ascontiguousarray(rec["frame1"])).permute(2, 0, 1).contiguous()
-        f2 = torch.from_numpy(np.ascontiguousarray(rec["frame2"])).permute(2, 0, 1).contiguous()
-        with torch.no_grad():
-            flow = predict_raft_flow(raft, transforms, f1[None], f2[None], device, "identity")
-        return flow[0].permute(1, 2, 0).float().cpu().contiguous()
-
-    return run
-
-
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     C.add_common_args(p)
@@ -172,14 +154,7 @@ def main():
     torch.manual_seed(args.seed)
     rng = np.random.default_rng(args.seed)
     device = torch.device(args.device)
-    if args.predictor == "raft":
-        if not args.tv_checkpoint:
-            raise SystemExit("--predictor raft needs --tv-checkpoint")
-        oslo = build_raft_runner(args)
-    else:
-        if not args.init_checkpoint:
-            raise SystemExit("--predictor oslo needs --init-checkpoint")
-        oslo = build_oslo_runner(args)
+    oslo = build_predictor(args)
     ckpt_name = args.tv_checkpoint if args.predictor == "raft" else args.init_checkpoint
 
     targs = argparse.Namespace(**{**vars(args), "split": args.train_split, "sources": args.train_sources,

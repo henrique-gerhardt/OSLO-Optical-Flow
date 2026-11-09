@@ -10,6 +10,7 @@ CKPTS="${CKPTS:-${OUTPUT_DIR:-/outputs}/oslo_pretrain_ft/noso3_erppx_s7/oslo_raf
 P6_CKPTS="${P6_CKPTS:-${OUTPUT_DIR:-/outputs}/scale_fs30k/noso3_erppx_s7/oslo_raft.pt ${OUTPUT_DIR:-/outputs}/scale_fs30k/noso3_erppx_s11/oslo_raft.pt}"
 P7_CKPTS="${P7_CKPTS:-${OUTPUT_DIR:-/outputs}/scale_fs30k/noso3_erppx_s7/oslo_raft.pt ${OUTPUT_DIR:-/outputs}/scale_fs30k/noso3_erppx_s11/oslo_raft.pt ${OUTPUT_DIR:-/outputs}/oslo_pretrain_ft/noso3_erppx_s7/oslo_raft.pt}"
 P7R_CKPTS="${P7R_CKPTS:-${OUTPUT_DIR:-/outputs}/scale_fs30k_planar/raft_small_fs_s7/raft_erp.pt ${OUTPUT_DIR:-/outputs}/scale_fs30k_planar/raft_small_fs_s11/raft_erp.pt ${OUTPUT_DIR:-/outputs}/raft_pretrain/raft_small_c360_ft_s7/raft_erp.pt}"
+P6R_CKPTS="${P6R_CKPTS:-${OUTPUT_DIR:-/outputs}/scale_fs30k_planar/raft_small_fs_s7/raft_erp.pt ${OUTPUT_DIR:-/outputs}/scale_fs30k_planar/raft_small_fs_s11/raft_erp.pt}"
 PROBES="${PROBES:-p1 p2 p3 p4 p5}"
 DEV="${DEVICE:-cuda}"
 mkdir -p "$OUT"
@@ -48,6 +49,13 @@ for p in $PROBES; do
             --init-checkpoint "$ck" --pyramid-cache "${OUTPUT_DIR:-/outputs}/pyramid_cache" --device "$DEV" \
             --train-sources flowscape:train --train-pairs "${P6_PAIRS:-1000}" --train-stride 2 --steps "${P6_STEPS:-6000}"
         done ;;
+    p6r) for ck in $P6R_CKPTS; do  # RAFT-small control of p6: same band head, same recipe
+          [ -f "$ck" ] || { echo "missing $ck"; continue; }
+          tag="$(basename "$(dirname "$(dirname "$ck")")")_$(basename "$(dirname "$ck")")"
+          run "p6r_band_$tag" p6_polar_band_head.py "${common[@]}" --stride 1 --max-pairs 100000 \
+            --predictor raft --raft-model raft_small --tv-checkpoint "$ck" --device "$DEV" \
+            --train-sources flowscape:train --train-pairs "${P6_PAIRS:-1000}" --train-stride 2 --steps "${P6_STEPS:-6000}"
+        done ;;
     p7) for ck in $P7_CKPTS; do
           [ -f "$ck" ] || { echo "missing $ck"; continue; }
           tag="$(basename "$(dirname "$(dirname "$ck")")")_$(basename "$(dirname "$ck")")"
@@ -71,6 +79,19 @@ for p in $PROBES; do
           esac
           run "p8_mag_$tag" p8_mag_sweep.py "${common[@]}" --stride 1 --max-pairs 100000 "${pred[@]}" --device "$DEV" \
             --train-sources flowscape:train --train-pairs 300 --train-stride 5 --p7-json "$p7/p7_learned_gate.json"
+        done ;;
+    p9) for ck in $P6_CKPTS $P6R_CKPTS; do  # stack the trained p6 band head + p7 gate, no training
+          [ -f "$ck" ] || { echo "missing $ck"; continue; }
+          tag="$(basename "$(dirname "$(dirname "$ck")")")_$(basename "$(dirname "$ck")")"
+          case "$ck" in
+            *raft_erp.pt) pred=(--predictor raft --raft-model raft_small --tv-checkpoint "$ck")
+                          band="$OUT/p6r_band_$tag"; gate="$OUT/p7r_gate_$tag" ;;
+            *) pred=(--init-checkpoint "$ck" --pyramid-cache "${OUTPUT_DIR:-/outputs}/pyramid_cache")
+               band="$OUT/p6_band_$(basename "$(dirname "$ck")")"; gate="$OUT/p7_gate_$tag" ;;
+          esac
+          [ -f "$band/band_head.pt" ] && [ -f "$gate/gate_net.pt" ] || { echo "missing heads for $tag"; continue; }
+          run "p9_stack_$tag" p9_band_gate_stack.py "${common[@]}" --stride 1 --max-pairs 100000 "${pred[@]}" \
+            --device "$DEV" --band-head "$band/band_head.pt" --gate-net "$gate/gate_net.pt"
         done ;;
   esac
 done

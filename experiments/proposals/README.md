@@ -84,3 +84,15 @@ ERP-through-nodes 10.56 px overall, but 3.1 of the 3.6 px gap is the overshoot r
 - P6 first run: both checkpoints stop at 1200 cached pairs (the OOM). The rerun `overshoot_band_head_r2` has no log yet.
 
 **P8, local smoke only (Stage A, 3 pairs)**: pipeline runs, tau* = 1 deg on 4 train pairs; the numbers carry no signal. Box job `static_gate_mag_sweep` (after the RAFT control, so the p7r JSONs exist).
+
+**Box 2026-11-09: P6 r2, P7r, P8 (full flowscape:test; details in `docs/plans/RAFT_PARITY.md` §11.25).**
+
+- **P6 band head (OSLO fs30k s7 / s11):**
+  - EPE 8.55 -> 5.15 / 8.88 -> 4.87 px; overshoot 103 -> 23 / 123 -> 24 px (criterion <= 40 met).
+  - In-raster also falls by 0.9 px (5.46 -> 4.57 / 5.14 -> 4.25), all of it in the band rows (band in-raster 27.4 -> 18.2). The equator is unchanged. The "within 0.05 px" guard was meant to catch damage; the shift is an improvement.
+  - OSLO only: the same head on RAFT-small is still missing.
+- **P7r gate on RAFT-small:** fs s7 8.09 -> 4.41 (-45.5 %), fs s11 6.76 -> 3.94 (-41.8 %), c360_ft s7 6.54 -> 3.66 (-44.0 %). Matched-pair gap OSLO - RAFT, mean of the fs30k seeds: 1.29 px ungated, 2.57 px gated. The gate is a generic head and helps RAFT more; RAFT's static-pixel error is larger (9.1-11.4 px).
+- **P8 threshold control:**
+  - f for mag_train: 0.24 / 0.21 / 0.06 on OSLO and negative on RAFT (-0.09 to -0.12). Even tau picked on test gives at most 0.40.
+  - s* = 1 almost everywhere, so a global shrink does not help either.
+  - Pre-registered reading f <= 0.5: the learned gate does work a |pred| threshold cannot.

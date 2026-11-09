@@ -22,6 +22,9 @@ Rows on flowscape:test:
 Pre-registered reading: success if oslo_band brings overshoot EPE <= 40 px while in-raster
 EPE moves by <= 0.05 px. Then the next step is to train the head end to end with OSLO.
 Overshoot still > 80 px means the GT there is not learnable from these inputs.
+
+RAFT control (--predictor raft --tv-checkpoint ...): the same head on a frozen trained RAFT-small.
+Rows are then named raft / raft_band. An OSLO-vs-RAFT comparison is only fair with both headed.
 """
 
 from __future__ import annotations
@@ -42,6 +45,7 @@ import torch.nn.functional as F
 import common as C
 from spherical_flow import healpix_unit_vectors, tangent_basis
 from spherical_flow.erp_readout import bilinear_node_weights, erp_pixel_directions, nodes_to_erp_flow
+from spherical_flow.raft_adapter import load_raft_model, predict_raft_flow
 from spherical_flow.shard_dataset import _to_chw_free_float, sample_pair_to_nodes
 
 FLOW_NORM = 32.0
@@ -93,6 +97,34 @@ def build_oslo_runner(args):
         return nodes_to_erp_flow(node, sup, sbe, sbn, h, w, wts, pixel_dirs=dirs)
 
     return run
+
+
+def build_raft_runner(args):
+    """Frozen trained TorchVision RAFT (raft_erp.pt) -> function(record) -> ERP flow [H, W, 2]."""
+    device = torch.device(args.device)
+    raft, transforms, _, _ = load_raft_model(args.raft_model, "none", device)
+    raft.load_state_dict(torch.load(args.tv_checkpoint, map_location=device)["model"])
+    raft.eval()
+
+    def run(rec):
+        f1 = torch.from_numpy(np.ascontiguousarray(rec["frame1"])).permute(2, 0, 1).contiguous()
+        f2 = torch.from_numpy(np.ascontiguousarray(rec["frame2"])).permute(2, 0, 1).contiguous()
+        with torch.no_grad():
+            flow = predict_raft_flow(raft, transforms, f1[None], f2[None], device, "identity")
+        return flow[0].permute(1, 2, 0).float().cpu().contiguous()
+
+    return run
+
+
+def build_predictor(args):
+    """--predictor oslo|raft -> function(record) -> ERP flow [H, W, 2]."""
+    if args.predictor == "raft":
+        if not args.tv_checkpoint:
+            raise SystemExit("--predictor raft needs --tv-checkpoint")
+        return build_raft_runner(args)
+    if not args.init_checkpoint:
+        raise SystemExit("--predictor oslo needs --init-checkpoint")
+    return build_oslo_runner(args)
 
 
 def wrap_du(flow: np.ndarray, w: int) -> np.ndarray:
@@ -206,7 +238,10 @@ def predict(head, samples, device):
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     C.add_common_args(p)
-    p.add_argument("--init-checkpoint", required=True)
+    p.add_argument("--predictor", default="oslo", choices=["oslo", "raft"])
+    p.add_argument("--init-checkpoint", default="", help="OSLO checkpoint (--predictor oslo)")
+    p.add_argument("--tv-checkpoint", default="", help="trained RAFT raft_erp.pt (--predictor raft)")
+    p.add_argument("--raft-model", default="raft_small", choices=["raft_small", "raft_large"])
     p.add_argument("--pyramid-cache", default="/outputs/pyramid_cache")
     p.add_argument("--eval-iters", type=int, default=12)
     p.add_argument("--train-sources", default="flowscape:train")
@@ -222,7 +257,9 @@ def main():
     torch.manual_seed(args.seed)
     rng = np.random.default_rng(args.seed)
     device = torch.device(args.device)
-    oslo = build_oslo_runner(args)
+    oslo = build_predictor(args)
+    name = args.predictor
+    ckpt_name = args.tv_checkpoint if name == "raft" else args.init_checkpoint
 
     targs = argparse.Namespace(**{**vars(args), "split": args.train_split, "sources": args.train_sources,
                                   "stride": args.train_stride, "max_pairs": args.train_pairs})
@@ -282,18 +319,18 @@ def main():
         over = C.ee.overshoot_masks(torch.from_numpy(np.asarray(rec["flow"], dtype=np.float32)))["overshoot"]
         extra = {"band": band_t, "band_inraster": band_t & ~over}
         flow = rec["flow"]
-        scorer.add("oslo", torch.from_numpy(pred), flow, extra)
+        scorer.add(name, torch.from_numpy(pred), flow, extra)
         full = unband(pred, predict(head, bands(rec, pred, k), device), k)
-        scorer.add("oslo_band", torch.from_numpy(full), flow, extra)
+        scorer.add(f"{name}_band", torch.from_numpy(full), flow, extra)
         rows = np.arange(h, dtype=np.float32)[:, None]
         clamped = wrap_du(np.asarray(flow, dtype=np.float32), w)
         clamped[..., 1] = np.clip(rows + clamped[..., 1], -0.5, h - 0.5) - rows
         scorer.add("gt_clamped", torch.from_numpy(clamped), flow, extra)
         if (i + 1) % 50 == 0:
-            print(f"test pair {i + 1}: oslo {scorer.per_pair['oslo'][-1]:.2f} "
-                  f"band {scorer.per_pair['oslo_band'][-1]:.2f} ({time.time() - start:.0f}s)", flush=True)
-    summary = scorer.summary(base_row="oslo")
-    print(f"\nP6 polar-band head (K={k} rows, {n_params} params, {args.steps} steps) on {args.init_checkpoint}. "
+            print(f"test pair {i + 1}: {name} {scorer.per_pair[name][-1]:.2f} "
+                  f"band {scorer.per_pair[name + '_band'][-1]:.2f} ({time.time() - start:.0f}s)", flush=True)
+    summary = scorer.summary(base_row=name)
+    print(f"\nP6 polar-band head (K={k} rows, {n_params} params, {args.steps} steps) on {name} {ckpt_name}. "
           + C.REFERENCE)
     scorer.print_table(summary, extra_cols=[("band", "official_band_epe"),
                                             ("band_in", "official_band_inraster_epe")])

@@ -1294,3 +1294,50 @@ Reading: the soft gate beats the oracle because it also shrinks wrong moving and
 | `raft_pretrain/raft_small_c360_ft_s7` | `oslo_pretrain_ft/noso3_erppx_s7` |
 
 Reading: compare gated OSLO with gated RAFT per pair. The gate improves OSLO's standing only if the gated gap is smaller than the ungated gap.
+
+### 11.25 Box report 2026-11-09: P6 r2, P7 RAFT control, P8 threshold control
+
+Only the last checkpoint of each job is in the report tail. Still to read from `outputs/proposals_probes/`: P6 s7, P7/P7r fs30k s7/s11, P8 OSLO rows.
+
+**P6 r2 (`overshoot_band_head_r2`)**: the memory fix worked (RSS flat at 2.3 GB). fs30k s11, flowscape:test:
+
+| row | EPE all | pol | in-raster | overshoot | band | band in-raster |
+|---|---|---|---|---|---|---|
+| oslo | 8.88 | 16.27 | 5.14 | 123.1 | 51.9 | 27.7 |
+| oslo_band | 4.87 (−45 %) | 8.24 | 4.25 | 23.8 | 19.8 | 18.4 |
+| gt_clamped (floor) | 0.41 | 0.82 | 0.00 | 13.0 | 3.3 | 0.00 |
+
+Reading: a 595k-param head on the K=32 polar rows takes OSLO's overshoot error from 123 px to 24 px, at RAFT-small's level (27-28 px ungated), and also lowers in-raster band error. The head is OSLO-only: the same head on RAFT-small is needed before any comparison.
+
+**P7r (`static_gate_raft_control`)**: raft_small_c360_ft s7, pair of OSLO pretrain_ft s7:
+
+| model | base | gate_soft | change | oracle_gate |
+|---|---|---|---|---|
+| OSLO pretrain_ft s7 | 8.52 | 7.03 | −17.5 % | −6.7 % |
+| RAFT-small c360_ft s7 | 6.54 | 3.66 | −44.0 % | −24.4 % |
+
+Gap OSLO − RAFT: 1.99 px ungated, 3.37 px gated. Per the 11.24 reading, the gate does not improve OSLO's standing on this pair; it helps RAFT more. RAFT-small's static-pixel EPE is 9.60 px (OSLO 5.68), and the gate takes it to 2.02. The gate is a generic post-hoc head, not an OSLO property.
+
+**P8 (`static_gate_mag_sweep`)**: on RAFT c360_ft s7, the threshold picked on train (tau* = 0.5 deg, s* = 1) gives 6.82 px, f = −0.10; no tau on test does better than base. Per the 11.23 queue reading (f ≤ 0.5), the learned gate does work that a |pred| threshold does not.
+
+**11.25 continued: remaining log tails (all checkpoints now read).**
+
+P7 pre-registered criterion (fs30k, 11.22): passed on both seeds.
+
+| fs30k | OSLO base | OSLO gate_soft | moving | RAFT-small base | RAFT-small gate_soft | gap ungated | gap gated |
+|---|---|---|---|---|---|---|---|
+| s7 | 8.55 | 6.60 (−22.8 %) | −10.5 % | 8.09 | 4.41 (−45.5 %) | 0.47 | 2.20 |
+| s11 | 8.88 | 6.88 (−22.5 %) | −9.8 % | 6.76 | 3.94 (−41.8 %) | 2.12 | 2.94 |
+| pretrain_ft s7 | 8.52 | 7.03 (−17.5 %) | −13.0 % | 6.54 | 3.66 (−44.0 %) | 1.99 | 3.37 |
+
+The gap OSLO − RAFT widens on all three pairs (mean 1.53 → 2.84 px). RAFT-small's static-pixel EPE is 9.1-11.4 px vs OSLO 5.7-9.4; the gate removes that error on both, and RAFT has more of it. The gate is a generic head and does not help OSLO's standing.
+
+P8, f = share of the gate_soft gain recovered by the threshold picked on train: OSLO fs30k s7 0.24, s11 0.21, pretrain_ft s7 0.06; RAFT c360_ft s7 −0.10 (RAFT fs30k rows also negative). All ≤ 0.5: the learned gate is not a |pred| threshold. The threshold also raises equator EPE (1.63 → 2.23 on s7).
+
+P6 s7: 8.55 → 5.15 px (−39.8 %), overshoot 103 → 22.9 px. Two seeds: OSLO + band head 5.15 / 4.87 px. The ungated OSLO − RAFT gap (0.5-2.1 px) is about the size of the overshoot excess alone (3.17 % × (103-123 − 27-28 px) ≈ 2.4-3.0 px), so the band head removes OSLO's specific deficit. OSLO + band beats ungated RAFT-small (8.09 / 6.76) but not gated RAFT-small (4.41 / 3.94). Open: band head on RAFT-small, and band + gate stacked on both.
+
+### 11.26 Both heads on both models, then stacked (`band_gate_both_models`, queued 2026-11-09)
+
+- `p6r`: `p6_polar_band_head.py --predictor raft` trains the same band head (same recipe: 1000 train pairs, 6000 steps) on frozen RAFT-small fs30k s7/s11. Rows are named `raft` / `raft_band`.
+- `p9`: `p9_band_gate_stack.py`, no training. It loads `band_head.pt` (p6/p6r) and `gate_net.pt` (p7/p7r) of the same checkpoint and scores base, band, gate, stack (band head on the K polar rows, gate_soft elsewhere) and stack_all (gate on every pixel), for OSLO and RAFT-small fs30k s7/s11.
+- Pre-registered reading on `stack`: OSLO ahead if its EPE < RAFT-small's on both seeds; RAFT ahead if the reverse; otherwise a tie. stack_all is reported but not used for the reading.
