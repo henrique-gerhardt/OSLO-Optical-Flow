@@ -1267,3 +1267,30 @@ Other jobs of the same report:
 
 - Job `static_gate_learned` (P7, `experiments/proposals/p7_learned_gate.py`), right after `overshoot_band_head`: frozen OSLO (fs30k s7, s11, pretrain_ft s7) + small ERP CNN at H/4 giving a per-pixel static probability g; gated flow = pred * (1 - g). Loss = in-raster EPE + 0.1 BCE; overshoot pixels left to P6 but still scored. Full flowscape:test, ~3-4 h.
 - Reading on fs30k s7: success if EPE <= -9 % (half the oracle -18.7 %) with moving-pixel EPE up <= 2 %; kill if no better than mag_gate_0.5 (-3.3 %).
+
+### 11.23 Box report 2026-11-08: P6 OOM, P7 first checkpoint
+
+- **P6 (`overshoot_band_head`)** was OOM-killed on both checkpoints at ~1300 cached train pairs (26 GB RSS against the 25 GB cap). The band cache is ~1.2 MB/pair, so ~20 MB/pair is retained elsewhere. Fix: preallocated cache, `malloc_trim` and an RSS line every 200 pairs, 1000 train pairs. Requeued as `overshoot_band_head_r2`. If the RSS line still grows ~20 MB/pair, the leak is in the OSLO runner or the shard iterator.
+- **P7 (`static_gate_learned`)** finished. Only `oslo_pretrain_ft` s7 is in the report tail; the two fs30k rows (the pre-registered checkpoint) are still to be read from `proposals_probes/p7_gate_scale_fs30k_noso3_erppx_s{7,11}.log`.
+
+| pretrain_ft s7, flowscape:test | EPE all | in-raster | overshoot | static | moving |
+|---|---|---|---|---|---|
+| base | 8.52 | 4.78 | 122.9 | 5.68 | 9.53 |
+| gate_soft | 7.03 (−17.5 %) | 4.20 | 93.5 | 3.48 | 8.29 (−13.0 %) |
+| gate_hard | 7.52 (−11.8 %) | 4.24 | 107.8 | 3.76 | 8.85 |
+| oracle_gate | 7.95 (−6.7 %) | 4.32 | 118.9 | 3.50 | 9.53 |
+| mag_gate_0.5 | 8.36 (−1.9 %) | 4.61 | 123.0 | 4.92 | 9.58 |
+
+Reading: the soft gate beats the oracle because it also shrinks wrong moving and overshoot predictions (overshoot −29 px, moving −13 %). It acts as a learned confidence shrinkage, not only a static detector. About 60 % of the gain comes from the 3 % overshoot pixels. The gate is a trained head on OSLO alone. Before any comparison with RAFT-small (6.32 px matched), the same head must be applied to RAFT-small.
+
+### 11.24 P7 RAFT control queued (`static_gate_raft_control`)
+
+`p7_learned_gate.py --predictor raft --tv-checkpoint <raft_erp.pt>` trains the same gate (same recipe, 1500 train pairs, 4000 steps, full flowscape:test) on a frozen trained RAFT-small. The checkpoints are the matched pairs of the OSLO runs:
+
+| RAFT-small | OSLO pair |
+|---|---|
+| `scale_fs30k_planar/raft_small_fs_s7` | `scale_fs30k/noso3_erppx_s7` |
+| `scale_fs30k_planar/raft_small_fs_s11` | `scale_fs30k/noso3_erppx_s11` |
+| `raft_pretrain/raft_small_c360_ft_s7` | `oslo_pretrain_ft/noso3_erppx_s7` |
+
+Reading: compare gated OSLO with gated RAFT per pair. The gate improves OSLO's standing only if the gated gap is smaller than the ungated gap.

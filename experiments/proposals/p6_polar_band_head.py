@@ -27,6 +27,8 @@ Overshoot still > 80 px means the GT there is not learnable from these inputs.
 from __future__ import annotations
 
 import argparse
+import ctypes
+import gc
 import math
 import sys
 import time
@@ -43,6 +45,20 @@ from spherical_flow.erp_readout import bilinear_node_weights, erp_pixel_directio
 from spherical_flow.shard_dataset import _to_chw_free_float, sample_pair_to_nodes
 
 FLOW_NORM = 32.0
+
+try:
+    _LIBC = ctypes.CDLL("libc.so.6")
+except OSError:
+    _LIBC = None
+
+
+def _rss_gb() -> float:
+    """Current resident memory in GB (Linux), 0 elsewhere."""
+    try:
+        with open("/proc/self/status") as fh:
+            return next(int(line.split()[1]) for line in fh if line.startswith("VmRSS")) / 2**20
+    except (OSError, StopIteration):
+        return 0.0
 
 
 def build_oslo_runner(args):
@@ -210,14 +226,25 @@ def main():
 
     targs = argparse.Namespace(**{**vars(args), "split": args.train_split, "sources": args.train_sources,
                                   "stride": args.train_stride, "max_pairs": args.train_pairs})
-    train, k, start = [], None, time.time()
+    train, k, start, slots = [], None, time.time(), None
     for i, rec in enumerate(C.iter_pairs(targs)):
         pred = oslo(rec).numpy()
         k = pred.shape[0] // 16
-        train.extend(bands(rec, pred, k))
+        for b in bands(rec, pred, k):
+            if slots is None:  # one contiguous block per field, so the cache does not fragment the heap
+                n = 2 * args.train_pairs
+                slots = {key: np.empty((n,) + b[key].shape, b[key].dtype) for key in ("f1", "f2", "pred", "gt")}
+            j = len(train)
+            for key in ("f1", "f2", "pred", "gt"):
+                slots[key][j] = b[key]
+            train.append({**{key: slots[key][j] for key in ("f1", "f2", "pred", "gt")}, "flag": b["flag"]})
+        del rec, pred
         if (i + 1) % 200 == 0:
-            print(f"cached {i + 1} train pairs ({time.time() - start:.0f}s)", flush=True)
-    print(f"train bands {len(train)} (K={k} rows)", flush=True)
+            gc.collect()
+            if _LIBC is not None:
+                _LIBC.malloc_trim(0)
+            print(f"cached {i + 1} train pairs, rss {_rss_gb():.1f} GB ({time.time() - start:.0f}s)", flush=True)
+    print(f"train bands {len(train)} (K={k} rows), rss {_rss_gb():.1f} GB", flush=True)
 
     head = BandHead(c=args.width).to(device)
     n_params = sum(t.numel() for t in head.parameters())

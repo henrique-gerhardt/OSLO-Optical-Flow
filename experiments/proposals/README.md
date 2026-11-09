@@ -15,6 +15,7 @@ viewport EPE + near-nadir overshoot split). Box runner: `scripts/proposals_probe
 | 5 | `p5_waft_toy.py` | small isolated training | Does a cost-volume-free (warp + NESTED window attention) update learn on HEALPix? | waft >= corr within noise, esp. 0-5 deg and poles |
 | 6 | `p6_polar_band_head.py` | frozen OSLO + small trained head | Can the near-nadir overshoot pixels (whole matched-30k gap) be learned with an ERP band head on the H/16 polar rows? | success if overshoot <= 40 px and in-raster within 0.05 px; > 80 px = not learnable from these inputs |
 | 7 | `p7_learned_gate.py` | frozen OSLO + small trained gate | How much of the P3 oracle static-gate ceiling does a learned per-pixel gate recover? | on scale_fs30k s7: success if EPE <= -9 % (half the oracle -18.7 %) with moving-pixel EPE up <= 2 %; kill if no better than mag_gate_0.5 (-3.3 %) |
+| 8 | `p8_mag_sweep.py` | frozen predictor, no training | Is the p7 learned gate just a tuned threshold on the predicted motion? | f = share of the p7 gate_soft gain recovered by mag_train (tau picked on train); f >= 0.75 = report the threshold; f <= 0.5 = the network does work |
 
 ## Local results (Mac, raw FlowScape test, small samples; box runs pending)
 
@@ -67,3 +68,19 @@ ERP-through-nodes 10.56 px overall, but 3.1 of the 3.6 px gap is the overshoot r
 **P6, local smoke only (Stage A, 3 pairs)**: pipeline runs; gt_clamped floor 0.28 px overall, ~10 px in overshoot. Overshoot |du| median ~130 px: the loss is longitude near the pole, not the vertical clamp (clamp alone costs 13.5 px there). Box job `overshoot_band_head`.
 
 **P7, local smoke only (Stage A, 3 pairs, 40 steps)**: pipeline runs; the numbers carry no signal. Read the `moving` column. A soft gate can also shrink moving flow, and that gain is magnitude calibration, not static detection. Box job `static_gate_learned`.
+
+**P7, box (full flowscape:test). Pre-registered success on scale_fs30k s7, replicated on s11.**
+
+| checkpoint | base | gate_soft | gate_hard | oracle_gate | mag_gate_0.5 | moving (soft) | static base -> soft (oracle) |
+|---|---|---|---|---|---|---|---|
+| scale_fs30k s7 | 8.55 | 6.60 (-22.8 %) | 6.67 (-22.0 %) | 7.19 (-15.9 %) | 8.29 (-3.1 %) | -10.5 % | 8.71 -> 3.78 (3.50) |
+| scale_fs30k s11 | 8.88 | 6.88 (-22.5 %) | 7.16 (-19.4 %) | 7.33 (-17.5 %) | 8.59 (-3.2 %) | -9.8 % | 9.44 -> 4.18 (3.50) |
+| oslo_pretrain_ft s7 | 8.52 | 7.03 (-17.5 %) | 7.52 (-11.8 %) | 7.95 (-6.7 %) | 8.36 (-1.9 %) | -13.0 % | 5.68 -> 3.48 (3.50) |
+
+- Two effects add up. The gate recovers almost all of the oracle's static gain. It also zeroes or shrinks moving pixels where OSLO's prediction is worse than zero (gate_hard alone: moving -6 to -10 %). The second effect is abstention or confidence, not static detection.
+- fs30k s7/s11 gated: in-raster 3.73 / 3.62 px, SEPE 9.44 / 9.10, overshoot still 94 / 106 px.
+- The proxy comparison is weak. The learned gate's AUROC (0.876) barely beats -|pred| (0.865-0.872), and the proxy was only swept up to 0.5 deg. A tuned magnitude threshold could recover much of the static part without a network.
+- Not yet a claim about OSLO vs RAFT: RAFT-small gets the same head in `static_gate_raft_control`.
+- P6 first run: both checkpoints stop at 1200 cached pairs (the OOM). The rerun `overshoot_band_head_r2` has no log yet.
+
+**P8, local smoke only (Stage A, 3 pairs)**: pipeline runs, tau* = 1 deg on 4 train pairs; the numbers carry no signal. Box job `static_gate_mag_sweep` (after the RAFT control, so the p7r JSONs exist).

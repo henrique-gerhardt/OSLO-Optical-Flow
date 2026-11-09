@@ -25,6 +25,11 @@ Pre-registered reading, on the scale_fs30k s7 checkpoint:
   promising  between the proxy and half of the oracle gain.
   kill       no better than mag_gate_0.5.
 The other checkpoints say whether the gain depends on how badly a checkpoint does on static pixels.
+
+RAFT control (--predictor raft --tv-checkpoint ...): the same gate on a frozen trained RAFT-small
+(raft_erp.pt, full-res ERP, identity transform, as in its benchmark row). The gate is a head that
+any predictor can take, so an OSLO-vs-RAFT comparison is only fair with both gated. Reading: if the
+gated OSLO-RAFT gap stays >= the ungated gap, the gate does not change the comparison.
 """
 
 from __future__ import annotations
@@ -42,6 +47,7 @@ import torch.nn.functional as F
 import common as C
 from p3_gate_probe import auroc
 from p6_polar_band_head import FLOW_NORM, CConv, build_oslo_runner, wrap_du
+from spherical_flow.raft_adapter import load_raft_model, predict_raft_flow
 
 DOWN = 4  # gate-net input resolution = output / DOWN
 LOSS_DOWN = 2  # training loss is computed on a point-sampled grid at output / LOSS_DOWN
@@ -125,10 +131,30 @@ def collate(batch, device):
     return x, pred, gt, (m & 1).bool()[:, None], (m & 2).bool()[:, None]
 
 
+def build_raft_runner(args):
+    """Frozen trained TorchVision RAFT (raft_erp.pt) -> function(record) -> ERP flow [H, W, 2]."""
+    device = torch.device(args.device)
+    raft, transforms, _, _ = load_raft_model(args.raft_model, "none", device)
+    raft.load_state_dict(torch.load(args.tv_checkpoint, map_location=device)["model"])
+    raft.eval()
+
+    def run(rec):
+        f1 = torch.from_numpy(np.ascontiguousarray(rec["frame1"])).permute(2, 0, 1).contiguous()
+        f2 = torch.from_numpy(np.ascontiguousarray(rec["frame2"])).permute(2, 0, 1).contiguous()
+        with torch.no_grad():
+            flow = predict_raft_flow(raft, transforms, f1[None], f2[None], device, "identity")
+        return flow[0].permute(1, 2, 0).float().cpu().contiguous()
+
+    return run
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     C.add_common_args(p)
-    p.add_argument("--init-checkpoint", required=True)
+    p.add_argument("--predictor", default="oslo", choices=["oslo", "raft"])
+    p.add_argument("--init-checkpoint", default="", help="OSLO checkpoint (--predictor oslo)")
+    p.add_argument("--tv-checkpoint", default="", help="trained RAFT raft_erp.pt (--predictor raft)")
+    p.add_argument("--raft-model", default="raft_small", choices=["raft_small", "raft_large"])
     p.add_argument("--pyramid-cache", default="/outputs/pyramid_cache")
     p.add_argument("--eval-iters", type=int, default=12)
     p.add_argument("--static-deg", type=float, default=0.25)
@@ -146,7 +172,15 @@ def main():
     torch.manual_seed(args.seed)
     rng = np.random.default_rng(args.seed)
     device = torch.device(args.device)
-    oslo = build_oslo_runner(args)
+    if args.predictor == "raft":
+        if not args.tv_checkpoint:
+            raise SystemExit("--predictor raft needs --tv-checkpoint")
+        oslo = build_raft_runner(args)
+    else:
+        if not args.init_checkpoint:
+            raise SystemExit("--predictor oslo needs --init-checkpoint")
+        oslo = build_oslo_runner(args)
+    ckpt_name = args.tv_checkpoint if args.predictor == "raft" else args.init_checkpoint
 
     targs = argparse.Namespace(**{**vars(args), "split": args.train_split, "sources": args.train_sources,
                                   "stride": args.train_stride, "max_pairs": args.train_pairs})
@@ -214,7 +248,7 @@ def main():
     base = summary["base"]["official_all_epe"]
     print(f"\nP7 learned static gate ({n_params} params, {args.steps} steps; static = GT < {args.static_deg} deg; "
           f"AUROC learned {np.nanmean(auc_learned):.3f} vs -|pred| {np.nanmean(auc_mag):.3f}) on "
-          f"{args.init_checkpoint}. " + C.REFERENCE)
+          f"{args.predictor} {ckpt_name}. " + C.REFERENCE)
     scorer.print_table(summary, extra_cols=[("static", "official_static_epe"), ("moving", "official_moving_epe")])
     mov = summary["base"]["official_moving_epe"]
     for row, m in summary.items():
