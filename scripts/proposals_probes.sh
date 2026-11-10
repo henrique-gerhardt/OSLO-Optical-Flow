@@ -93,6 +93,16 @@ for p in $PROBES; do
           run "p9_stack_$tag" p9_band_gate_stack.py "${common[@]}" --stride 1 --max-pairs 100000 "${pred[@]}" \
             --device "$DEV" --band-head "$band/band_head.pt" --gate-net "$gate/gate_net.pt"
         done ;;
+    p10) for ck in $P6_CKPTS $P6R_CKPTS; do  # frame prediction on HEALPix nodes from each model's flow, no training
+          [ -f "$ck" ] || { echo "missing $ck"; continue; }
+          tag="$(basename "$(dirname "$(dirname "$ck")")")_$(basename "$(dirname "$ck")")"
+          case "$ck" in
+            *raft_erp.pt) pred=(--predictor raft --raft-model raft_small --tv-checkpoint "$ck") ;;
+            *) pred=(--predictor oslo --init-checkpoint "$ck" --pyramid-cache "${OUTPUT_DIR:-/outputs}/pyramid_cache") ;;
+          esac
+          run "p10_pred_$tag" p10_prediction_probe.py "${common[@]}" --stride 1 --max-pairs 100000 "${pred[@]}" \
+            --device "$DEV" --grid-resolution "${P10_GRID:-8}"
+        done ;;
   esac
 done
 exit 0

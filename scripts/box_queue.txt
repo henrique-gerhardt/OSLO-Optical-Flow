@@ -230,6 +230,14 @@ static_gate_mag_sweep | scripts/proposals_probes.sh | PROBES=p8
 # 1) p6r: the same band head on RAFT-small fs30k s7/s11. 2) p9: no training, band head + gate stacked on OSLO and RAFT-small fs30k s7/s11.
 # Reading on p9 stack: OSLO ahead if its stacked EPE < RAFT-small's on both seeds; RAFT ahead if the reverse; else tie.   ~2-2.5 h
 band_gate_both_models | scripts/proposals_probes.sh | PROBES=p6r p9
+# --- PREDICTION PROBE 11.27 (2026-11-09): is OSLO's flow as good a motion field as RAFT-small's for predicting a frame on HEALPix nodes? (experiments/proposals/p10_prediction_probe.py) ---
+# Direction under test: flow as the motion of an on-sphere video codec (reports/Horizontes HEALPix para fluxo óptico.md). No training.
+# Both frames sampled on an r8 HEALPix grid; frame 1 predicted by warping frame 2 with zero / GT / the model's flow; residual MSE over nodes (equal area).
+# OSLO and RAFT-small fs30k s7/s11, full flowscape:test. Sanity: the gt row must be below zero.
+# Reading on the pred row, MSE all: alive if OSLO <= RAFT-small on both seeds; dead if RAFT-small lower by >= 5 % on both seeds; else tie.
+# Matched rate: gt_rK / pred_rK rows reduce each field to a HEALPix r6 / r5 / r4 motion field (49152 / 12288 / 3072 vectors). Same thresholds on
+# OSLO pred (native r6) vs RAFT-small pred_r6: RAFT ahead only at full resolution = its advantage is field density; ahead at r6 too = direction closed.   ~2-3 h
+prediction_probe_both_models | scripts/proposals_probes.sh | PROBES=p10
 # --- RAFT_PARITY 11.16 (2026-11-03): finish the budget test before the combined run ---
 # 30k result: both models gain ~0.7 px from 3x steps; gap 1.39 -> 1.13 px, but OSLO has one seed and RAFT seeds differ by 1.3 px.
 # 1) OSLO seed 11 at 30k   ~8.4 h
