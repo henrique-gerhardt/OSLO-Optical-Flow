@@ -69,6 +69,16 @@ def yaw_matrix(angle: torch.Tensor | float, dtype: torch.dtype = torch.float32) 
     return rotation_matrix(axis, angle_t)
 
 
+def rotation_with_angle(rotation: torch.Tensor, angle_deg: float) -> torch.Tensor:
+    """The rotation about the axis of ``rotation`` with a prescribed angle (degrees)."""
+    axis = torch.stack([rotation[2, 1] - rotation[1, 2], rotation[0, 2] - rotation[2, 0],
+                        rotation[1, 0] - rotation[0, 1]])
+    if float(axis.norm()) < 1e-6:  # angle 0 or 180 deg: the axis is not recoverable this way
+        axis = torch.tensor([1.0, 0.0, 0.0], dtype=rotation.dtype, device=rotation.device)
+    return rotation_matrix(axis, torch.tensor(math.radians(angle_deg), dtype=rotation.dtype,
+                                              device=rotation.device))
+
+
 def sample_rotation(
     generator: torch.Generator,
     *,
@@ -95,8 +105,10 @@ def sample_rotation(
     if axis_mode == "vertical":
         axis = torch.tensor([0.0, 0.0, 1.0 if float(axis[2]) >= 0 else -1.0],
                             device=device, dtype=dtype)
+    elif axis_mode == "horizontal":  # a pure tilt (pitch/roll mix): axis in the horizontal plane
+        axis = torch.stack([axis[0], axis[1], torch.zeros((), device=device, dtype=dtype)])
     elif axis_mode != "random":
-        raise ValueError(f"axis_mode must be 'random' or 'vertical', got {axis_mode!r}")
+        raise ValueError(f"axis_mode must be 'random', 'vertical' or 'horizontal', got {axis_mode!r}")
     axis = axis / axis.norm().clamp_min(1e-8)
     max_angle = math.radians(max_angle_deg)
     if uniform_so3:

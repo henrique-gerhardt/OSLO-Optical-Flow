@@ -18,6 +18,7 @@ viewport EPE + near-nadir overshoot split). Box runner: `scripts/proposals_probe
 | 8 | `p8_mag_sweep.py` | frozen predictor, no training | Is the p7 learned gate just a tuned threshold on the predicted motion? | f = share of the p7 gate_soft gain recovered by mag_train (tau picked on train); f >= 0.75 = report the threshold; f <= 0.5 = the network does work |
 | 9 | `p9_band_gate_stack.py` | frozen predictor + trained heads, no training | Who is ahead once both models carry the P6 band head and the P7 gate? | on `stack`, fs30k s7/s11: OSLO ahead if its EPE < RAFT-small's on both seeds; RAFT ahead if the reverse; else tie |
 | 10 | `p10_prediction_probe.py` | frozen predictor, no training | Is the model's flow a good motion field for predicting a frame on HEALPix nodes (on-sphere codec direction)? | residual MSE over r8 nodes, fs30k s7/s11: alive if OSLO <= RAFT-small on both seeds; dead if RAFT-small lower by >= 5 % on both; else tie. Same thresholds at matched rate: OSLO `pred` (native r6) vs RAFT-small `pred_r6` |
+| 11 | `p11_so3_finetune_probe.py` | released PriOr-RAFT, short fine-tune | Does rotation in training make a released in-domain model orientation-robust? | rotated geodesic error after the `so3` arm: falls >= 50 % with upright up <= 25 % = works; falls < 20 % = a short fine-tune is not enough |
 
 ## Local results (Mac, raw FlowScape test, small samples; box runs pending)
 
@@ -102,3 +103,53 @@ ERP-through-nodes 10.56 px overall, but 3.1 of the 3.6 px gap is the overshoot r
 **P10, local smoke only (3 pairs; not the matched pair, no reading).** Pipeline runs for the three predictors. The GT closes the zero-flow residual (MSE 178.6 -> 62.7, 8-bit units); a half-pixel offset in either axis and the negated flow are both worse at the equator, so the sampling and the flow direction are right. Stage A OSLO (out of domain) closes 84.6 % of the zero-to-GT gap; frozen pretrained RAFT-small C_T_V2 closes 106.9 %, i.e. it goes below the GT residual. The GT is not a strict ceiling: at the poles it leaves 53.7 against 27.6 for RAFT-small and 39.4 for OSLO, and the offset test is flat there. OSLO's native node read and its ERP readout give the same residual (80.54 vs 80.53). Overshoot nodes are 0.2 % of the sphere area (3.17 % of ERP pixels). Box job `prediction_probe_both_models`.
 
 Matched-rate rows (same 3 pairs): each field is reduced to an r6 / r5 / r4 HEALPix motion field (49152 / 12288 / 3072 vectors) and read back at the grid nodes. The reduction costs almost nothing: GT 62.7 -> 64.2 / 66.1 / 67.9, RAFT-small 54.6 -> 55.0 / 55.3 / 54.8, OSLO 80.5 -> 80.5 / 80.2 / 79.7. On these pairs the motion field is smooth enough that 3072 vectors carry it, so field density is not what separates the two models, and the operator itself is not lossy (OSLO pred_r6 = pred). Still not the matched pair.
+
+**Box 2026-11-09 `band_gate_both_models`: RAFT-small rows only (the OSLO p9 and p6r tables were outside the report tail).**
+
+| RAFT-small fs30k | base | band | gate | stack | stack_all | overshoot base -> band | in-raster base -> band |
+|---|---|---|---|---|---|---|---|
+| s7 | 8.09 | 5.00 (-38.2 %) | 4.41 | **3.93** (-51.4 %) | 4.29 | 28.5 -> 18.1 | 7.42 -> 4.57 |
+| s11 | 6.76 | 4.37 (-35.4 %) | 3.94 | **3.62** (-46.4 %) | 3.90 | 27.1 -> 15.9 | 6.10 -> 3.99 |
+
+- The band head helps RAFT-small almost as much as OSLO (OSLO -39.8 / -45.2 %), mostly in-raster band rows (42.1 -> 17.4 px). Polar ERP rows are hard for both models, not only for OSLO's readout.
+- Band-only gap OSLO - RAFT: s7 5.15 vs 5.00 (+0.15), s11 4.87 vs 4.37 (+0.50). It was 0.47 / 2.12 ungated, so the band head narrows the gap but RAFT stays ahead on both seeds.
+- stack_all is worse than stack on RAFT: the gate on the band rows undoes part of the band head.
+- Reading pending: OSLO stack < 3.93 (s7) and < 3.62 (s11) is needed for "OSLO ahead".
+
+**P9 verdict (2026-11-10): RAFT ahead on both seeds (pre-registered reading on `stack`).**
+
+| fs30k | OSLO base | OSLO stack | RAFT-small base | RAFT-small stack | gap base | gap stack |
+|---|---|---|---|---|---|---|
+| s7 | 8.55 | 4.26 | 8.09 | 3.93 | +0.47 | +0.33 |
+| s11 | 8.88 | 4.22 | 6.76 | 3.62 | +2.12 | +0.60 |
+
+- With both heads on both models, RAFT-small is ahead on almost every column:
+  - in-raster 3.47 / 3.22 vs 3.65 / 3.58;
+  - overshoot 18.1 / 15.9 vs 22.9 / 23.8;
+  - equator, SEPE, cube viewport and both displacement bins.
+- Static pixels tie (OSLO 1.95 / 2.10, RAFT 2.07 / 1.98). The remaining gap is in moving pixels (OSLO 5.08 / 4.97, RAFT 4.59 / 4.21).
+- Before the heads, OSLO had the lower in-raster error in the band rows (27.4 / 27.7 vs 46.6 / 38.6 px). The band head brings both to about 17-18 px, so that edge disappears.
+- The heads narrow the matched gap (mean 1.29 -> 0.47 px) but do not flip it. Both are generic post-hoc corrections, not OSLO properties. This line is closed: report them as evaluation/engineering findings, not as a method contribution.
+
+**P10 verdict (box 2026-11-10): dead on both seeds (pre-registered reading on `pred`, MSE over r8 nodes, full flowscape:test, 1386 pairs).**
+
+| fs30k | zero | gt | OSLO pred | RAFT-small pred | RAFT lower by | RAFT pred_r6 (matched rate) | RAFT lower by |
+|---|---|---|---|---|---|---|---|
+| s7 | 258.03 | 86.92 | 104.08 | **86.29** | 17.1 % | 86.03 | 17.3 % |
+| s11 | 258.03 | 86.92 | 105.51 | **90.44** | 14.3 % | 90.09 | 14.6 % |
+
+- Both readings fire "dead": full resolution and matched rate (OSLO native r6 against RAFT-small reduced to r6). The reduction operator is not lossy: OSLO pred_r6 is 103.79 / 105.30, against pred 104.08 / 105.51.
+- Gap closed (zero to GT): OSLO 90.0 / 89.1 %, RAFT-small 100.4 / 97.9 %.
+- Field density does not separate the models. RAFT-small down to r4 (3072 vectors) is 86.32 / 90.23, still 17 / 14 % below OSLO at its native r6.
+- Poles tie: OSLO 74.4 / 75.1, RAFT-small 73.5 / 75.8. Both are below the GT residual (79.4).
+- The gap is at the equator (116.3 / 118.0 vs 91.6 / 96.5), in moving nodes (125.2 / 126.4 vs 104.2 / 109.3) and in static nodes (39.7 / 41.9 vs 31.7 / 32.9). On static nodes OSLO is above the GT residual (36.5) and RAFT-small below it, so OSLO's spurious small motion costs residual where the official EPE showed a tie.
+- Overshoot nodes are 0.3 % of the sphere area, so this metric does not reward the readout fix of P6/P9.
+- Verdict: the on-sphere codec direction is closed. On a HEALPix-native consumer that weights equal-area samples, the matched planar model still gives the better motion field, and rate does not rescue OSLO.
+
+**P11, local (Mac CPU, 16 test pairs, 300 batch-1 steps; plan in `docs/plans/ORIENTATION_ROBUSTNESS.md`).**
+
+- Released PriOr-RAFT: 0.131 deg upright, 0.791 deg under a Haar rotation (6.0x).
+- After the `so3` arm: rotated 0.568 deg (-28.3 %), upright 0.142 deg (+8.3 %). Between the two thresholds: right direction, criterion not met at this budget.
+- Control arm without rotation, 200 steps: rotated -6.1 %, upright +2.6 % (the `so3` arm at 200: -28.2 % / +7.2 %). The gain comes from the rotation.
+- Head ceilings on PriOr-RAFT (24 pairs): the oracle static gate makes it worse (2.24 -> 2.73 px), the oracle band head gains 10 % at most. The heads do not transfer to a released model.
+- Box job `so3_finetune_prior`: both arms at 5000 steps, 100 test pairs.

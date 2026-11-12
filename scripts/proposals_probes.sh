@@ -103,6 +103,13 @@ for p in $PROBES; do
           run "p10_pred_$tag" p10_prediction_probe.py "${common[@]}" --stride 1 --max-pairs 100000 "${pred[@]}" \
             --device "$DEV" --grid-resolution "${P10_GRID:-8}"
         done ;;
+    p11) prior="${PRIOR_CKPT:-${OUTPUT_DIR:-/outputs}/prior_weights/FlowScape-final.pth}"  # SO(3) fine-tune of released PriOr-RAFT
+        [ -f "$prior" ] || { echo "missing $prior"; continue; }
+        for arm in so3 ctrl; do
+          run "p11_so3ft_$arm" p11_so3_finetune_probe.py --shards "$SHARDS" --checkpoint "$prior" --arm "$arm" \
+            --steps "${P11_STEPS:-5000}" --eval-at "${P11_EVAL_AT:-1000,2500}" --eval-pairs 100 --eval-stride 13 \
+            --lr "${P11_LR:-2e-5}" --so3-prob "${P11_SO3_PROB:-0.5}" --device "$DEV"
+        done ;;
   esac
 done
 exit 0

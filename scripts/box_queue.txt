@@ -238,6 +238,26 @@ band_gate_both_models | scripts/proposals_probes.sh | PROBES=p6r p9
 # Matched rate: gt_rK / pred_rK rows reduce each field to a HEALPix r6 / r5 / r4 motion field (49152 / 12288 / 3072 vectors). Same thresholds on
 # OSLO pred (native r6) vs RAFT-small pred_r6: RAFT ahead only at full resolution = its advantage is field density; ahead at r6 too = direction closed.   ~2-3 h
 prediction_probe_both_models | scripts/proposals_probes.sh | PROBES=p10
+# --- ORIENTATION ROBUSTNESS 11.28 (2026-11-11): SO(3) fine-tune of the released PriOr-RAFT (docs/plans/ORIENTATION_ROBUSTNESS.md, experiments/proposals/p11_so3_finetune_probe.py) ---
+# Released PriOr-RAFT loses 4x under a Haar rotation (0.24 -> 1.23 deg). Local CPU probe, 300 batch-1 steps: rotated -28.3 %, upright +8.3 %.
+# Two arms, 5000 batch-1 steps each, lr 2e-5: so3 (Haar rotation with probability 0.5) and ctrl (no rotation). 100 test pairs, upright and rotated, at 0 / 1000 / 2500 / 5000.
+# Reading on the so3 arm at 5000: rotated error <= 1.5x the step-0 upright error with upright up by <= 10 % = remedy works; rotated falls by < 50 % = fine-tuning alone is not enough.
+# The ctrl arm must leave the rotated error within 10 % of step 0. Weights saved as prior_raft_<arm>.pth.   time not measured on the GPU
+so3_finetune_prior | scripts/proposals_probes.sh | PROBES=p11
+# --- ORIENTATION SUITE 11.29 (2026-11-12): is the orientation contingency valid beyond one Haar draw on one dataset? (scripts/orientation_suite.sh, eval only) ---
+# Rows: released PriOr-RAFT and PanoFlow, frozen RAFT-large, the two P11 fine-tuned PriOr-RAFT (if so3_finetune_prior ran), our RAFT-small without / with rotation, RAFT-large SO(3).
+# 1) flowscape:test, 1386 pairs, views upright / haar / yaw (rotation about the vertical axis, angle uniform 0-180).
+#    Reading: yaw changes every row by <= 10 % = the loss is the tilt, not the resampling. P11 so3 row: rotated <= 1.5x the released upright error = remedy holds on the full test set.
+#    roll25 / roll50 = exact circular shift by a quarter / half of the width (yaw of 90 / 180 deg with no resampling). Local, 8 pairs: PriOr-RAFT 0.130 -> 0.225 -> 0.652 deg.
+#    Reading: roll50 >= +100 % on the released rows = the models also depend on the camera heading, and resampling cannot be the cause.
+orient_main | scripts/orientation_suite.sh | VIEWS=upright roll25 roll50 haar yaw
+# 2) dose-response: exact tilt of 15 / 30 / 45 / 90 deg about a random horizontal axis, 400 pairs.
+#    Reading: released in-domain rows rise monotonically with the tilt and frozen RAFT-large stays within 15 % = orientation prior. Loss already >= 50 % at 15 deg = it matters for handheld footage.
+orient_sweep | scripts/orientation_suite.sh | TAG=sweep; MAX_PAIRS=400; VIEWS=upright tilt15 tilt30 tilt45 tilt90
+# 3) other datasets (the released weights are FlowScape-trained, so these are out-of-domain for them): replica360:val, mpf:val, flow360:test, upright / haar / yaw, up to 1000 pairs.
+#    Reading: PriOr-RAFT and PanoFlow lose >= 50 % under haar on at least 2 of 3 while frozen RAFT-large stays within 15 % = the prior is in the weights and follows them to other content;
+#    < 20 % on all 3 = the finding is scoped to FlowScape content. Our RAFT-small without rotation (trained on replica360 + flowscape) is the in-domain row for replica360.
+orient_cross | scripts/orientation_suite.sh | TAG=cross; MAX_PAIRS=1000; SOURCES=replica360:val mpf:val flow360:test; VIEWS=upright roll50 haar yaw
 # --- RAFT_PARITY 11.16 (2026-11-03): finish the budget test before the combined run ---
 # 30k result: both models gain ~0.7 px from 3x steps; gap 1.39 -> 1.13 px, but OSLO has one seed and RAFT seeds differ by 1.3 px.
 # 1) OSLO seed 11 at 30k   ~8.4 h

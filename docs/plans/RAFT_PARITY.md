@@ -1359,3 +1359,34 @@ Local smoke (3 pairs, not the matched pair, no reading): GT 178.6 → 62.7; half
 
 Matched-rate rows on the same 3 pairs: GT 62.7 → 64.2 / 66.1 / 67.9 at r6 / r5 / r4; RAFT-small 54.6 → 55.0 / 55.3 / 54.8; OSLO 80.5 → 80.5 / 80.2 / 79.7. The reduction is nearly free down to 3072 vectors, so on these pairs field density does not separate the models and the operator is not lossy. If the box repeats this on the matched pair, the rate of the motion field cannot rescue the direction: the comparison is decided by the residual alone.
 
+
+**Box result 2026-11-10: dead on both seeds.** MSE over r8 nodes, full flowscape:test:
+
+| fs30k | OSLO `pred` | RAFT-small `pred` | RAFT-small `pred_r6` |
+|---|---|---|---|
+| s7 | 104.08 | 86.29 (−17.1 %) | 86.03 (−17.3 %) |
+| s11 | 105.51 | 90.44 (−14.3 %) | 90.09 (−14.6 %) |
+
+- zero = 258.03 and gt = 86.92 on both runs.
+- The full-resolution reading and the matched-rate reading both fire "dead".
+- The operator is not lossy (OSLO pred_r6 103.79 / 105.30).
+- Poles tie (74.4 / 75.1 vs 73.5 / 75.8).
+- The gap sits at the equator, in moving nodes, and in static nodes (39.7 / 41.9 vs 31.7 / 32.9; GT 36.5).
+- The on-sphere codec direction is closed.
+
+### 11.28 After parity: orientation robustness (2026-11-11)
+
+The direction the work continues with is in `ORIENTATION_ROBUSTNESS.md`: released in-domain models lose 3-4x under a camera rotation, rotation in training removes it in our matched runs (9.3, 10.1), and no 360-flow paper scores rotated test inputs.
+- Local probe P11 (released PriOr-RAFT, 300 batch-1 steps with Haar rotation at probability 0.5, 16 test pairs): rotated 0.791 -> 0.568 deg (-28.3 %), upright 0.131 -> 0.142 deg (+8.3 %).
+- Head ceilings on PriOr-RAFT: oracle static gate worse (2.24 -> 2.73 px), oracle band head -10 %. The heads of 11.25-11.26 do not transfer to a released model.
+- Queued: `so3_finetune_prior` (PROBES=p11), 5000 steps per arm.
+
+### 11.29 Orientation suite: lossless control and tilt sweep (2026-11-12)
+
+Local, Mac CPU, 8 flowscape:test pairs (`ORIENTATION_ROBUSTNESS.md` 4b):
+
+- Exact circular shift by half the width (yaw 180 deg, no resampling): PriOr-RAFT 0.130 -> 0.652 deg (+401 %), frozen RAFT-large 0.571 -> 0.601 deg (+5 %).
+- Tilt of 15 deg: PriOr-RAFT 0.613 deg (+370 %), frozen RAFT-large 0.639 deg (+14 %). Saturates by 45 deg.
+- The yaw control I pre-registered as harmless is not harmless for PriOr-RAFT: the dependence includes the camera heading.
+- New: `--val-roll-frac`, `--val-so3-axis-mode`, `--val-so3-fixed-angle-deg` in `run_raft_shard_baseline.py`; `scripts/orientation_suite.sh`; box jobs `orient_main`, `orient_sweep`, `orient_cross`. The suite script and the new flags have not been run on shards.
+

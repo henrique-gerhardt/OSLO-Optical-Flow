@@ -82,7 +82,7 @@ from spherical_flow.shard_dataset import (
     _to_chw_free_float,
     sample_pair_to_nodes,
 )
-from spherical_flow.so3_augment import sample_rotation, so3_augment_pair
+from spherical_flow.so3_augment import rotation_with_angle, sample_rotation, so3_augment_pair
 from spherical_flow.geometry import equirectangular_pixels_to_unit_vectors
 from spherical_flow.flow360 import bilinear_sample_erp
 
@@ -186,6 +186,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--val-so3-uniform", action="store_true",
                         help="Draw from the Haar measure on SO(3) instead of the axis-uniform, "
                              "angle-uniform schedule the training augmentation uses.")
+    parser.add_argument("--val-so3-axis-mode", default="random",
+                        choices=["random", "vertical", "horizontal"],
+                        help="'vertical' = yaw only (keeps gravity; the control that must be "
+                             "harmless), 'horizontal' = tilt only.")
+    parser.add_argument("--val-so3-fixed-angle-deg", type=float, default=-1.0,
+                        help=">= 0: every rotation has exactly this angle (the axis still comes "
+                             "from --val-so3-axis-mode). For the tilt sweep.")
+    parser.add_argument("--val-roll-frac", type=float, default=0.0,
+                        help="Circular shift of every pair by this fraction of the ERP width "
+                             "(frames, flow and mask): an exact yaw with no resampling. 0.5 = the "
+                             "camera faces backwards. Applied before any --val-so3 rotation.")
     parser.add_argument("--val-so3-seed", type=int, default=1234,
                         help="Rotations come from a dedicated generator advanced once per pair, so "
                              "every predictor run at this seed sees the same rotation sequence.")
@@ -411,6 +422,11 @@ def main() -> None:
     pending: List[dict] = []
     for record in tqdm(iter_source_records(Path(args.shards), sources, args.directions),
                        desc="pairs", unit="pair"):
+        if args.val_roll_frac:
+            shift = int(round(args.val_roll_frac * record["flow"].shape[1]))
+            record = dict(record)
+            for key in ("frame1", "frame2", "flow", "valid"):
+                record[key] = np.roll(np.asarray(record[key]), shift, axis=1)
         frame1_erp = _to_chw_free_float(record["frame1"])
         frame2_erp = _to_chw_free_float(record["frame2"])
         flow_erp = GT_TRANSFORMS[args.gt_transform](
@@ -422,7 +438,10 @@ def main() -> None:
         if args.val_so3_prob > 0.0 and float(
                 torch.rand((), generator=so3_gen)) < args.val_so3_prob:
             rotation = sample_rotation(so3_gen, max_angle_deg=args.val_so3_max_angle_deg,
-                                       uniform_so3=args.val_so3_uniform)
+                                       uniform_so3=args.val_so3_uniform,
+                                       axis_mode=args.val_so3_axis_mode)
+            if args.val_so3_fixed_angle_deg >= 0.0:  # same axis, prescribed angle
+                rotation = rotation_with_angle(rotation, args.val_so3_fixed_angle_deg)
         if rotation is None:
             target = sample_pair_to_nodes(frame1_erp, frame2_erp, flow_erp, valid_erp,
                                           points, basis_east, basis_north)
