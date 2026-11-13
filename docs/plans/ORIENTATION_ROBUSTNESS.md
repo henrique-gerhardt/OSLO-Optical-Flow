@@ -123,6 +123,46 @@ The roll rows of frozen RAFT-large come from a separate run on the raw frames (i
 - Mechanism not established: a learned prior on where the motion is, or the model's seam handling when the direction of travel sits on the seam. WP2.
 - 8 pairs, one machine. Box jobs `orient_main`, `orient_sweep`, `orient_cross` (`scripts/orientation_suite.sh`) repeat this on the full test set, on PanoFlow and our rows, and on replica360 / mpf / flow360.
 
+## 4c. Box results at full scale (2026-11-12/13, `orient_main`, `orient_sweep`, `orient_cross`, `so3_finetune_prior`)
+
+Sphere-mean geodesic error in degrees, r6 nodes, haversine. Zero flow is 3.39-3.40 deg in every flowscape view.
+
+flowscape:test, 1386 pairs (change vs upright in %):
+
+| Row | Upright | Roll W/4 | Roll W/2 | Yaw | Haar |
+|---|---|---|---|---|---|
+| PriOr-RAFT | 0.2412 | 0.3259 (+35) | 0.6869 (+185) | 0.3846 (+59) | 1.2342 (+412) |
+| PanoFlow | 0.2511 | 0.3055 (+22) | 0.2583 (+3) | 0.2754 (+10) | 1.0396 (+314) |
+| frozen RAFT-large | 0.8724 | 0.8777 (+1) | 0.8902 (+2) | 0.8669 (-1) | 0.9277 (+6) |
+| PriOr-RAFT, SO(3) fine-tune (P11) | 0.2589 | 0.3758 (+45) | 0.6410 (+148) | 0.4135 (+60) | 0.7353 (+184) |
+| PriOr-RAFT, control fine-tune | 0.2393 | 0.3380 (+41) | 0.7746 (+224) | 0.4140 (+73) | 1.1698 (+389) |
+| RAFT-small, no rotation (ours) | 0.4818 | 1.5674 (+225) | 1.4845 (+208) | 1.2977 (+169) | 1.7527 (+264) |
+| RAFT-small, SO(3) (ours) | 0.6245 | 0.6673 (+7) | 0.6701 (+7) | 0.6513 (+4) | 0.7721 (+24) |
+| RAFT-large, SO(3) (ours) | 0.5288 | 0.5720 (+8) | 0.5494 (+4) | 0.5429 (+3) | 0.6766 (+28) |
+
+Exact tilt, 400 pairs:
+
+| Row | Upright | 15 deg | 30 deg | 45 deg | 90 deg |
+|---|---|---|---|---|---|
+| PriOr-RAFT | 0.2475 | 0.8712 (+252) | 1.2127 (+390) | 1.3323 (+438) | 1.2621 (+410) |
+| PanoFlow | 0.2569 | 0.7846 (+205) | 1.0534 (+310) | 1.1314 (+340) | 1.0890 (+324) |
+| frozen RAFT-large | 0.8880 | 0.9131 (+3) | 0.9433 (+6) | 0.9537 (+7) | 0.9333 (+5) |
+| PriOr-RAFT, SO(3) fine-tune | 0.2666 | 0.6855 (+157) | 0.8056 (+202) | 0.7871 (+195) | 0.7209 (+170) |
+| RAFT-small, no rotation | 0.5030 | 1.0091 (+101) | 1.3499 (+168) | 1.4383 (+186) | 1.5962 (+217) |
+| RAFT-large, SO(3) | 0.5454 | 0.5872 (+8) | 0.6314 (+16) | 0.6543 (+20) | 0.6892 (+26) |
+
+Readings against what was pre-registered:
+
+- **Tilt: confirmed for both released models.** Monotone to 45 deg, frozen RAFT-large within 7 %. At 15 deg the two released models have lost their whole margin (0.78-0.87 vs 0.91); from 30 deg they are behind.
+- **Heading (exact roll): confirmed for PriOr-RAFT and for our no-rotation RAFT-small, refuted for PanoFlow** (+3 % at W/2). The heading dependence is not general. PanoFlow's cyclic estimation is the candidate reason. PriOr-RAFT's loss is polar (poles 0.22 -> 1.92 deg, equator +33 %).
+- **Yaw control (<= 10 % for every row): failed** for PriOr-RAFT (+59 %) and RAFT-small no rotation (+169 %); passed for PanoFlow, frozen RAFT and the SO(3)-trained rows.
+- **Remedy (P11, 5000 batch-1 steps, probability 0.5): partial.** Haar 1.234 -> 0.735 deg (-40 %), upright +7 %. Below the pre-registered 50 %, so "fine-tuning alone is not enough" at this budget. The control arm moves Haar by -5 %. The fine-tune does not fix the heading (roll W/2 still +148 %, poles worse).
+- The fine-tuned model is still the best upright/Haar compromise in hand: mean 0.50 deg, against 0.60 (RAFT-large SO(3)), 0.74 (PriOr-RAFT) and 0.90 (frozen RAFT-large). It is ahead of frozen RAFT-large in every view.
+- **Other datasets: the loss does not follow the weights.** flow360:test Haar: PriOr-RAFT +7 %, PanoFlow +2 %, frozen RAFT-large +2 %. mpf:val: every row within 1 % (and every row is only about 25 % under zero flow there, so that set says little). The replica360 block was cut from the report (job `orient_cross_table` reprints it). Pre-registered reading "scoped to FlowScape content" holds on the two sets seen.
+- Out of domain and upright, frozen RAFT-large is already ahead of both released models on flow360:test (0.236 vs 0.292 and 0.275; zero 0.398).
+
+Scope the claim accordingly: **the accuracy margin of the released FlowScape models over a generic perspective model exists only in-domain and in the benchmark's canonical orientation.** Leaving either removes it. Our in-domain replica360 rows lose 1-4 points under rotation without rotation in training (section 3), so the contingency needs a training set with a canonical orientation; a driving benchmark has one.
+
 ## 5. Position against the literature (searched 2026-11-11)
 
 - PriOr-Flow (ICCV 2025): no rotated evaluation, no rotation or other augmentation described, no zero-flow row, horizontal wrap only.

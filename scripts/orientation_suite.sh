@@ -76,7 +76,7 @@ while IFS='|' read -r name flags; do
 done <<< "$ROWS"
 
 python - "$DEST" "$SOURCES" "$VIEWS" "${names[@]}" <<'PY'
-import json, sys
+import json, os, sys
 from pathlib import Path
 
 root, sources, views, names = Path(sys.argv[1]), sys.argv[2].split(), sys.argv[3].split(), sys.argv[4:]
@@ -89,8 +89,9 @@ def load(name, tag, view):
 
 for src in sources:
     tag = src.replace(":", "_")
-    for key, title in (("global_geo_deg", "sphere-mean geodesic error, deg"),
-                       ("poles_geo_deg", "poles, deg"), ("equator_geo_deg", "equator, deg")):
+    keys = (("global_geo_deg", "sphere-mean geodesic error, deg"),
+            ("poles_geo_deg", "poles, deg"), ("equator_geo_deg", "equator, deg"))
+    for key, title in keys[:1] if os.environ.get("TABLE") == "global" else keys:
         print(f"\n[{src}] {title} (change vs upright, %)")
         print(f"{'row':<22}" + "".join(f"{v:>18}" for v in views))
         zero = ["-"] * len(views)

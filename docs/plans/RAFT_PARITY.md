@@ -1390,3 +1390,12 @@ Local, Mac CPU, 8 flowscape:test pairs (`ORIENTATION_ROBUSTNESS.md` 4b):
 - The yaw control I pre-registered as harmless is not harmless for PriOr-RAFT: the dependence includes the camera heading.
 - New: `--val-roll-frac`, `--val-so3-axis-mode`, `--val-so3-fixed-angle-deg` in `run_raft_shard_baseline.py`; `scripts/orientation_suite.sh`; box jobs `orient_main`, `orient_sweep`, `orient_cross`. The suite script and the new flags have not been run on shards.
 
+### 11.30 Orientation suite on the box (2026-11-13)
+
+Full tables and readings: `ORIENTATION_ROBUSTNESS.md` 4c. In short, flowscape:test, sphere-mean degrees:
+
+- Haar: PriOr-RAFT 0.241 -> 1.234, PanoFlow 0.251 -> 1.040, frozen RAFT-large 0.872 -> 0.928. Tilt of 15 deg already costs the released models +252 % / +205 %.
+- Exact roll of W/2: PriOr-RAFT +185 %, RAFT-small no rotation +208 %, PanoFlow +3 %. Heading dependence is model-specific.
+- P11 at 5000 steps: Haar 1.234 -> 0.735 (-40 %), upright +7 %. Partial; criterion of 50 % not met.
+- flow360:test and mpf:val: no loss under rotation for the FlowScape-trained weights. The finding is in-domain.
+- Queued: `orient_cross_table`, `so3_finetune_prior_p100` (probability 1.0, 15000 steps), `orient_p100`.

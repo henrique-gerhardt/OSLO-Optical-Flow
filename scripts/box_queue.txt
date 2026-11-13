@@ -258,6 +258,13 @@ orient_sweep | scripts/orientation_suite.sh | TAG=sweep; MAX_PAIRS=400; VIEWS=up
 #    Reading: PriOr-RAFT and PanoFlow lose >= 50 % under haar on at least 2 of 3 while frozen RAFT-large stays within 15 % = the prior is in the weights and follows them to other content;
 #    < 20 % on all 3 = the finding is scoped to FlowScape content. Our RAFT-small without rotation (trained on replica360 + flowscape) is the in-domain row for replica360.
 orient_cross | scripts/orientation_suite.sh | TAG=cross; MAX_PAIRS=1000; SOURCES=replica360:val mpf:val flow360:test; VIEWS=upright roll50 haar yaw
+# --- ORIENTATION 11.30 (2026-11-13): the replica360 block of orient_cross was cut from the report, and the remedy at a larger budget ---
+# 1) reprint the cross table, global only (every cell is done, so this takes seconds)
+orient_cross_table | scripts/orientation_suite.sh | TAG=cross; TABLE=global; MAX_PAIRS=1000; SOURCES=replica360:val mpf:val flow360:test; VIEWS=upright roll50 haar yaw
+# 2) SO(3) fine-tune of PriOr-RAFT with every pair rotated, 15000 steps (11.29: probability 0.5, 5000 steps gave haar 1.234 -> 0.735 deg at upright 0.241 -> 0.259).
+#    Reading on the full test set (job 3): haar <= 0.50 deg with upright <= 0.29 deg = the remedy scales with budget; haar >= 0.70 deg = it has plateaued and WP4 is needed.   ~2 h
+so3_finetune_prior_p100 | scripts/proposals_probes.sh | PROBES=p11; TAG=p100; P11_ARMS=so3; P11_SO3_PROB=1.0; P11_STEPS=15000; P11_EVAL_AT=5000,10000
+orient_p100 | scripts/orientation_suite.sh | TAG=p100; TABLE=global; VIEWS=upright roll50 haar yaw tilt15; ROWS=prior_raft_so3p100|--prior-checkpoint /outputs/proposals_probes_p100/p11_so3ft_so3/prior_raft_so3.pth
 # --- RAFT_PARITY 11.16 (2026-11-03): finish the budget test before the combined run ---
 # 30k result: both models gain ~0.7 px from 3x steps; gap 1.39 -> 1.13 px, but OSLO has one seed and RAFT seeds differ by 1.3 px.
 # 1) OSLO seed 11 at 30k   ~8.4 h
