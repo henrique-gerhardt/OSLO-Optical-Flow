@@ -193,6 +193,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--val-so3-fixed-angle-deg", type=float, default=-1.0,
                         help=">= 0: every rotation has exactly this angle (the axis still comes "
                              "from --val-so3-axis-mode). For the tilt sweep.")
+    parser.add_argument("--val-so3-derotate", action="store_true",
+                        help="Oracle canonization ceiling: each rotated pair (stored as 8-bit) is "
+                             "rotated back with the known rotation before prediction and scored "
+                             "against the unrotated target. What is left over the upright error "
+                             "is the cost of the two resamplings.")
     parser.add_argument("--val-roll-frac", type=float, default=0.0,
                         help="Circular shift of every pair by this fraction of the ERP width "
                              "(frames, flow and mask): an exact yaw with no resampling. 0.5 = the "
@@ -452,6 +457,13 @@ def main() -> None:
                 direction_cache[(height, width)] = erp_direction_grid(height, width)
             frame1_erp = rotate_erp(frame1_erp, rotation, direction_cache[(height, width)])
             frame2_erp = rotate_erp(frame2_erp, rotation, direction_cache[(height, width)])
+            if args.val_so3_derotate:
+                grid = direction_cache[(height, width)]
+                frame1_erp = rotate_erp(frame1_erp.mul(255.0).round().div(255.0), rotation.T, grid)
+                frame2_erp = rotate_erp(frame2_erp.mul(255.0).round().div(255.0), rotation.T, grid)
+                target = sample_pair_to_nodes(_to_chw_free_float(record["frame1"]),
+                                              _to_chw_free_float(record["frame2"]), flow_erp,
+                                              valid_erp, points, basis_east, basis_north)
         item = {"flow_erp": flow_erp, "target": target}
         if args.predictor == "raft":
             if infer_size is None and not (args.panoflow_checkpoint

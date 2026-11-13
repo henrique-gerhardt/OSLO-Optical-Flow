@@ -163,6 +163,21 @@ Readings against what was pre-registered:
 
 Scope the claim accordingly: **the accuracy margin of the released FlowScape models over a generic perspective model exists only in-domain and in the benchmark's canonical orientation.** Leaving either removes it. Our in-domain replica360 rows lose 1-4 points under rotation without rotation in training (section 3), so the contingency needs a training set with a canonical orientation; a driving benchmark has one.
 
+## 4d. Canonization ceiling (2026-11-13, Mac CPU, 8 flowscape:test pairs)
+
+Each pair is Haar-rotated, stored as 8-bit, rotated back with the known rotation, and given to released PriOr-RAFT.
+
+| View | PriOr-RAFT (deg) |
+|---|---|
+| upright | 0.1300 |
+| Haar | 0.9337 |
+| Haar, rotated back (oracle) | 0.1337 (+3 % over upright) |
+
+- Two resamplings cost 3 %. With the orientation known, the released model keeps its accuracy under any rotation.
+- So a constructive method exists in principle: estimate the rotation to the benchmark's canonical frame, undo it, run the released model, rotate the flow back. The labels for such an estimator are free (rotate training images by known rotations).
+- Open: how accurate the estimate must be (15 deg of tilt error already costs +252 %; job `orient_tol` measures 2 / 5 / 10 deg), and whether the heading can be estimated at all from a pair.
+- 8 pairs, one model. Box job `orient_canon` repeats it on the full test set with PanoFlow and frozen RAFT-large. The `--val-so3-derotate` path of `run_raft_shard_baseline.py` has not been run; this local number comes from a scratch script on the P11 harness.
+
 ## 5. Position against the literature (searched 2026-11-11)
 
 - PriOr-Flow (ICCV 2025): no rotated evaluation, no rotation or other augmentation described, no zero-flow row, horizontal wrap only.

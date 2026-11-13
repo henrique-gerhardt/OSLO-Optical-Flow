@@ -7,9 +7,10 @@
 #   upright  no rotation
 #   haar     Haar-uniform SO(3) rotation
 #   rollNN   exact circular shift by 0.NN of the width (a yaw with no resampling: lossless control)
+#   canon    the haar pairs rotated back with the known rotation (oracle canonization ceiling)
 #   yaw      rotation about the vertical axis, angle uniform in [0, 180] (keeps gravity: control)
 #   tiltN    rotation of exactly N degrees about a random horizontal axis (dose-response)
-# SOURCES: dataset:split list. ROWS: "name|run_raft_shard_baseline.py flags"; a row whose
+# ONLY: space-separated row names to keep. SOURCES: dataset:split list. ROWS: "name|run_raft_shard_baseline.py flags"; a row whose
 # checkpoint file is missing is left out. A failed cell is reported and the suite moves on.
 set -uo pipefail
 
@@ -36,6 +37,7 @@ mkdir -p "$DEST"
 view_flags() {
   case "$1" in
     upright) echo "" ;;
+    canon) echo "--val-so3-prob 1 --val-so3-uniform --val-so3-derotate" ;;   # haar, then rotated back with the known rotation
     haar) echo "--val-so3-prob 1 --val-so3-uniform" ;;
     roll*) echo "--val-roll-frac 0.${1#roll}" ;;   # roll25 / roll50: exact circular shift, no resampling
     yaw) echo "--val-so3-prob 1 --val-so3-axis-mode vertical" ;;
@@ -47,6 +49,7 @@ view_flags() {
 names=()
 while IFS='|' read -r name flags; do
   [ -n "$name" ] || continue
+  if [ -n "${ONLY:-}" ] && [[ " $ONLY " != *" $name "* ]]; then continue; fi
   ckpt="$(sed -n 's/.*-checkpoint \(.*\)$/\1/p' <<< "$flags")"
   if [[ "$flags" == *-checkpoint* ]] && [ ! -f "$ckpt" ]; then
     echo "missing checkpoint '$ckpt', leaving $name out"

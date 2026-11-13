@@ -265,6 +265,13 @@ orient_cross_table | scripts/orientation_suite.sh | TAG=cross; TABLE=global; MAX
 #    Reading on the full test set (job 3): haar <= 0.50 deg with upright <= 0.29 deg = the remedy scales with budget; haar >= 0.70 deg = it has plateaued and WP4 is needed.   ~2 h
 so3_finetune_prior_p100 | scripts/proposals_probes.sh | PROBES=p11; TAG=p100; P11_ARMS=so3; P11_SO3_PROB=1.0; P11_STEPS=15000; P11_EVAL_AT=5000,10000
 orient_p100 | scripts/orientation_suite.sh | TAG=p100; TABLE=global; VIEWS=upright roll50 haar yaw tilt15; ROWS=prior_raft_so3p100|--prior-checkpoint /outputs/proposals_probes_p100/p11_so3ft_so3/prior_raft_so3.pth
+# 4) canonization ceiling: the Haar-rotated pairs (8-bit) are rotated back with the KNOWN rotation, then the released model runs as usual. No training.
+#    Reading, PriOr-RAFT and PanoFlow: canon <= 1.25x upright = canonization keeps the released accuracy, and the method reduces to estimating the camera orientation;
+#    canon >= 2x upright = the double resampling alone breaks them, and the remedy has to be in the training.   ~25 min
+orient_canon | scripts/orientation_suite.sh | TAG=canon; TABLE=global; VIEWS=upright haar canon; ONLY=prior_raft panoflow frozen_raft_large
+# 5) tolerance of the released models to a small tilt: how accurate does an orientation estimate have to be? 400 pairs.
+#    Reading: loss <= 25 % at 5 deg = a canonizer with a few degrees of error is enough; loss >= 100 % at 2 deg = it would need sub-degree accuracy.   ~10 min
+orient_tol | scripts/orientation_suite.sh | TAG=tol; TABLE=global; MAX_PAIRS=400; VIEWS=upright tilt2 tilt5 tilt10; ONLY=prior_raft panoflow frozen_raft_large
 # --- RAFT_PARITY 11.16 (2026-11-03): finish the budget test before the combined run ---
 # 30k result: both models gain ~0.7 px from 3x steps; gap 1.39 -> 1.13 px, but OSLO has one seed and RAFT seeds differ by 1.3 px.
 # 1) OSLO seed 11 at 30k   ~8.4 h
