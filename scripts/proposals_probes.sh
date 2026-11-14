@@ -113,6 +113,30 @@ for p in $PROBES; do
     p12) run p12_canonizer p12_canonizer.py --shards "$SHARDS" --steps "${P12_STEPS:-8000}" --device "$DEV" \
           --train-frames "${P12_FRAMES:-2500}" --train-stride "${P12_STRIDE:-2}" \
           --train-sources "${P12_TRAIN:-flowscape:train}" --sources "${P12_TEST:-flowscape:test}" ;;
+    p13) for ck in ${P13_CKPTS:-$P6_CKPTS $P6R_CKPTS}; do  # NESTED residual levels on a frozen model's field (hierarchy as representation)
+          [ -f "$ck" ] || { echo "missing $ck"; continue; }
+          tag="$(basename "$(dirname "$(dirname "$ck")")")_$(basename "$(dirname "$ck")")"
+          case "$ck" in
+            *raft_erp.pt) pred=(--predictor raft --raft-model raft_small --tv-checkpoint "$ck"); sets="${P13_RAFT_LEVELS:-6_7}" ;;
+            *) pred=(--predictor oslo --init-checkpoint "$ck" --pyramid-cache "${OUTPUT_DIR:-/outputs}/pyramid_cache"); sets="${P13_OSLO_LEVELS:-6_7 6_6}" ;;
+          esac
+          for lv in $sets; do
+            run "p13_h${lv}_$tag" p13_nested_residual.py "${common[@]}" --stride "${P13_EVAL_STRIDE:-2}" --max-pairs 100000 \
+              "${pred[@]}" --levels ${lv//_/ } --steps "${P13_STEPS:-6000}" --train-pairs "${P13_TRAIN_PAIRS:-600}" --device "$DEV"
+          done
+        done
+        python - "$OUT" <<'PY'
+import json, sys
+from pathlib import Path
+print("\n[p13 summary] sphere-mean geodesic error, degrees, r6 nodes")
+print(f"{'run':<52}{'zero':>8}{'base':>8}{'final':>8}{'gain %':>8}{'static':>8}{'moving':>8}{'px base':>9}{'px final':>9}")
+for path in sorted(Path(sys.argv[1]).glob("p13_h*/p13_nested_residual.json")):
+    d = json.loads(path.read_text()); t = d["table"]; f = t[d["final_row"]]; e = d.get("erp", {})
+    px = lambda row: e.get(row, {}).get("official_inraster_epe", float("nan"))
+    print(f"{path.parent.name:<52}{t['zero']['all']:>8.4f}{t['base']['all']:>8.4f}{f['all']:>8.4f}{d['gain_pct']:>8.1f}"
+          f"{f['static']:>8.4f}{f['moving']:>8.4f}{px('native_erp' if 'native_erp' in e else 'base_nodes'):>9.3f}{px('final'):>9.3f}")
+PY
+        ;;
   esac
 done
 exit 0

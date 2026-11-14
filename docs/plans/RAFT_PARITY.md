@@ -1420,3 +1420,13 @@ Tables: `ORIENTATION_ROBUSTNESS.md` 4f.
 - replica360:val (162 pairs): RAFT-small without rotation 3.401 -> 2.218 under Haar, upright 2.184.
 - Queued: `canonizer_train_v2`, `orient_canonest_v2`, `so3_finetune_prior_tol10`, `orient_tol10`.
 
+
+### 11.33 Hierarchy as the flow representation: NESTED residual levels on a frozen field (queued 2026-11-14)
+
+- `experiments/proposals/p13_nested_residual.py`: the predictor (OSLO or RAFT-small fs30k) is frozen. A small SDPAConv net per level corrects its field at r6, the field is read at the r7 children with the HEALPix stencil, and a second net corrects it there. Each net sees frame 1, frame 2 warped by the current flow, their difference and the flow in node spacings. The flow is detached between levels. Control `--levels 6 6`: two corrections at r6 with the same parameters.
+- Metric: sphere-mean geodesic degrees over valid r6 nodes; an r7 field is reduced by the NESTED mean of the children.
+- Local checks (Mac CPU). GT lifted r6 -> r7: 0.04-0.06 deg off the r7 GT; GT reduced r7 -> r6: 0.02-0.03 deg (the floor of the reduced row); GT warp lowers the photometric MSE 2-3x.
+- Local smokes, wiring only. Stage A OSLO checkpoint, 30 train pairs, 400 steps, 8 test pairs: base 1.391 -> s1 1.203 -> s2 1.191 deg (-14.4 %, 8/8 pairs better); most of the gain is the r6 correction. Pretrained torchvision RAFT-small (not the fs30k checkpoint), 6 train pairs, 30 steps, 3 test pairs: 0.426 -> 0.413 deg.
+- Queue job `hier_residual` (PROBES=p13): six runs, OSLO `6_7` and `6_6`, RAFT-small `6_7`, seeds 7/11, 600 train pairs, 6000 steps, every 2nd test pair. Reading (both seeds each): H1 OSLO 6_7 final <= 0.90 x base; H2 OSLO 6_7 lower than OSLO 6_6 by >= 3 %; H3 OSLO 6_7 final <= RAFT-small base; H4 gain of OSLO 6_7 larger than RAFT-small 6_7 = specific, otherwise generic. Prior: H1 likely, H4 likely generic.
+- Also queued: `orient_matched_s7/s11`, `oslo_orient_upright/haar` (matched fs30k pair under Haar on flowscape:test; reading: OSLO ahead if >= 10 % lower on both seeds). `raft_parity_ab.sh` gained `EXTRA_TAG` and `NO_TRAIN`.
+- Limits: frozen trunk, two levels, one head seed, RGB input only. Not run on the box: GPU memory at r7.

@@ -299,6 +299,24 @@ orient_canonest_v2 | scripts/orientation_suite.sh | TAG=canonest_v2; TABLE=globa
 #    canonfull2 <= 0.35 deg with canonid <= 0.30 deg = canonizer + tolerant model is accurate and robust at once.   ~40 min + ~35 min
 so3_finetune_prior_tol10 | scripts/proposals_probes.sh | PROBES=p11; TAG=tol10; P11_ARMS=so3; P11_MAX_ANGLE=10
 orient_tol10 | scripts/orientation_suite.sh | TAG=tol10; TABLE=global; CANONIZER=/outputs/proposals_probes_v2/p12_canonizer/canonizer.pth; VIEWS=upright tilt2 tilt5 tilt10 haar canonfull2 canonid; ROWS=prior_raft_tol10|--prior-checkpoint /outputs/proposals_probes_tol10/p11_so3ft_so3/prior_raft_so3.pth
+# --- ORIENTATION, matched pair (2026-11-14): does the sphere-native model lose less under rotation than the planar one? ---
+# OSLO and RAFT-small fs30k (flowscape:train only, no rotation in training, seeds 7/11), eval only on flowscape:test, upright and Haar.
+# Prior (10k models, flowscape:val, axis-angle rotation): OSLO 0.416/0.398 -> 0.855/0.831 deg, RAFT-small 0.335/0.356 -> 1.128/1.178 deg.
+# Reading on Haar global_geo_deg: OSLO ahead if lower than RAFT-small by >= 10 % on both seeds; RAFT ahead if the reverse; else tie.
+# NO_TRAIN=1: the OSLO jobs abort (exit 4) instead of retraining if the checkpoints are missing.   ~1.5 h total
+orient_matched_s7 | scripts/orientation_suite.sh | TAG=matched; TABLE=global; VIEWS=upright haar tilt5 tilt15; ROWS=raft_small_fs30k_s7|--model raft_small --tv-checkpoint /outputs/scale_fs30k_planar/raft_small_fs_s7/raft_erp.pt
+orient_matched_s11 | scripts/orientation_suite.sh | TAG=matched; TABLE=global; VIEWS=upright haar tilt5 tilt15; ROWS=raft_small_fs30k_s11|--model raft_small --tv-checkpoint /outputs/scale_fs30k_planar/raft_small_fs_s11/raft_erp.pt
+# --- HIERARCHY AS REPRESENTATION (2026-11-14): NESTED residual levels on a frozen model's field (experiments/proposals/p13_nested_residual.py) ---
+# OSLO and RAFT-small fs30k s7/s11 frozen; a small SDPAConv net per level corrects the field at r6, then at its children (r7), with frame 2 warped by the current flow.
+# Six runs: OSLO "6 7" and the flat control "6 6" (same parameters, both corrections at r6), RAFT-small "6 7". 600 train pairs, 6000 steps, every 2nd test pair.
+# Reading on the [p13 summary] table (sphere-mean degrees at r6), both seeds each:
+#   H1 OSLO 6_7 final <= 0.90 x base; H2 OSLO 6_7 final lower than OSLO 6_6 final by >= 3 %; H3 OSLO 6_7 final <= RAFT-small base;
+#   H4 gain % of OSLO 6_7 larger than of RAFT-small 6_7 = specific to OSLO, otherwise a generic refinement (as the heads of 11.25).
+# Prior stated before the run: H1 likely, H4 likely generic. Time per run not measured on the box; guess 1-1.5 h each.
+hier_residual | scripts/proposals_probes.sh | PROBES=p13
+# OSLO jobs last: two quick failures in a row stop the queue, so nothing may sit behind them.
+oslo_orient_upright | scripts/raft_parity_large.sh | RUN_NAME=scale_fs30k; ARMS=noso3_erppx; PREFLIGHT_ARMS=; SEEDS=7 11; TRAIN_SOURCES=flowscape:train; STEPS=30000; EXTRA_VAL_SOURCES=flowscape:test; EXTRA_TAG=upright; NO_TRAIN=1
+oslo_orient_haar | scripts/raft_parity_large.sh | RUN_NAME=scale_fs30k; ARMS=noso3_erppx; PREFLIGHT_ARMS=; SEEDS=7 11; TRAIN_SOURCES=flowscape:train; STEPS=30000; EXTRA_VAL_SOURCES=flowscape:test; EXTRA_TAG=haar; NO_TRAIN=1; EXTRA_FLAGS=--val-so3-prob 1 --so3-uniform
 # --- RAFT_PARITY 11.16 (2026-11-03): finish the budget test before the combined run ---
 # 30k result: both models gain ~0.7 px from 3x steps; gap 1.39 -> 1.13 px, but OSLO has one seed and RAFT seeds differ by 1.3 px.
 # 1) OSLO seed 11 at 30k   ~8.4 h

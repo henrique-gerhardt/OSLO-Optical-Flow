@@ -19,6 +19,8 @@ VAL_SOURCES="${VAL_SOURCES:-replica360:val}"
 # Space-separated extra val sources, each scored by an eval-only pass after training.
 EXTRA_VAL_SOURCES="${EXTRA_VAL_SOURCES:-}"
 # EXTRA_FLAGS: runner flags appended to every run of this invocation.
+# NO_TRAIN: if set, a run whose checkpoint or metrics are missing aborts (exit 4) instead of training.
+# EXTRA_TAG: suffix of the extra-eval metrics file, so one checkpoint can be scored under several val settings.
 # Arms that get a one-step run before anything else, so an out-of-memory arm fails in
 # the first minute instead of after the arms ahead of it have trained.
 PREFLIGHT_ARMS="${PREFLIGHT_ARMS:-}"
@@ -111,12 +113,19 @@ for seed in $SEEDS; do
     dir="$OUT/${arm}_s${seed}"
     if [ -f "$dir/oslo_raft_metrics.json" ]; then
       echo "skip $dir (done)"
+    elif [ -n "${NO_TRAIN:-}" ]; then
+      echo "NO_TRAIN is set and $dir/oslo_raft_metrics.json is missing: refusing to train. Aborting." >&2
+      exit 4
     else
       echo "=== arm=$arm seed=$seed ==="
       run "$arm" "$seed" "$dir" 2>&1 | tee "$dir.train.log"
     fi
+    if [ -n "${NO_TRAIN:-}" ] && [ ! -f "$dir/oslo_raft.pt" ]; then
+      echo "NO_TRAIN is set and $dir/oslo_raft.pt is missing. Aborting." >&2
+      exit 4
+    fi
     for src in $EXTRA_VAL_SOURCES; do
-      extra="$dir/metrics_${src//:/_}.json"
+      extra="$dir/metrics_${src//:/_}${EXTRA_TAG:+_$EXTRA_TAG}.json"
       if [ ! -f "$extra" ]; then
         echo "=== arm=$arm seed=$seed eval on $src ==="
         VAL_SOURCES="$src" run "$arm" "$seed" "$dir" --eval-only \
