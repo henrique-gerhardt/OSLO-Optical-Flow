@@ -112,6 +112,8 @@ def main():
     p.add_argument("--weathers", default="sunny,cloud,fog,rain")
     p.add_argument("--arm", default="so3", choices=["so3", "ctrl"])
     p.add_argument("--so3-prob", type=float, default=0.5)
+    p.add_argument("--so3-max-angle-deg", type=float, default=180.0,
+                   help="Scales the Haar angle to [0, max]: small values train tolerance to a residual tilt.")
     p.add_argument("--steps", type=int, default=300)
     p.add_argument("--eval-at", default="", help="comma list of steps to evaluate at (0 and the last are always in)")
     p.add_argument("--lr", type=float, default=2e-5)
@@ -172,7 +174,7 @@ def main():
         model.freeze_bn()
         f1, f2, flow, valid = rng.choice(loaders)(None)
         rotated = args.arm == "so3" and rng.random() < args.so3_prob
-        rotation = sample_rotation(gen, uniform_so3=True) if rotated else eye
+        rotation = sample_rotation(gen, uniform_so3=True, max_angle_deg=args.so3_max_angle_deg) if rotated else eye
         f1, f2, flow, valid = rotate_erp_pair(f1, f2, flow, valid, rotation)
         preds, _ = model(f1[None].float().to(device), f2[None].float().to(device), iters=args.train_iters)
         loss = sequence_loss(preds, flow[None].to(device), valid[None].to(device))

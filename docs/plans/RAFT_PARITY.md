@@ -1411,3 +1411,12 @@ Tables: `ORIENTATION_ROBUSTNESS.md` 4e.
 - P12 canonizer local smoke (Mac CPU, 400 steps, 300 train frames, 60 test frames): tilt error median 51 -> 13.6 deg and still falling; heading error stays near 100 deg (not learned in this budget). Says only that the script runs. The `--val-so3-canonizer` path of `run_raft_shard_baseline.py` has not been run.
 - Queued: `canonizer_train`, `orient_canonest`.
 
+### 11.32 Canonizer end to end (2026-11-14)
+
+Tables: `ORIENTATION_ROBUSTNESS.md` 4f.
+
+- PanoFlow behind the 24000-step canonizer: Haar 1.040 -> 0.412 deg, below every rotation-trained model (0.47-0.52). PriOr-RAFT: 1.234 -> 0.470.
+- Upright cost: the canonizer on upright pairs takes PanoFlow from 0.251 to 0.405. Estimator tilt error 4.1 deg median against a tolerance of about 2 deg.
+- replica360:val (162 pairs): RAFT-small without rotation 3.401 -> 2.218 under Haar, upright 2.184.
+- Queued: `canonizer_train_v2`, `orient_canonest_v2`, `so3_finetune_prior_tol10`, `orient_tol10`.
+

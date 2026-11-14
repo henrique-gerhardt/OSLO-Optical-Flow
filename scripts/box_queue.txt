@@ -288,6 +288,17 @@ orient_canonest_long | scripts/orientation_suite.sh | TAG=canonest_long; TABLE=g
 #    Reading: canonfull or canonup <= 2.5 deg = the method carries over to a second dataset; >= 3.2 deg = it does not.   time not measured
 canonizer_train_replica | scripts/proposals_probes.sh | PROBES=p12; TAG=replica; P12_TRAIN=replica360:train; P12_TEST=replica360:val
 orient_canonest_replica | scripts/orientation_suite.sh | TAG=canonest_replica; TABLE=global; MAX_PAIRS=1000; SOURCES=replica360:val; CANONIZER=/outputs/proposals_probes_replica/p12_canonizer/canonizer.pth; VIEWS=upright haar canon canonfull canonfull2 canonup canonid; ONLY=raft_small_noaug frozen_raft_large
+# --- ORIENTATION 11.32 (2026-11-14): close the gap between the canonized error (0.41-0.47 deg) and the oracle (0.24-0.25 deg) ---
+# 11.31: canonizer tilt error median 4.1 deg (24000 steps, train loss equivalent to ~1.5 deg: it overfits 2500 frames); the released models need <= 2 deg.
+# 1) canonizer v2: every training pair (stride 1, up to 6000 frames), 40000 steps.   ~1 h
+#    Reading: tilt median <= 2.5 deg = more data closes the estimator gap; >= 3.8 deg = data is not the limit.
+canonizer_train_v2 | scripts/proposals_probes.sh | PROBES=p12; TAG=v2; P12_STEPS=40000; P12_FRAMES=6000; P12_STRIDE=1
+orient_canonest_v2 | scripts/orientation_suite.sh | TAG=canonest_v2; TABLE=global; CANONIZER=/outputs/proposals_probes_v2/p12_canonizer/canonizer.pth; VIEWS=upright haar canonfull2 canonid; ONLY=prior_raft panoflow
+# 2) the other side: make the flow model tolerant to the residual. PriOr-RAFT fine-tuned with SMALL rotations only (Haar angle scaled to 0-10 deg, probability 0.5, 5000 steps),
+#    then scored behind the v2 canonizer. Reading on the full test set: upright <= 0.27 deg and tilt5 <= 0.32 deg = tolerance is cheap;
+#    canonfull2 <= 0.35 deg with canonid <= 0.30 deg = canonizer + tolerant model is accurate and robust at once.   ~40 min + ~35 min
+so3_finetune_prior_tol10 | scripts/proposals_probes.sh | PROBES=p11; TAG=tol10; P11_ARMS=so3; P11_MAX_ANGLE=10
+orient_tol10 | scripts/orientation_suite.sh | TAG=tol10; TABLE=global; CANONIZER=/outputs/proposals_probes_v2/p12_canonizer/canonizer.pth; VIEWS=upright tilt2 tilt5 tilt10 haar canonfull2 canonid; ROWS=prior_raft_tol10|--prior-checkpoint /outputs/proposals_probes_tol10/p11_so3ft_so3/prior_raft_so3.pth
 # --- RAFT_PARITY 11.16 (2026-11-03): finish the budget test before the combined run ---
 # 30k result: both models gain ~0.7 px from 3x steps; gap 1.39 -> 1.13 px, but OSLO has one seed and RAFT seeds differ by 1.3 px.
 # 1) OSLO seed 11 at 30k   ~8.4 h

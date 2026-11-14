@@ -207,7 +207,7 @@ SO(3) fine-tune of PriOr-RAFT, every pair rotated, 15000 steps (`so3_finetune_pr
 | fine-tune, p = 1.0, 15000 steps | 0.4667 | 0.5123 | 0.4760 | 0.5015 | 0.5188 |
 | RAFT-large SO(3), scratch (ours) | 0.5288 | 0.5494 | 0.5429 | 0.59 (400 pairs) | 0.6766 |
 
-replica360:val, 1000 pairs (`orient_cross_table`); zero flow 13.4-13.5 deg:
+replica360:val, 162 pairs (`orient_cross_table`); zero flow 13.4-13.5 deg:
 
 | Row | Upright | Haar |
 |---|---|---|
@@ -227,6 +227,46 @@ Readings:
 - The released FlowScape models are far off on replica360 (6.9-9.5 deg against 1.16 for frozen RAFT-large), so their rows there say nothing about orientation.
 
 Consequence: the constructive path is canonization, not rotation training. Probe P12 (`experiments/proposals/p12_canonizer.py`, `spherical_flow/canonizer.py`) trains a regressor of the canonical up and forward directions on rotated training frames; views `canonfull` / `canonup` of the suite run the released models behind it.
+
+## 4f. Canonizer, first results (2026-11-14, box)
+
+Estimator (ResNet-18, 160x320, 2500 training frames), angular error on Haar-rotated test frames:
+
+| Run | Tilt median | Tilt p90 | <= 2 deg | <= 5 deg | Heading median |
+|---|---|---|---|---|---|
+| flowscape, 8000 steps | 6.30 | 13.07 | 6 % | 37 % | 40.6 |
+| flowscape, 24000 steps | 4.14 | 9.13 | 14 % | 58 % | 26.9 |
+| replica360, 8000 steps | 7.42 | 13.67 | 4 % | 28 % | 62.2 |
+
+The pre-registered tilt criterion (median <= 2 deg, p90 <= 5 deg) is not met. The final training loss of the long run corresponds to about 1.5 deg, so the estimator overfits its 2500 frames.
+
+End to end, flowscape:test, 1386 pairs, sphere-mean degrees. `canonfull2` = two estimation passes; `canonid` = the canonizer applied to upright pairs.
+
+| Row | Upright | Haar | Oracle | canonfull | canonfull2 | canonup | canonid |
+|---|---|---|---|---|---|---|---|
+| PriOr-RAFT, canonizer 8000 | 0.2412 | 1.2342 | 0.2440 | 0.5723 | 0.5691 | 0.6494 | 0.5628 |
+| PanoFlow, canonizer 8000 | 0.2511 | 1.0396 | 0.2536 | 0.5082 | 0.5024 | 0.5169 | 0.4968 |
+| PriOr-RAFT, canonizer 24000 | 0.2412 | 1.2342 | - | 0.4798 | 0.4702 | 0.5606 | 0.4474 |
+| PanoFlow, canonizer 24000 | 0.2511 | 1.0396 | - | 0.4223 | 0.4118 | 0.4403 | 0.4053 |
+| frozen RAFT-large, canonizer 8000 | 0.8724 | 0.9277 | 0.8729 | 0.8776 | 0.8786 | 0.8804 | 0.8770 |
+
+replica360:val, 162 pairs (the whole split; the "1000 pairs" of 4e was the cap, not the count):
+
+| Row | Upright | Haar | Oracle | canonfull | canonfull2 | canonup | canonid |
+|---|---|---|---|---|---|---|---|
+| RAFT-small, no rotation (in-domain) | 2.184 | 3.401 | 2.183 | 2.299 | 2.218 | 2.287 | 2.271 |
+| frozen RAFT-large | 1.156 | 1.129 | 1.218 | 1.103 | 1.123 | 1.118 | 1.085 |
+
+Readings:
+
+- **FlowScape, rotated: between the two thresholds, on the good side.** PanoFlow behind the 24000-step canonizer is at 0.412 deg under Haar (threshold for success 0.40, for failure 0.52). That is 60 % below the released model under rotation (1.040) and below every rotation-trained model (0.47-0.52). 79 % of PanoFlow's rotation loss is recovered, 77 % of PriOr-RAFT's.
+- **FlowScape, upright: the `canonid` criterion fails.** The canonizer costs the upright accuracy (0.251 -> 0.405, +61 %), because its error (4 deg median) is above what the models tolerate (2 deg). The method is flat at about 0.41 in every orientation. It is not yet "accurate and robust".
+- **The numbers agree with the tolerance curve** (4e: 5 deg of tilt error = 0.43-0.46). The estimator precision is the single limit; the oracle shows 0.25 is reachable.
+- More estimator budget helps (8000 -> 24000 steps: PanoFlow 0.502 -> 0.412). Two passes help a little (0.422 -> 0.412).
+- Heading is poorly estimated (median 27 deg) and tilt-only canonization is worse than full for PriOr-RAFT (0.561 vs 0.470), as its heading dependence predicted. PanoFlow hardly cares (0.440 vs 0.412).
+- **replica360: the method carries over.** The no-rotation model goes from 3.401 back to 2.218 (upright 2.184), 97 % of the loss recovered, with a canonizer of 7 deg median tilt error. That model tolerates a coarse estimate. Criterion (<= 2.5 deg) met. 162 pairs.
+
+Next (queued, 11.32): a canonizer on all training frames, and a PriOr-RAFT fine-tuned with small rotations (0-10 deg) so that it tolerates the residual.
 
 ## 5. Position against the literature (searched 2026-11-11)
 
