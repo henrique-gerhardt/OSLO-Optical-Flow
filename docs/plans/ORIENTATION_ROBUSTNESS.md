@@ -268,6 +268,62 @@ Readings:
 
 Next (queued, 11.32): a canonizer on all training frames, and a PriOr-RAFT fine-tuned with small rotations (0-10 deg) so that it tolerates the residual.
 
+## 4g. Canonizer v2 and the small-rotation fine-tune (2026-11-15, box)
+
+flowscape:test, 1386 pairs, sphere-mean geodesic degrees.
+
+Canonizer v2 (40000 steps, 6000 train frames at stride 1): tilt median 3.81 / mean 4.24 / p90 7.24 deg, heading median 16.1 deg. Final training loss 0.0003-0.0005 (about 1 deg per vector, my conversion). Pre-registered reading: >= 3.8 deg = data quantity is not the limit. It fired, by 0.01 deg. Confound: steps and frames changed together, and stride-1 frames add little scene diversity.
+
+| Row | Upright | Haar | canonfull2 | canonid |
+|---|---|---|---|---|
+| PriOr-RAFT, v2 canonizer | 0.2412 | 1.2342 | 0.4318 | 0.4185 |
+| PanoFlow, v2 canonizer | 0.2511 | 1.0396 | 0.3798 | 0.3810 |
+| PriOr-RAFT fine-tuned, rotations <= 10 deg, p 0.5, 5000 steps, v2 canonizer | 0.2750 | 1.2792 | 0.3997 | 0.3749 |
+
+Fine-tuned PriOr-RAFT under tilt: 2 deg 0.2981, 5 deg 0.3461, 10 deg 0.4346 (released, 400 pairs: 0.3139 / 0.4615 / 0.6888).
+
+- Pre-registered readings of the fine-tune: upright <= 0.27 and tilt5 <= 0.32 failed (0.275, 0.346); canonfull2 <= 0.35 with canonid <= 0.30 failed (0.400, 0.375). The tolerance did improve (tilt5 -25 %, tilt10 -37 %) at +14 % upright.
+- Canonizer series, PanoFlow under Haar: 0.502 (8k) -> 0.412 (24k) -> 0.380 (40k, 6000 frames). Diminishing.
+- Joint criterion (Haar <= 0.35, canonical <= 0.30): not met. Closest: PanoFlow + v2, 0.380 / 0.381.
+- Recovery of the Haar loss: PanoFlow 84 %, PriOr-RAFT 81 %.
+- Report branch `relatorio-robustez-orientacao` updated with these numbers; the conclusion on rotation training is now scoped to the budgets tested.
+- Next for the canonizer: frames from other sources and stronger augmentation (generalization gap about 1 deg train vs 3.8 deg test), input resolution, more passes.
+
+## 4h. Selecting the orientation by photometric residual: negative (2026-11-15, Mac CPU, 8 flowscape:test pairs)
+
+Idea: run the flow model on several candidate orientations and keep the one whose flow gives the lowest photometric residual (frame 2 warped to frame 1), label-free. Released PriOr-RAFT, residual tilt 0 / 1 / 2 / 5 / 10 deg, same axis per pair, residual measured on the original frames with the field mapped back through the rotation (a first version measured it on the rotated frames and was biased by resampling blur).
+
+| Tilt | 0 | 1 | 2 | 5 | 10 |
+|---|---|---|---|---|---|
+| flow error, deg | 0.171 | 0.245 | 0.271 | 0.358 | 0.497 |
+| residual, 8-bit | 3.700 | 3.668 | 3.676 | 3.710 | 3.810 |
+
+- The residual picks tilt 0 in 0 of 8 pairs; the selected error is 0.284 against an oracle of 0.171. The residual moves by under 1 % between 0 and 5 deg while the flow error doubles. Closed in this form.
+- Side observation, 8 pairs only: 1 deg of tilt already costs PriOr-RAFT +43 % here. An external upright estimator would need to be well under 1 deg for PriOr-RAFT; PanoFlow is more tolerant (4e).
+- Related work found: FoCAL (ICML 2025, arXiv 2507.10375) selects among transformed inputs by foundation-model likelihood, for classification and segmentation, not flow or panoramas. Dual-Projection Fusion (arXiv 2512.00911) reports panorama inclination within 1 deg on 65.9 % of SUN360 and 85.2 % of M3D, weights released; our canonizer is within 2 deg on 17 % of frames.
+
+## 4i. Published upright estimator and the full-recipe fine-tune (queued 2026-11-15)
+
+**Published estimator.** Dual-Projection Fusion (arXiv 2512.00911, MIT, weights released, trained on SUN360). Only its angle path is needed (ERP ConvNeXt-base, pooled, one linear layer); `spherical_flow/dpf_upright.py` restates it without timm and loads the released `model.pth` (993 MB, SHA-256 in `scripts/fetch_dpf_weights.sh`). The released code does not say how pitch and roll compose; the composition was fitted on 96 tilted flowscape:train frames (median up-vector error 2.06 deg) and is the same on test frames.
+
+Local check, Mac CPU, 24 flowscape:test frames, zero-shot, residual tilt in degrees (median) after 0 / 1 / 2 / 3 passes:
+
+| Input tilt | 0 passes | 1 | 2 | 3 | p90 after 3 |
+|---|---|---|---|---|---|
+| 0 | 0.00 | 1.57 | 1.52 | 1.79 | 2.83 |
+| 5 | 5.00 | 2.22 | 1.65 | 1.68 | 2.50 |
+| 10 | 10.00 | 3.24 | 1.94 | 1.84 | 2.94 |
+| 20 | 20.00 | 3.43 | 2.05 | 1.46 | 2.97 |
+| 40 | 40.00 | 2.26 | 1.42 | 1.48 | 2.77 |
+
+- Our canonizer v2: median 3.81, p90 7.24 deg, trained in domain.
+- Under Haar the estimator fails when the up vector is in the lower hemisphere (median 170 deg there, 2.1 deg in the upper one): its outputs are limited to +-90 deg. So under Haar it runs after our canonizer.
+- On upright frames it introduces 1.5-1.8 deg of its own.
+- `run_raft_shard_baseline.py --val-so3-refiner / --val-so3-refine-iters`; suite views `canonref`, `canonrefid`, `refid`, `tiltNref`. The evaluator path was not run locally (it needs shards); the estimator call it makes was (4 full-resolution frames, tilt 25 deg -> 1.3-4.8 deg after 2 passes).
+- Queue: `fetch_dpf_weights`, `orient_dpf`. Reading: joint criterion met if one model has canonref <= 0.35 and canonrefid <= 0.30. Prediction: PanoFlow 0.29-0.31 on both.
+
+**Full-recipe fine-tune.** `p11_so3_finetune_probe.py` gained `--accum`, `--lr-schedule onecycle`, `--ema`. Queue: `so3_finetune_prior_full` (Haar on half of the pairs, 4 pairs per step, 7500 steps, peak lr 5e-5, weight average 0.999), `orient_full`, `orient_full_ema`. Reading on the better of raw and averaged weights: the trade-off dissolves if upright <= 0.27 and Haar <= 0.52; holds if upright > 0.30 or Haar > 0.65; otherwise partial. Local smoke: 3 steps, runs and saves both checkpoints.
+
 ## 5. Position against the literature (searched 2026-11-11)
 
 - PriOr-Flow (ICCV 2025): no rotated evaluation, no rotation or other augmentation described, no zero-flow row, horizontal wrap only.

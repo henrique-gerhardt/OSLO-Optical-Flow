@@ -314,6 +314,22 @@ orient_matched_s11 | scripts/orientation_suite.sh | TAG=matched; TABLE=global; V
 #   H4 gain % of OSLO 6_7 larger than of RAFT-small 6_7 = specific to OSLO, otherwise a generic refinement (as the heads of 11.25).
 # Prior stated before the run: H1 likely, H4 likely generic. Time per run not measured on the box; guess 1-1.5 h each.
 hier_residual | scripts/proposals_probes.sh | PROBES=p13
+# --- PUBLISHED UPRIGHT ESTIMATOR as the orientation estimator (2026-11-15): Dual-Projection Fusion, arXiv 2512.00911, weights released (MIT) ---
+# Local check (Mac CPU, 24 flowscape:test frames, zero-shot): residual tilt median 1.5-1.8 deg after 2-3 passes from tilts of 0-40 deg (our canonizer: 3.81 deg).
+# It only covers tilts below 90 deg, so under Haar it runs after our canonizer (2 passes), as a refinement. spherical_flow/dpf_upright.py.
+# Views: canonref = Haar, canonizer v2 + 3 DPF passes; canonrefid = the same system on upright pairs; refid = DPF alone on upright pairs; tiltNref = DPF alone on a tilt of N deg.
+# Reading (joint criterion of the report): met if one model has canonref <= 0.35 and canonrefid <= 0.30. Prediction: PanoFlow 0.29-0.31 on both; PriOr-RAFT worse (heading).
+# If the container has no network the first job fails; download the URL in scripts/fetch_dpf_weights.sh on the host to outputs/external_weights/dpf_imp_align/model.pth. The suite skips the *ref views while the file is missing.   ~5 min + ~2.5 h
+fetch_dpf_weights | scripts/fetch_dpf_weights.sh | DPF=1
+orient_dpf | scripts/orientation_suite.sh | TAG=dpf; TABLE=global; CANONIZER=/outputs/proposals_probes_v2/p12_canonizer/canonizer.pth; REFINE_ITERS=3; ONLY=prior_raft panoflow; VIEWS=upright haar canonref canonrefid refid tilt10ref tilt30ref
+# --- ROTATION FINE-TUNE WITH A PROPER RECIPE (2026-11-15): is the accuracy/robustness trade-off of P11 a budget effect? ---
+# Released PriOr-RAFT, Haar rotation on half of the pairs, 4 pairs per step (accumulation), 7500 steps = 30000 pairs, one-cycle lr (peak 5e-5), weight average 0.999.
+# Earlier points (batch 1, constant lr, last iterate): p 0.5 / 5k: upright 0.259, Haar 0.735; p 1 / 15k: 0.467, 0.519; published: 0.241, 1.234.
+# Reading on the better of raw and averaged weights, flowscape:test: trade-off dissolves if upright <= 0.27 and Haar <= 0.52; holds if upright > 0.30 or Haar > 0.65; otherwise partial.
+# Still missing against the authors' recipe: their orthogonal-view loss and batch size.   ~4.5 h + ~1 h
+so3_finetune_prior_full | scripts/proposals_probes.sh | PROBES=p11; TAG=full; P11_ARMS=so3; P11_STEPS=7500; P11_ACCUM=4; P11_SCHEDULE=onecycle; P11_LR=5e-5; P11_EMA=0.999; P11_EVAL_AT=2500,5000; P11_LOG_EVERY=25
+orient_full | scripts/orientation_suite.sh | TAG=full; TABLE=global; VIEWS=upright roll50 yaw tilt5 haar; ROWS=prior_raft_full|--prior-checkpoint /outputs/proposals_probes_full/p11_so3ft_so3/prior_raft_so3.pth
+orient_full_ema | scripts/orientation_suite.sh | TAG=full; TABLE=global; VIEWS=upright roll50 yaw tilt5 haar; ROWS=prior_raft_full_ema|--prior-checkpoint /outputs/proposals_probes_full/p11_so3ft_so3/prior_raft_so3_ema.pth
 # OSLO jobs last: two quick failures in a row stop the queue, so nothing may sit behind them.
 oslo_orient_upright | scripts/raft_parity_large.sh | RUN_NAME=scale_fs30k; ARMS=noso3_erppx; PREFLIGHT_ARMS=; SEEDS=7 11; TRAIN_SOURCES=flowscape:train; STEPS=30000; EXTRA_VAL_SOURCES=flowscape:test; EXTRA_TAG=upright; NO_TRAIN=1
 oslo_orient_haar | scripts/raft_parity_large.sh | RUN_NAME=scale_fs30k; ARMS=noso3_erppx; PREFLIGHT_ARMS=; SEEDS=7 11; TRAIN_SOURCES=flowscape:train; STEPS=30000; EXTRA_VAL_SOURCES=flowscape:test; EXTRA_TAG=haar; NO_TRAIN=1; EXTRA_FLAGS=--val-so3-prob 1 --so3-uniform

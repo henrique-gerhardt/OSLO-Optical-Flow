@@ -36,12 +36,19 @@ raft_small_so3|--model raft_small --tv-checkpoint $PL/raft_small_so3_s7/raft_erp
 raft_large_so3_scale|--model raft_large --tv-checkpoint ${PL}_scale/raft_large_so3_s7/raft_erp.pt}"
 mkdir -p "$DEST"
 
+CANON_PATH="${CANONIZER:-$OUT/proposals_probes/p12_canonizer/canonizer.pth}"
+REFINER="${REFINER:-$OUT/external_weights/dpf_imp_align/model.pth}"
+
 view_flags() {
   case "$1" in
     upright) echo "" ;;
     canonfull|canonup) echo "--val-so3-prob 1 --val-so3-uniform --val-so3-canonizer ${CANONIZER:-$OUT/proposals_probes/p12_canonizer/canonizer.pth} --val-so3-canon-mode ${1#canon}" ;;
     canonfull2) echo "--val-so3-prob 1 --val-so3-uniform --val-so3-canonizer ${CANONIZER:-$OUT/proposals_probes/p12_canonizer/canonizer.pth} --val-so3-canon-iters 2" ;;
     canonid) echo "--val-so3-prob 1 --val-so3-axis-mode horizontal --val-so3-fixed-angle-deg 0 --val-so3-canonizer ${CANONIZER:-$OUT/proposals_probes/p12_canonizer/canonizer.pth}" ;;
+    canonref) echo "--val-so3-prob 1 --val-so3-uniform --val-so3-canonizer $CANON_PATH --val-so3-canon-iters 2 --val-so3-refiner $REFINER --val-so3-refine-iters ${REFINE_ITERS:-2}" ;;   # haar: our canonizer (any orientation), then the published upright estimator
+    canonrefid) echo "--val-so3-prob 1 --val-so3-axis-mode horizontal --val-so3-fixed-angle-deg 0 --val-so3-canonizer $CANON_PATH --val-so3-canon-iters 2 --val-so3-refiner $REFINER --val-so3-refine-iters ${REFINE_ITERS:-2}" ;;   # the same system on upright pairs
+    refid) echo "--val-so3-prob 1 --val-so3-axis-mode horizontal --val-so3-fixed-angle-deg 0 --val-so3-refiner $REFINER --val-so3-refine-iters ${REFINE_ITERS:-2}" ;;   # published estimator alone on upright pairs
+    tilt*ref) t="${1#tilt}"; echo "--val-so3-prob 1 --val-so3-axis-mode horizontal --val-so3-fixed-angle-deg ${t%ref} --val-so3-refiner $REFINER --val-so3-refine-iters ${REFINE_ITERS:-2}" ;;   # tiltNref: published estimator alone on a tilt of N deg
     canon) echo "--val-so3-prob 1 --val-so3-uniform --val-so3-derotate" ;;   # haar, then rotated back with the known rotation
     haar) echo "--val-so3-prob 1 --val-so3-uniform" ;;
     roll*) echo "--val-roll-frac 0.${1#roll}" ;;   # roll25 / roll50: exact circular shift, no resampling
@@ -65,6 +72,7 @@ while IFS='|' read -r name flags; do
     for view in $VIEWS; do
       dir="$DEST/${name}_${src//:/_}_${view}"
       [ -f "$dir/raft_metrics.json" ] && { echo "skip $dir (done)"; continue; }
+      if [[ "$view" == *ref* ]] && [ ! -f "$REFINER" ]; then echo "missing refiner '$REFINER', skipping view $view"; continue; fi
       echo "=== $name on $src, $view ==="
       if [[ "$flags" == *-checkpoint* ]]; then
         ck=(${flags%% /*} "$ckpt")   # the checkpoint path may contain spaces or parentheses

@@ -117,6 +117,11 @@ def main():
     p.add_argument("--steps", type=int, default=300)
     p.add_argument("--eval-at", default="", help="comma list of steps to evaluate at (0 and the last are always in)")
     p.add_argument("--lr", type=float, default=2e-5)
+    p.add_argument("--accum", type=int, default=1, help="pairs per optimizer step (gradient accumulation, batch 1 in memory)")
+    p.add_argument("--lr-schedule", default="constant", choices=["constant", "onecycle"],
+                   help="onecycle: 5 %% warm-up to --lr, then linear decay, as in RAFT fine-tuning")
+    p.add_argument("--ema", type=float, default=0.0, help="decay of a weight average, scored and saved next to the raw weights (0 = off)")
+    p.add_argument("--log-every", type=int, default=10)
     p.add_argument("--train-iters", type=int, default=12)
     p.add_argument("--eval-iters", type=int, default=12)
     p.add_argument("--eval-pairs", type=int, default=32)
@@ -157,6 +162,10 @@ def main():
 
     eval_at = sorted({0, args.steps} | {int(s) for s in args.eval_at.split(",") if s})
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4, eps=1e-8)
+    sched = (torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=args.lr, total_steps=args.steps, pct_start=0.05,
+                                                 anneal_strategy="linear")
+             if args.lr_schedule == "onecycle" else None)
+    ema = {k: v.detach().clone() for k, v in model.named_parameters()} if args.ema > 0 else None
     history, start = [], time.time()
 
     def run_eval(step):
@@ -172,18 +181,28 @@ def main():
     for step in range(1, args.steps + 1):
         model.train()
         model.freeze_bn()
-        f1, f2, flow, valid = rng.choice(loaders)(None)
-        rotated = args.arm == "so3" and rng.random() < args.so3_prob
-        rotation = sample_rotation(gen, uniform_so3=True, max_angle_deg=args.so3_max_angle_deg) if rotated else eye
-        f1, f2, flow, valid = rotate_erp_pair(f1, f2, flow, valid, rotation)
-        preds, _ = model(f1[None].float().to(device), f2[None].float().to(device), iters=args.train_iters)
-        loss = sequence_loss(preds, flow[None].to(device), valid[None].to(device))
         opt.zero_grad()
-        loss.backward()
+        total, n_rot = 0.0, 0
+        for _ in range(args.accum):
+            f1, f2, flow, valid = rng.choice(loaders)(None)
+            rotated = args.arm == "so3" and rng.random() < args.so3_prob
+            rotation = sample_rotation(gen, uniform_so3=True, max_angle_deg=args.so3_max_angle_deg) if rotated else eye
+            f1, f2, flow, valid = rotate_erp_pair(f1, f2, flow, valid, rotation)
+            preds, _ = model(f1[None].float().to(device), f2[None].float().to(device), iters=args.train_iters)
+            loss = sequence_loss(preds, flow[None].to(device), valid[None].to(device)) / args.accum
+            loss.backward()
+            total += loss.item()
+            n_rot += int(rotated)
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         opt.step()
-        if step % 10 == 0:
-            print(f"step {step} loss {loss.item():.4f} rot {int(rotated)} ({time.time() - start:.0f}s)", flush=True)
+        if sched is not None:
+            sched.step()
+        if ema is not None:
+            with torch.no_grad():
+                for k, v in model.named_parameters():
+                    ema[k].mul_(args.ema).add_(v.detach(), alpha=1 - args.ema)
+        if step % args.log_every == 0:
+            print(f"step {step} loss {total:.4f} rot {n_rot}/{args.accum} ({time.time() - start:.0f}s)", flush=True)
         if step in eval_at:
             run_eval(step)
 
@@ -195,6 +214,15 @@ def main():
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
     torch.save({"model": model.state_dict()}, out / f"prior_raft_{args.arm}.pth")
+    if ema is not None:  # score and save the weight average; buffers stay those of the raw model
+        with torch.no_grad():
+            for k, v in model.named_parameters():
+                v.copy_(ema[k])
+        run_eval(args.steps)
+        history[-1]["weights"] = "ema"
+        e = history[-1]
+        print(f"P11 {args.arm} EMA {args.ema}: rotated {e['rotated']['deg']:.4f} deg, upright {e['upright']['deg']:.4f} deg")
+        torch.save({"model": model.state_dict()}, out / f"prior_raft_{args.arm}_ema.pth")
     (out / f"p11_{args.arm}.json").write_text(json.dumps({"args": vars(args), "history": history}, indent=2))
     print(f"saved={out / f'p11_{args.arm}.json'}")
 

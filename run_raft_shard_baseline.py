@@ -205,6 +205,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--val-so3-canon-iters", type=int, default=1,
                         help="Canonizer passes: each pass re-estimates on the frame rotated back so "
                              "far; the rotations are composed, so the frame is resampled once.")
+    parser.add_argument("--val-so3-refiner", default="",
+                        help="Weights of the published Dual-Projection Fusion upright estimator "
+                             "(spherical_flow/dpf_upright.py). Tilt-only passes applied after the "
+                             "canonizer passes, or alone when no canonizer is given. It only "
+                             "covers tilts below 90 deg.")
+    parser.add_argument("--val-so3-refine-iters", type=int, default=2)
     parser.add_argument("--val-so3-canon-mode", default="full", choices=["full", "up"],
                         help="'full' undoes tilt and heading, 'up' undoes the tilt only.")
     parser.add_argument("--val-roll-frac", type=float, default=0.0,
@@ -379,6 +385,10 @@ def main() -> None:
     if args.val_so3_canonizer:
         from spherical_flow.canonizer import estimate_rotation, load_canonizer
         canonizer = load_canonizer(args.val_so3_canonizer, device)
+    refiner = None
+    if args.val_so3_refiner:
+        from spherical_flow import dpf_upright
+        refiner = dpf_upright.load_dpf(args.val_so3_refiner, device)
     if args.val_so3_prob > 0.0 and args.predictor == "oracle":
         raise ValueError("--predictor oracle scores the unrotated GT raster and cannot be "
                          "combined with --val-so3-prob")
@@ -470,15 +480,18 @@ def main() -> None:
                 direction_cache[(height, width)] = erp_direction_grid(height, width)
             frame1_erp = rotate_erp(frame1_erp, rotation, direction_cache[(height, width)])
             frame2_erp = rotate_erp(frame2_erp, rotation, direction_cache[(height, width)])
-            if canonizer is not None:
+            if canonizer is not None or refiner is not None:
                 grid = direction_cache[(height, width)]
                 frame1_erp = frame1_erp.mul(255.0).round().div(255.0)
                 frame2_erp = frame2_erp.mul(255.0).round().div(255.0)
                 back = torch.eye(3)
-                for _ in range(args.val_so3_canon_iters):
+                for _ in range(args.val_so3_canon_iters if canonizer is not None else 0):
                     seen_frame = rotate_erp(frame1_erp, back, grid)
                     back = estimate_rotation(canonizer, seen_frame,
                                              args.val_so3_canon_mode).T @ back
+                for _ in range(args.val_so3_refine_iters if refiner is not None else 0):
+                    seen_frame = rotate_erp(frame1_erp, back, grid)
+                    back = dpf_upright.estimate_rotation(refiner, seen_frame).T @ back
                 frame1_erp = rotate_erp(frame1_erp, back, grid)
                 frame2_erp = rotate_erp(frame2_erp, back, grid)
                 target = so3_augment_pair(_to_chw_free_float(record["frame1"]),
