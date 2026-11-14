@@ -272,6 +272,22 @@ orient_canon | scripts/orientation_suite.sh | TAG=canon; TABLE=global; VIEWS=upr
 # 5) tolerance of the released models to a small tilt: how accurate does an orientation estimate have to be? 400 pairs.
 #    Reading: loss <= 25 % at 5 deg = a canonizer with a few degrees of error is enough; loss >= 100 % at 2 deg = it would need sub-degree accuracy.   ~10 min
 orient_tol | scripts/orientation_suite.sh | TAG=tol; TABLE=global; MAX_PAIRS=400; VIEWS=upright tilt2 tilt5 tilt10; ONLY=prior_raft panoflow frozen_raft_large
+# --- ORIENTATION 11.31 (2026-11-13): canonizer (experiments/proposals/p12_canonizer.py). Oracle canonization costs 1 % (11.30); 2 deg of tilt error costs 18-27 %, 5 deg 69-86 %. ---
+# 1) train a ResNet-18 on 160x320 frames to regress the canonical up and forward directions; labels are free (we rotate the training frames). 8000 steps, batch 32.
+#    Reading, tilt error on rotated flowscape:test frames: median <= 2 deg and p90 <= 5 deg = viable; median >= 5 deg = not viable with this estimator.   time not measured
+canonizer_train | scripts/proposals_probes.sh | PROBES=p12
+# 2) end to end on the full test set: Haar-rotated pairs, rotated back with the ESTIMATED rotation, then the released model. canonfull undoes tilt + heading, canonup the tilt only.
+#    Reading, PriOr-RAFT or PanoFlow: canonfull or canonup <= 0.40 deg = accurate and robust at once, ahead of every rotation-trained model (0.47-0.52 deg);
+#    >= 0.52 deg = no better than rotation training.   ~50 min
+#    canonfull2 = two estimation passes. canonid = the canonizer on UPRIGHT pairs: must stay within 10 % of upright, or the method costs accuracy where the released model was fine.
+orient_canonest | scripts/orientation_suite.sh | TAG=canonest; TABLE=global; VIEWS=upright haar canon canonfull canonfull2 canonup canonid; ONLY=prior_raft panoflow frozen_raft_large
+# 3) hedge on the estimator budget: 24000 steps, then the same end-to-end views for the two released models.   time not measured (3x job 1) + ~1 h
+canonizer_train_long | scripts/proposals_probes.sh | PROBES=p12; TAG=long; P12_STEPS=24000
+orient_canonest_long | scripts/orientation_suite.sh | TAG=canonest_long; TABLE=global; CANONIZER=/outputs/proposals_probes_long/p12_canonizer/canonizer.pth; VIEWS=upright haar canonfull canonfull2 canonup canonid; ONLY=prior_raft panoflow
+# 4) second dataset for the method: canonizer trained on replica360:train, then our replica360-trained RAFT-small without rotation behind it (11.30: 2.184 -> 3.401 deg under Haar, +56 %).
+#    Reading: canonfull or canonup <= 2.5 deg = the method carries over to a second dataset; >= 3.2 deg = it does not.   time not measured
+canonizer_train_replica | scripts/proposals_probes.sh | PROBES=p12; TAG=replica; P12_TRAIN=replica360:train; P12_TEST=replica360:val
+orient_canonest_replica | scripts/orientation_suite.sh | TAG=canonest_replica; TABLE=global; MAX_PAIRS=1000; SOURCES=replica360:val; CANONIZER=/outputs/proposals_probes_replica/p12_canonizer/canonizer.pth; VIEWS=upright haar canon canonfull canonfull2 canonup canonid; ONLY=raft_small_noaug frozen_raft_large
 # --- RAFT_PARITY 11.16 (2026-11-03): finish the budget test before the combined run ---
 # 30k result: both models gain ~0.7 px from 3x steps; gap 1.39 -> 1.13 px, but OSLO has one seed and RAFT seeds differ by 1.3 px.
 # 1) OSLO seed 11 at 30k   ~8.4 h

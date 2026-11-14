@@ -110,6 +110,8 @@ for p in $PROBES; do
             --steps "${P11_STEPS:-5000}" --eval-at "${P11_EVAL_AT:-1000,2500}" --eval-pairs 100 --eval-stride 13 \
             --lr "${P11_LR:-2e-5}" --so3-prob "${P11_SO3_PROB:-0.5}" --device "$DEV"
         done ;;
+    p12) run p12_canonizer p12_canonizer.py --shards "$SHARDS" --steps "${P12_STEPS:-8000}" --device "$DEV" \
+          --train-sources "${P12_TRAIN:-flowscape:train}" --sources "${P12_TEST:-flowscape:test}" ;;
   esac
 done
 exit 0

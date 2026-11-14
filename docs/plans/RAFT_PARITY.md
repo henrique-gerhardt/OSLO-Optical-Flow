@@ -1399,3 +1399,15 @@ Full tables and readings: `ORIENTATION_ROBUSTNESS.md` 4c. In short, flowscape:te
 - P11 at 5000 steps: Haar 1.234 -> 0.735 (-40 %), upright +7 %. Partial; criterion of 50 % not met.
 - flow360:test and mpf:val: no loss under rotation for the FlowScape-trained weights. The finding is in-domain.
 - Queued: `orient_cross_table`, `so3_finetune_prior_p100` (probability 1.0, 15000 steps), `orient_p100`.
+
+### 11.31 Canonization ceiling confirmed; canonizer probe queued (2026-11-13)
+
+Tables: `ORIENTATION_ROBUSTNESS.md` 4e.
+
+- Oracle canonization, full flowscape:test: PriOr-RAFT 0.2412 -> 0.2440 deg under Haar, PanoFlow 0.2511 -> 0.2536.
+- Tilt tolerance: 2 deg costs 18-27 %, 5 deg 69-86 %.
+- Fine-tune with every pair rotated, 15000 steps: Haar 0.519, upright 0.467. Robust, upright accuracy lost.
+- replica360 in-domain, RAFT-small without rotation: +56 % under Haar; with rotation +8 %.
+- P12 canonizer local smoke (Mac CPU, 400 steps, 300 train frames, 60 test frames): tilt error median 51 -> 13.6 deg and still falling; heading error stays near 100 deg (not learned in this budget). Says only that the script runs. The `--val-so3-canonizer` path of `run_raft_shard_baseline.py` has not been run.
+- Queued: `canonizer_train`, `orient_canonest`.
+

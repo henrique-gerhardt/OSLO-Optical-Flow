@@ -8,6 +8,8 @@
 #   haar     Haar-uniform SO(3) rotation
 #   rollNN   exact circular shift by 0.NN of the width (a yaw with no resampling: lossless control)
 #   canon    the haar pairs rotated back with the known rotation (oracle canonization ceiling)
+#   canonfull / canonup  the haar pairs rotated back with the rotation ESTIMATED by the canonizer (tilt + heading / tilt only)
+#   canonfull2  canonfull with two estimation passes; canonid  the canonizer applied to UPRIGHT pairs (must cost nothing)
 #   yaw      rotation about the vertical axis, angle uniform in [0, 180] (keeps gravity: control)
 #   tiltN    rotation of exactly N degrees about a random horizontal axis (dose-response)
 # ONLY: space-separated row names to keep. SOURCES: dataset:split list. ROWS: "name|run_raft_shard_baseline.py flags"; a row whose
@@ -37,6 +39,9 @@ mkdir -p "$DEST"
 view_flags() {
   case "$1" in
     upright) echo "" ;;
+    canonfull|canonup) echo "--val-so3-prob 1 --val-so3-uniform --val-so3-canonizer ${CANONIZER:-$OUT/proposals_probes/p12_canonizer/canonizer.pth} --val-so3-canon-mode ${1#canon}" ;;
+    canonfull2) echo "--val-so3-prob 1 --val-so3-uniform --val-so3-canonizer ${CANONIZER:-$OUT/proposals_probes/p12_canonizer/canonizer.pth} --val-so3-canon-iters 2" ;;
+    canonid) echo "--val-so3-prob 1 --val-so3-axis-mode horizontal --val-so3-fixed-angle-deg 0 --val-so3-canonizer ${CANONIZER:-$OUT/proposals_probes/p12_canonizer/canonizer.pth}" ;;
     canon) echo "--val-so3-prob 1 --val-so3-uniform --val-so3-derotate" ;;   # haar, then rotated back with the known rotation
     haar) echo "--val-so3-prob 1 --val-so3-uniform" ;;
     roll*) echo "--val-roll-frac 0.${1#roll}" ;;   # roll25 / roll50: exact circular shift, no resampling

@@ -178,6 +178,56 @@ Each pair is Haar-rotated, stored as 8-bit, rotated back with the known rotation
 - Open: how accurate the estimate must be (15 deg of tilt error already costs +252 %; job `orient_tol` measures 2 / 5 / 10 deg), and whether the heading can be estimated at all from a pair.
 - 8 pairs, one model. Box job `orient_canon` repeats it on the full test set with PanoFlow and frozen RAFT-large. The `--val-so3-derotate` path of `run_raft_shard_baseline.py` has not been run; this local number comes from a scratch script on the P11 harness.
 
+## 4e. Box results, second round (2026-11-13): ceiling, tolerance, larger fine-tune, replica360
+
+flowscape:test, sphere-mean geodesic degrees.
+
+Canonization ceiling, 1386 pairs (`orient_canon`):
+
+| Row | Upright | Haar | Haar, rotated back (oracle) |
+|---|---|---|---|
+| PriOr-RAFT | 0.2412 | 1.2342 | 0.2440 (+1 %) |
+| PanoFlow | 0.2511 | 1.0396 | 0.2536 (+1 %) |
+| frozen RAFT-large | 0.8724 | 0.9277 | 0.8729 (+0 %) |
+
+Tolerance to a tilt error, 400 pairs (`orient_tol`):
+
+| Row | Upright | 2 deg | 5 deg | 10 deg |
+|---|---|---|---|---|
+| PriOr-RAFT | 0.2475 | 0.3139 (+27) | 0.4615 (+86) | 0.6888 (+178) |
+| PanoFlow | 0.2569 | 0.3038 (+18) | 0.4334 (+69) | 0.6288 (+145) |
+| frozen RAFT-large | 0.8880 | 0.8775 (-1) | 0.8818 (-1) | 0.8989 (+1) |
+
+SO(3) fine-tune of PriOr-RAFT, every pair rotated, 15000 steps (`so3_finetune_prior_p100`, `orient_p100`), 1386 pairs:
+
+| Row | Upright | Roll W/2 | Yaw | Tilt 15 | Haar |
+|---|---|---|---|---|---|
+| PriOr-RAFT | 0.2412 | 0.6869 | 0.3846 | 0.87 (400 pairs) | 1.2342 |
+| fine-tune, p = 0.5, 5000 steps | 0.2589 | 0.6410 | 0.4135 | 0.69 (400 pairs) | 0.7353 |
+| fine-tune, p = 1.0, 15000 steps | 0.4667 | 0.5123 | 0.4760 | 0.5015 | 0.5188 |
+| RAFT-large SO(3), scratch (ours) | 0.5288 | 0.5494 | 0.5429 | 0.59 (400 pairs) | 0.6766 |
+
+replica360:val, 1000 pairs (`orient_cross_table`); zero flow 13.4-13.5 deg:
+
+| Row | Upright | Haar |
+|---|---|---|
+| RAFT-small, no rotation (in-domain) | 2.184 | 3.401 (+56 %) |
+| RAFT-small, SO(3) (in-domain) | 1.741 | 1.889 (+8 %) |
+| RAFT-large, SO(3) (in-domain) | 1.262 | 1.352 (+7 %) |
+| frozen RAFT-large | 1.156 | 1.129 (-2 %) |
+| PanoFlow (FlowScape weights) | 6.899 | 7.539 (+9 %) |
+| PriOr-RAFT (FlowScape weights) | 9.501 | 9.521 (+0 %) |
+
+Readings:
+
+- **Ceiling confirmed at full scale and for both released models.** With the orientation known, rotation costs 1 %.
+- **Tolerance: between the two pre-registered readings.** 2 deg of tilt error costs 18-27 %, 5 deg costs 69-86 %. An estimator has to be good to about 2 deg. At 2 deg the canonized models (0.30-0.31) are still well ahead of every rotation-trained model (0.47-0.52); at 5 deg they are level with them.
+- **Larger fine-tune: robust, but the upright accuracy is gone.** Haar 0.519 (reading asked <= 0.50) at upright 0.467 (reading asked <= 0.29). Rotation in training buys robustness by giving up the benchmark prior; it does not keep both. It is the best rotation-trained model in hand (ahead of our scratch RAFT-large SO(3) in every view) and also removes the heading dependence.
+- **Second dataset, in-domain: the contingency is there, smaller.** Our replica360-trained RAFT-small without rotation loses 56 % under Haar; with rotation 8 %. (9.3 reported 83.9 -> 80.0 % over zero for the same checkpoint with the axis-angle schedule on the full val set; Haar on 1000 pairs is harsher.)
+- The released FlowScape models are far off on replica360 (6.9-9.5 deg against 1.16 for frozen RAFT-large), so their rows there say nothing about orientation.
+
+Consequence: the constructive path is canonization, not rotation training. Probe P12 (`experiments/proposals/p12_canonizer.py`, `spherical_flow/canonizer.py`) trains a regressor of the canonical up and forward directions on rotated training frames; views `canonfull` / `canonup` of the suite run the released models behind it.
+
 ## 5. Position against the literature (searched 2026-11-11)
 
 - PriOr-Flow (ICCV 2025): no rotated evaluation, no rotation or other augmentation described, no zero-flow row, horizontal wrap only.
