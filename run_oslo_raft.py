@@ -294,6 +294,9 @@ def parse_args() -> argparse.Namespace:
                         "starts beating the zero baseline. Empty = off (default).")
     p.add_argument("--motion-band-regions", default="",
                    help="comma-separated region names to CROSS with --motion-bands-deg, e.g. 'poles,equator'. Emits keys like poles_band_2_4_geo_deg, so polar error can be read restricted to a displacement range. Empty = off (default); existing runs stay byte-identical.")
+    p.add_argument("--isotropic-conv", action="store_true",
+                   help="Every SDPAConv uses one shared weight for all neighbors (center vs ring). "
+                        "Parameter layout unchanged.")
     p.add_argument("--upsample-weights", default="learned",
                    choices=["learned", "pwc", "uniform"],
                    help="Bypass the trained upsample head with a fixed rule (--retina "
@@ -478,6 +481,10 @@ def main() -> None:
     set_seed(args.seed)
     device = get_device(args.device)
     os.makedirs(args.output_dir, exist_ok=True)
+    if args.isotropic_conv:
+        from spherical_flow.models import SDPAConv
+        SDPAConv.isotropic = True
+        print("isotropic_conv=on (one shared neighbor weight per SDPAConv)", flush=True)
     active_thresholds = parse_thresholds(args.active_thresholds_deg)
     motion_bands = parse_bands(args.motion_bands_deg)
     band_regions = tuple(r.strip() for r in args.motion_band_regions.split(",") if r.strip())

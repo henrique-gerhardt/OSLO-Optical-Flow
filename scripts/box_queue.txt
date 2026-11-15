@@ -344,6 +344,21 @@ oslo_orient_haar | scripts/raft_parity_large.sh | RUN_NAME=scale_fs30k; ARMS=nos
 # Reading: joint criterion met if canonref <= 0.35 and canonrefid <= 0.30. Same combination with the 10-deg fine-tune and canonizer v2 alone gave 0.400 / 0.375.
 # Prior stated before the run: canonrefid 0.29-0.31, canonref 0.34-0.38 (heading error of the canonizer still costs this model, yaw +39 %); criterion more likely missed than met.   ~40 min
 orient_full_dpf | scripts/orientation_suite.sh | TAG=fulldpf; TABLE=global; CANONIZER=/outputs/proposals_probes_v2/p12_canonizer/canonizer.pth; REFINE_ITERS=3; VIEWS=upright haar canonref canonrefid refid tilt10ref; ROWS=prior_raft_full|--prior-checkpoint /outputs/proposals_probes_full/p11_so3ft_so3/prior_raft_so3.pth
+# --- TOLERANCE TRAINING WITH THE FULL RECIPE (2026-11-16): teach PriOr-RAFT to tolerate the estimators' residual tilt ---
+# Same recipe as so3_finetune_prior_full (4 pairs per step, 7500 steps, one-cycle peak 5e-5), but rotations of at most 10 deg on half of the pairs.
+# Earlier points: tol10 at batch 1 / 5k constant lr: upright 0.275, tilt5 0.346, behind canonizer v2 alone 0.400 / 0.375. Full Haar recipe: upright 0.253, tilt5 0.401.
+# Reading on orient_tolfull: joint criterion met if canonref <= 0.35 and canonrefid <= 0.30. Secondary: tolerance gained without canonical cost if upright <= 0.26 and tilt5 <= 0.30.
+# Prior stated before the run: upright 0.25-0.26, tilt5 0.31-0.34, canonrefid 0.29-0.31, canonref 0.33-0.37 (it sees no large rotation, so the canonizer's heading error still costs).   ~4 h + ~1 h
+so3_finetune_prior_tolfull | scripts/proposals_probes.sh | PROBES=p11; TAG=tolfull; P11_ARMS=so3; P11_MAX_ANGLE=10; P11_STEPS=7500; P11_ACCUM=4; P11_SCHEDULE=onecycle; P11_LR=5e-5; P11_EVAL_AT=2500,5000; P11_LOG_EVERY=25
+orient_tolfull | scripts/orientation_suite.sh | TAG=tolfull; TABLE=global; CANONIZER=/outputs/proposals_probes_v2/p12_canonizer/canonizer.pth; REFINE_ITERS=3; VIEWS=upright tilt2 tilt5 tilt10 haar canonref canonrefid refid; ROWS=prior_raft_tolfull|--prior-checkpoint /outputs/proposals_probes_tolfull/p11_so3ft_so3/prior_raft_so3.pth
+# --- ISOTROPIC OSLO (2026-11-16): is OSLO robust to orientation by construction when its convolutions have no direction? (RAFT_PARITY 11.36) ---
+# Arm iso_noso3_erppx: every SDPAConv uses one shared weight for its 8 neighbors (--isotropic-conv), same parameter count, no rotation in training.
+# 10k steps on flowscape:train, seeds 7/11, against the directional noso3_erppx runs already in raft_parity_fsonly; both scored on flowscape:test upright and Haar.
+# Not isotropic: the learned upsampling head, the correlation lookup stencil and the east/north frame of the flow. So this tests "less directional", not exact equivariance.
+# Reading on global_geo_deg: robust by construction if Haar <= 1.3 x upright on both seeds; useful if also upright <= 1.25 x the directional arm's upright.
+# Prior stated before the run: Haar / upright between 1.3 and 2.5 (partial), upright 20-50 % worse than directional. Local: 3 CPU steps run, parameter count 1,558,768 unchanged.   ~15 min + ~5.6 h + ~40 min
+iso_oslo_upright | scripts/raft_parity_large.sh | RUN_NAME=raft_parity_fsonly; ARMS=noso3_erppx iso_noso3_erppx; PREFLIGHT_ARMS=iso_noso3_erppx; SEEDS=7 11; TRAIN_SOURCES=flowscape:train; EXTRA_VAL_SOURCES=flowscape:test; EXTRA_TAG=upright
+iso_oslo_haar | scripts/raft_parity_large.sh | RUN_NAME=raft_parity_fsonly; ARMS=noso3_erppx iso_noso3_erppx; PREFLIGHT_ARMS=; SEEDS=7 11; TRAIN_SOURCES=flowscape:train; EXTRA_VAL_SOURCES=flowscape:test; EXTRA_TAG=haar; NO_TRAIN=1; EXTRA_FLAGS=--val-so3-prob 1 --so3-uniform
 # --- RAFT_PARITY 11.16 (2026-11-03): finish the budget test before the combined run ---
 # 30k result: both models gain ~0.7 px from 3x steps; gap 1.39 -> 1.13 px, but OSLO has one seed and RAFT seeds differ by 1.3 px.
 # 1) OSLO seed 11 at 30k   ~8.4 h

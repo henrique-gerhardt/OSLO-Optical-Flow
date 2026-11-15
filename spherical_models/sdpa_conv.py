@@ -13,6 +13,9 @@ except ImportError:
 class SDPAConv (torch.nn.Module):
     r"""Class for implementing Sphere Directional and Position-Aware convolution
     """
+    # True: every neighbor uses the mean of the neighbor weights, so the kernel depends only on center vs ring.
+    isotropic = False
+
     def __init__(self, in_channels, out_channels, kernel_size, node_dim=0, bias=True, mask:str='full'):
         if mask not in ['A', 'B', 'full']: raise NotImplementedError("masked convolution either 'A', 'B' or 'full'")
         super(SDPAConv, self).__init__()
@@ -66,15 +69,17 @@ class SDPAConv (torch.nn.Module):
         #     test_out += torch.mul(neighbors_weights.narrow(dim=1, start=k, length=1), x.index_select(self.node_dim, neighbors_indices[:, k]))
         # print("test_out finished")
         
+        ring = self.weight[1:self.kernel_size].mean(dim=0) if (self.isotropic and self.kernel_size > 1) else None
         for k in range(1, self.kernel_size):
             col = k-1
+            w = self.weight[k] if ring is None else ring
             if valid_index is None:
                 s = torch.mul(neighbors_weights.narrow(dim=1, start=col, length=1), x.index_select(self.node_dim, neighbors_indices[:, col]))   # or I could use neighbors_weights[:,col].view(-1, 1)
-                out += torch.matmul(s, self.weight[k])
+                out += torch.matmul(s, w)
             else:
                 valid_rows = valid_index[:, col]
                 s = torch.mul(neighbors_weights[valid_rows, col].view(-1, 1), x.index_select(self.node_dim, neighbors_indices[valid_rows, col]))
-                out[:, valid_rows, :] += torch.matmul(s, self.weight[k])
+                out[:, valid_rows, :] += torch.matmul(s, w)
 
         if self.bias is not None:
             out += self.bias

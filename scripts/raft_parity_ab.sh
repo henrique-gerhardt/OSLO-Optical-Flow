@@ -53,6 +53,8 @@ arm_flags() {
     small_noso3) echo "--hidden-channels 72 --context-dim 48 --so3-prob 0" ;;
     # upright, trained on the benchmark's ERP-pixel EPE instead of the geodesic
     noso3_erppx) echo "--so3-prob 0 --loss-space erp_px" ;;
+    # noso3_erppx with isotropic convolutions: one shared weight for the 8 neighbors of every SDPAConv
+    iso_noso3_erppx) echo "--so3-prob 0 --loss-space erp_px --isotropic-conv" ;;
     # matched size (about RAFT-small) with the ERP-pixel loss
     small_noso3_erppx) echo "--hidden-channels 72 --context-dim 48 --so3-prob 0 --loss-space erp_px" ;;
     # ERP-pixel loss without the density cap of 20 (r6 polar nodes reach about 78)

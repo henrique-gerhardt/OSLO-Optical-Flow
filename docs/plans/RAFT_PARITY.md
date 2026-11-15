@@ -1462,3 +1462,13 @@ Tables: `ORIENTATION_ROBUSTNESS.md` 4f.
 - Reading: **ERP ahead** upright, by 16.4 % and 15.1 % (prior was a tie). Faces lead only before any training (0.908 vs 1.280), as in P4.
 - Under Haar faces are 24 % / 22 % lower, but fine-tuning did not improve them there (1.027 -> 1.07): each face has a fixed place on the sphere, so the fine-tune learns the canonical orientation on faces too.
 - About 33 min per run on the 3090. The numbers use this script's own read-out and pair subset; do not compare them with the suite rows.
+
+### 11.36 Isotropic OSLO: robust to orientation by construction? (queued 2026-11-16)
+
+- Motive: on the matched fs30k pair OSLO lost less than RAFT-small under Haar (-18 % / -9.8 %, ORIENTATION_ROBUSTNESS 4j) although its convolution has directional weights. Distance-only spherical weights lost under one mIoU point under rotation in segmentation (Unified Spherical Frontend). Does removing the direction from the OSLO convolution make the flow model orientation-robust without rotation training?
+- Change: `SDPAConv.isotropic` (class switch in `spherical_models/sdpa_conv.py`): every neighbor uses the mean of the 8 neighbor weights, so a kernel has a center weight and a ring weight. Parameter layout and count unchanged (1,558,768). Runner flag `--isotropic-conv`; arm `iso_noso3_erppx` in `scripts/raft_parity_ab.sh`.
+- What stays directional: the learned convex upsampling head (weights per child and neighbor slot), the correlation lookup stencil, and the east/north frame in which the flow is read and written. The arm tests "less directional", not exact equivariance.
+- Local checks (Mac CPU): isotropic output equals center + ring-sum by hand (1e-7), is invariant to the neighbor order (1e-7), gradient reaches all ring weights; 3 training steps on replica360 run with and without the flag.
+- Queue: `iso_oslo_upright` (trains seeds 7/11, 10k steps, flowscape:train, and scores both arms on flowscape:test), `iso_oslo_haar` (same checkpoints under Haar, NO_TRAIN). Baseline: the directional `raft_parity_fsonly/noso3_erppx_s7/s11` runs, scored by the same jobs.
+- Reading: robust by construction if Haar <= 1.3 x upright on both seeds; useful if also upright <= 1.25 x the directional arm's upright. Prior: partial (ratio 1.3-2.5), upright 20-50 % worse.
+- Not validated: learning with tied weights on the GPU; time per run taken from the directional arm (about 2.8 h per 10k steps).

@@ -349,7 +349,7 @@ Full flowscape:test (1386 pairs), sphere-mean geodesic degrees. Queue ran 20:51 
 - Reading: **partial**. Upright 0.253 <= 0.27 (met); Haar 0.551 > 0.52 (missed), below the 0.65 "holds" line.
 - Best trade-off point so far: published 0.241 / 1.234; p 0.5 / 5k 0.259 / 0.735; p 1 / 15k 0.467 / 0.519; this 0.253 / 0.551. Upright +5 %, Haar -55 %. Haar is still 2.2x upright; tilt5 still costs 58 %.
 - Weight averaging changes nothing.
-- Not run: this model behind the canonizer + DPF.
+- Queued 2026-11-15 as `orient_full_dpf` (TAG=fulldpf): this model behind canonizer v2 + 3 DPF passes, views upright, haar, canonref, canonrefid, refid, tilt10ref. Reading: joint criterion met if canonref <= 0.35 and canonrefid <= 0.30. Prior stated before the run: canonrefid 0.29-0.31, canonref 0.34-0.38, criterion more likely missed (the model is still heading-sensitive, yaw +39 %, and the canonizer's heading error is 16 deg). Result pending.
 
 **Matched fs30k pair under Haar (`orient_matched_s7/s11`, `oslo_orient_upright/haar`).**
 
@@ -361,6 +361,15 @@ Full flowscape:test (1386 pairs), sphere-mean geodesic degrees. Queue ran 20:51 
 - Reading (OSLO ahead if >= 10 % lower on both seeds): -17.9 % and -9.8 %. **Criterion missed on seed 11**; direction favours OSLO.
 - Both are at 76-93 % of zero flow (3.387) under Haar. Trained on FlowScape only for 30k steps, both lose far more than the 10k mixed-data models of the prior (0.855 / 1.128).
 - The two evaluators draw different rotations (zero rows 3.3865 vs 3.3868).
+
+## 4k. Tolerance training with the full recipe (queued 2026-11-16)
+
+- The measured bottleneck of canonization is the flow model's tolerance: the published estimator leaves a residual that costs PanoFlow 25 % and PriOr-RAFT 36 % on already-upright pairs (4j).
+- `so3_finetune_prior_tolfull`: the recipe of `so3_finetune_prior_full` (4 pairs per step, 7500 steps, one-cycle peak 5e-5) with rotations of at most 10 deg on half of the pairs. `orient_tolfull`: upright, tilt2, tilt5, tilt10, haar, canonref, canonrefid, refid.
+- Reading: joint criterion met if canonref <= 0.35 and canonrefid <= 0.30. Secondary: upright <= 0.26 and tilt5 <= 0.30.
+- Prior stated before the run: upright 0.25-0.26, tilt5 0.31-0.34, canonrefid 0.29-0.31, canonref 0.33-0.37.
+- Limits: PriOr-RAFT only (PanoFlow, the heading-insensitive model, has no fine-tune script here); the authors' orthogonal-view loss and batch size are still missing; one run.
+- The other half of the continuation, an OSLO with isotropic convolutions, is RAFT_PARITY 11.36.
 
 ## 5. Position against the literature (searched 2026-11-11)
 
