@@ -138,6 +138,24 @@ for path in sorted(Path(sys.argv[1]).glob("p13_h*/p13_nested_residual.json")):
           f"{f['static']:>8.4f}{f['moving']:>8.4f}{px('native_erp' if 'native_erp' in e else 'base_nodes'):>9.3f}{px('final'):>9.3f}")
 PY
         ;;
+    p14) for seed in ${P14_SEEDS:-7 11}; do  # pretrained RAFT-small fine-tuned on HEALPix faces vs on the ERP raster, same loss and pixel budget
+          for repr in ${P14_REPRS:-faces erp}; do
+            run "p14_${repr}_s${seed}" p14_faces_finetune.py "${common[@]}" --stride "${P14_EVAL_STRIDE:-3}" --max-pairs 100000 \
+              --repr "$repr" --seed "$seed" --steps "${P14_STEPS:-8000}" --eval-at "${P14_EVAL_AT:-2000,4000}" --device "$DEV"
+          done
+        done
+        python - "$OUT" <<'PY'
+import json, sys
+from pathlib import Path
+print("\n[p14 summary] sphere-mean geodesic error, degrees, r6 nodes (pretrained -> fine-tuned)")
+print(f"{'run':<18}{'upright 0':>11}{'upright':>10}{'haar 0':>10}{'haar':>10}{'haar/upright':>14}")
+for path in sorted(Path(sys.argv[1]).glob("p14_*/p14_faces_finetune.json")):
+    h = json.loads(path.read_text())["history"]; a, b = h[0], h[-1]
+    g = lambda row, v: row.get(v, {}).get("deg", float("nan"))
+    print(f"{path.parent.name:<18}{g(a, 'upright'):>11.4f}{g(b, 'upright'):>10.4f}{g(a, 'haar'):>10.4f}{g(b, 'haar'):>10.4f}"
+          f"{g(b, 'haar') / g(b, 'upright'):>14.2f}")
+PY
+        ;;
   esac
 done
 exit 0

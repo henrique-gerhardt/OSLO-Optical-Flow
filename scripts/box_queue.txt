@@ -330,6 +330,12 @@ orient_dpf | scripts/orientation_suite.sh | TAG=dpf; TABLE=global; CANONIZER=/ou
 so3_finetune_prior_full | scripts/proposals_probes.sh | PROBES=p11; TAG=full; P11_ARMS=so3; P11_STEPS=7500; P11_ACCUM=4; P11_SCHEDULE=onecycle; P11_LR=5e-5; P11_EMA=0.999; P11_EVAL_AT=2500,5000; P11_LOG_EVERY=25
 orient_full | scripts/orientation_suite.sh | TAG=full; TABLE=global; VIEWS=upright roll50 yaw tilt5 haar; ROWS=prior_raft_full|--prior-checkpoint /outputs/proposals_probes_full/p11_so3ft_so3/prior_raft_so3.pth
 orient_full_ema | scripts/orientation_suite.sh | TAG=full; TABLE=global; VIEWS=upright roll50 yaw tilt5 haar; ROWS=prior_raft_full_ema|--prior-checkpoint /outputs/proposals_probes_full/p11_so3ft_so3/prior_raft_so3_ema.pth
+# --- HEALPIX FACES WITH PRETRAINED PLANAR WEIGHTS (2026-11-15): does RAFT-small fine-tune better on the 12 padded HEALPix faces than on the ERP raster? (experiments/proposals/p14_faces_finetune.py) ---
+# Same pretrained TorchVision RAFT-small, same sphere-angle sequence loss, same pixels per step (7 faces of 384^2 vs 2 ERP frames), 8000 steps, seeds 7/11, flowscape:train -> every 3rd flowscape:test pair.
+# P4 (no training): faces tied the ERP in-raster (-3.5 %) and led at the equator (-26 %).
+# Reading on the [p14 summary] table, upright: faces ahead if lower than ERP by >= 5 % on both seeds; ERP ahead if the reverse; else tie. Secondary: haar/upright ratio (no rotation in training).
+# Prior stated before the run: a tie upright. Not validated locally beyond wiring: 120 CPU steps with 2 faces per step showed no clear loss trend. Time per run not measured; guess 1-1.5 h each, four runs.
+faces_finetune | scripts/proposals_probes.sh | PROBES=p14
 # OSLO jobs last: two quick failures in a row stop the queue, so nothing may sit behind them.
 oslo_orient_upright | scripts/raft_parity_large.sh | RUN_NAME=scale_fs30k; ARMS=noso3_erppx; PREFLIGHT_ARMS=; SEEDS=7 11; TRAIN_SOURCES=flowscape:train; STEPS=30000; EXTRA_VAL_SOURCES=flowscape:test; EXTRA_TAG=upright; NO_TRAIN=1
 oslo_orient_haar | scripts/raft_parity_large.sh | RUN_NAME=scale_fs30k; ARMS=noso3_erppx; PREFLIGHT_ARMS=; SEEDS=7 11; TRAIN_SOURCES=flowscape:train; STEPS=30000; EXTRA_VAL_SOURCES=flowscape:test; EXTRA_TAG=haar; NO_TRAIN=1; EXTRA_FLAGS=--val-so3-prob 1 --so3-uniform
