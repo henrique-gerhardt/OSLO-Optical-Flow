@@ -1438,3 +1438,27 @@ Tables: `ORIENTATION_ROBUSTNESS.md` 4f.
 - Reading (seeds 7/11, upright): faces ahead if lower than ERP by >= 5 % on both seeds; ERP ahead if the reverse; else tie. Secondary: haar / upright ratio. Prior: tie.
 - Local checks (Mac CPU): chart at r8 pixel centres matches the HEALPix node centres to 6e-5 deg; face GT read back at r6 against the node GT 0.05-0.19 deg with the first (cell-mean) read-out, replaced by the centre read-out (exact to 0.0015 deg on a 3 deg rotation field); zero-flow rows identical in both arms. Both arms run end to end. Learning is not validated: 120 steps with 2 faces per step showed no loss trend, 40 ERP steps moved 2 test pairs 1.75 -> 1.01 deg. Pretrained weights on those 2 pairs: faces 0.99, ERP 1.75 deg upright; 1.12 vs 1.10 under Haar.
 - Not measured: GPU time and memory per run.
+
+### 11.35 Results of 11.33 and 11.34 (box, 2026-11-15)
+
+**p13, hierarchy as representation** (693 test pairs, sphere-mean degrees at r6):
+
+| Run | base s7 / s11 | final s7 / s11 | gain % |
+|---|---|---|---|
+| OSLO 6_7 | 0.5621 / 0.5264 | 0.5384 / 0.4962 | 4.2 / 5.7 |
+| OSLO 6_6 (flat control) | 0.5621 / 0.5264 | 0.5387 / 0.5048 | 4.2 / 4.1 |
+| RAFT-small 6_7 | 0.4557 / 0.4180 | 0.4476 / 0.4143 | 1.8 / 0.9 |
+
+- H1 (final <= 0.90 x base): failed (0.958, 0.943). H2 (6_7 lower than 6_6 by >= 3 %): failed (0.1 %, 1.7 %). H3 (OSLO final <= RAFT-small base): failed. H4: the gain is larger on OSLO than on RAFT-small on both seeds, but it is small.
+- The second level adds nothing over a second correction at the same level. Direction closed at this size (frozen trunk, two levels, RGB input).
+
+**p14, HEALPix faces fine-tune** (462 test pairs, pretrained -> fine-tuned):
+
+| Run | upright | haar | haar / upright |
+|---|---|---|---|
+| ERP s7 / s11 | 1.2802 -> 0.2178 / 0.2228 | 1.1450 -> 1.4069 / 1.3672 | 6.46 / 6.14 |
+| faces s7 / s11 | 0.9081 -> 0.2604 / 0.2623 | 1.0265 -> 1.0691 / 1.0707 | 4.10 / 4.08 |
+
+- Reading: **ERP ahead** upright, by 16.4 % and 15.1 % (prior was a tie). Faces lead only before any training (0.908 vs 1.280), as in P4.
+- Under Haar faces are 24 % / 22 % lower, but fine-tuning did not improve them there (1.027 -> 1.07): each face has a fixed place on the sphere, so the fine-tune learns the canonical orientation on faces too.
+- About 33 min per run on the 3090. The numbers use this script's own read-out and pair subset; do not compare them with the suite rows.

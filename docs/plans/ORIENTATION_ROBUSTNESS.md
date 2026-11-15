@@ -324,6 +324,44 @@ Local check, Mac CPU, 24 flowscape:test frames, zero-shot, residual tilt in degr
 
 **Full-recipe fine-tune.** `p11_so3_finetune_probe.py` gained `--accum`, `--lr-schedule onecycle`, `--ema`. Queue: `so3_finetune_prior_full` (Haar on half of the pairs, 4 pairs per step, 7500 steps, peak lr 5e-5, weight average 0.999), `orient_full`, `orient_full_ema`. Reading on the better of raw and averaged weights: the trade-off dissolves if upright <= 0.27 and Haar <= 0.52; holds if upright > 0.30 or Haar > 0.65; otherwise partial. Local smoke: 3 steps, runs and saves both checkpoints.
 
+## 4j. Box results, 2026-11-15: published estimator, full-recipe fine-tune, matched pair under Haar
+
+Full flowscape:test (1386 pairs), sphere-mean geodesic degrees. Queue ran 20:51 -> 09:14 (12.4 h).
+
+**Published estimator (`orient_dpf`).** canonref = Haar, canonizer v2 + 3 DPF passes; canonrefid = same system on upright pairs; refid / tiltNref = DPF alone.
+
+| Model | upright | haar | canonref | canonrefid | refid | tilt10ref | tilt30ref |
+|---|---|---|---|---|---|---|---|
+| PriOr-RAFT | 0.2412 | 1.2342 | 0.3816 | 0.3761 | 0.3270 | 0.3283 | 0.3475 |
+| PanoFlow | 0.2511 | 1.0396 | 0.3272 | 0.3259 | 0.3128 | 0.3136 | 0.3303 |
+
+- Joint criterion (canonref <= 0.35 and canonrefid <= 0.30): **not met**. PanoFlow meets the rotated limit (0.327) and misses the upright one (0.326). Prediction 0.29-0.31 missed.
+- Against canonizer v2 alone: PanoFlow 0.380 -> 0.327, PriOr 0.432 -> 0.382. Share of the Haar loss recovered: 90 % / 86 %.
+- DPF alone costs PanoFlow +25 % on pairs that are already upright (0.313), and the same on a 10 deg tilt (0.314); +32 % at 30 deg. The cost does not depend on the input tilt up to 10 deg, so what is left is the estimator's own error, a residual between 2 and 5 deg on the tolerance curve of 4e.
+
+**Full-recipe fine-tune (`so3_finetune_prior_full`, `orient_full`, `orient_full_ema`).**
+
+| Weights | upright | roll50 | yaw | tilt5 | haar |
+|---|---|---|---|---|---|
+| raw | 0.2531 | 0.4451 | 0.3524 | 0.4011 | 0.5511 |
+| EMA 0.999 | 0.2527 | 0.4479 | 0.3530 | 0.4017 | 0.5552 |
+
+- Reading: **partial**. Upright 0.253 <= 0.27 (met); Haar 0.551 > 0.52 (missed), below the 0.65 "holds" line.
+- Best trade-off point so far: published 0.241 / 1.234; p 0.5 / 5k 0.259 / 0.735; p 1 / 15k 0.467 / 0.519; this 0.253 / 0.551. Upright +5 %, Haar -55 %. Haar is still 2.2x upright; tilt5 still costs 58 %.
+- Weight averaging changes nothing.
+- Not run: this model behind the canonizer + DPF.
+
+**Matched fs30k pair under Haar (`orient_matched_s7/s11`, `oslo_orient_upright/haar`).**
+
+| Model | upright s7 / s11 | haar s7 / s11 |
+|---|---|---|
+| OSLO | 0.5803 / 0.5454 | 2.5781 / 2.7917 |
+| RAFT-small | 0.4864 / 0.4371 | 3.1420 / 3.0948 |
+
+- Reading (OSLO ahead if >= 10 % lower on both seeds): -17.9 % and -9.8 %. **Criterion missed on seed 11**; direction favours OSLO.
+- Both are at 76-93 % of zero flow (3.387) under Haar. Trained on FlowScape only for 30k steps, both lose far more than the 10k mixed-data models of the prior (0.855 / 1.128).
+- The two evaluators draw different rotations (zero rows 3.3865 vs 3.3868).
+
 ## 5. Position against the literature (searched 2026-11-11)
 
 - PriOr-Flow (ICCV 2025): no rotated evaluation, no rotation or other augmentation described, no zero-flow row, horizontal wrap only.
